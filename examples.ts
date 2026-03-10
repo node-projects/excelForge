@@ -1,0 +1,926 @@
+/**
+ * ExcelForge — Comprehensive Usage Examples
+ * This file demonstrates every major feature of the library.
+ */
+
+import { Workbook, Worksheet, style, Styles, Colors, NumFmt } from './src/index.js';
+import type {
+  Chart, ConditionalFormat, Table, Sparkline, DataValidation, Image
+} from './src/index.js';
+
+// ============================================================
+// 1. BASIC WORKBOOK & SHEET CREATION
+// ============================================================
+async function example_basic() {
+  const wb = new Workbook();
+  wb.properties = {
+    title:    'ExcelForge Demo',
+    author:   'ExcelForge',
+    company:  'Acme Corp',
+    subject:  'Demonstration',
+    keywords: 'excel typescript',
+    created:  new Date(),
+  };
+
+  const ws = wb.addSheet('Sheet1');
+
+  // Set cell values
+  ws.setValue(1, 1, 'Hello');
+  ws.setValue(1, 2, 42);
+  ws.setValue(1, 3, true);
+  ws.setValue(1, 4, new Date());
+  ws.setValue(1, 5, null); // empty cell
+
+  // Write rows & arrays
+  ws.writeRow(2, 1, ['Name', 'Age', 'City']);
+  ws.writeArray(3, 1, [
+    ['Alice', 30, 'Berlin'],
+    ['Bob',   25, 'Paris'],
+    ['Carol', 35, 'Tokyo'],
+  ]);
+
+  await wb.writeFile('./output/01_basic.xlsx');
+}
+
+// ============================================================
+// 2. FORMULAS
+// ============================================================
+async function example_formulas() {
+  const wb = new Workbook();
+  const ws = wb.addSheet('Formulas');
+
+  ws.writeColumn(1, 1, [10, 20, 30, 40, 50]);
+
+  ws.setFormula(6, 1, 'SUM(A1:A5)');
+  ws.setFormula(7, 1, 'AVERAGE(A1:A5)');
+  ws.setFormula(8, 1, 'MAX(A1:A5)');
+  ws.setFormula(9, 1, 'MIN(A1:A5)');
+  ws.setFormula(10, 1, 'COUNT(A1:A5)');
+
+  // Conditional formulas
+  ws.setFormula(11, 1, 'IF(A1>20,"High","Low")');
+  ws.setFormula(12, 1, 'VLOOKUP(20,A1:A5,1,FALSE)');
+  ws.setFormula(13, 1, 'SUMIF(A1:A5,">20")');
+  ws.setFormula(14, 1, 'IFERROR(A1/0,"N/A")');
+
+  // String formulas
+  ws.setFormula(1, 3, 'CONCATENATE("Hello"," ","World")');
+  ws.setFormula(2, 3, 'UPPER("hello")');
+  ws.setFormula(3, 3, 'LEFT("ExcelForge",5)');
+  ws.setFormula(4, 3, 'LEN("ExcelForge")');
+
+  // Date formulas
+  ws.setFormula(1, 5, 'TODAY()');
+  ws.setFormula(2, 5, 'NOW()');
+  ws.setFormula(3, 5, 'YEAR(TODAY())');
+  ws.setFormula(4, 5, 'TEXT(TODAY(),"dd/mm/yyyy")');
+
+  // Array formula
+  ws.getCell(15, 1).arrayFormula = 'SUM(A1:A5*2)';
+
+  await wb.writeFile('./output/02_formulas.xlsx');
+}
+
+// ============================================================
+// 3. CELL FORMATTING & STYLES
+// ============================================================
+async function example_styles() {
+  const wb = new Workbook();
+  const ws = wb.addSheet('Styles');
+
+  // Font styles
+  ws.setCell(1, 1, { value: 'Bold',       style: style().bold().build() });
+  ws.setCell(2, 1, { value: 'Italic',     style: style().italic().build() });
+  ws.setCell(3, 1, { value: 'Strike',     style: style().strike().build() });
+  ws.setCell(4, 1, { value: 'Underline',  style: style().underline().build() });
+  ws.setCell(5, 1, { value: 'Large Font', style: style().fontSize(18).build() });
+  ws.setCell(6, 1, { value: 'Red Text',   style: style().fontColor(Colors.Red).build() });
+  ws.setCell(7, 1, { value: 'Calibri',    style: style().fontName('Calibri').build() });
+  ws.setCell(8, 1, { value: 'Superscript',style: style().font({ vertAlign: 'superscript' }).build() });
+
+  // Background fills
+  ws.setCell(1, 3, { value: 'Blue BG',   style: style().bg(Colors.ExcelBlue).fontColor(Colors.White).build() });
+  ws.setCell(2, 3, { value: 'Yellow',    style: style().bg(Colors.Yellow).build() });
+  ws.setCell(3, 3, { value: 'Gradient',  style: {
+    fill: {
+      type: 'gradient',
+      gradientType: 'linear',
+      degree: 90,
+      stops: [
+        { position: 0, color: 'FF4472C4' },
+        { position: 1, color: 'FF70AD47' },
+      ]
+    }
+  }});
+
+  // Borders
+  ws.setCell(1, 5, { value: 'All Thin',   style: style().border('thin').build() });
+  ws.setCell(2, 5, { value: 'Thick',      style: style().border('thick').build() });
+  ws.setCell(3, 5, { value: 'Dashed',     style: style().border('dashed').build() });
+  ws.setCell(4, 5, { value: 'Double',     style: style().border('double').build() });
+  ws.setCell(5, 5, { value: 'Custom',     style: style()
+    .borderTop('thick', Colors.Red)
+    .borderBottom('thin', Colors.Blue)
+    .borderLeft('dashed', Colors.Green)
+    .borderRight('dotted', Colors.ExcelOrange ?? 'FFED7D31')
+    .build() });
+
+  // Alignment
+  ws.setCell(1, 7, { value: 'Center',       style: style().center().build() });
+  ws.setCell(2, 7, { value: 'Right',        style: style().align('right').build() });
+  ws.setCell(3, 7, { value: 'Wrap\nText',   style: style().wrap().build() });
+  ws.setCell(4, 7, { value: 'Rotate 45°',   style: style().rotate(45).build() });
+  ws.setCell(5, 7, { value: 'Indent',       style: style().indent(3).build() });
+
+  // Number formats
+  ws.setCell(1, 9, { value: 1234.56,     style: style().numFmt(NumFmt.Currency).build() });
+  ws.setCell(2, 9, { value: 0.1234,      style: style().numFmt(NumFmt.Percent2).build() });
+  ws.setCell(3, 9, { value: 1234567,     style: style().numFmt(NumFmt.Integer).build() });
+  ws.setCell(4, 9, { value: new Date(),  style: style().numFmt(NumFmt.ShortDate).build() });
+  ws.setCell(5, 9, { value: new Date(),  style: style().numFmt(NumFmt.DateTime).build() });
+  ws.setCell(6, 9, { value: 1234.56,     style: style().numFmt(NumFmt.Accounting).build() });
+  ws.setCell(7, 9, { value: 2.5,         style: style().numFmt(NumFmt.Multiple).build() });
+
+  // Using pre-built styles
+  ws.setCell(10, 1, { value: 'Pre-built Table Header', style: Styles.tableHeader });
+  ws.setCell(11, 1, { value: 'Highlighted',            style: Styles.highlight });
+  ws.setCell(12, 1, { value: '$1,234.56',              style: Styles.currency });
+
+  // Column widths
+  ws.setColumnWidth(1, 20); ws.setColumnWidth(3, 20); ws.setColumnWidth(5, 20);
+  ws.setColumnWidth(7, 25); ws.setColumnWidth(9, 20);
+
+  await wb.writeFile('./output/03_styles.xlsx');
+}
+
+// ============================================================
+// 4. MERGING CELLS
+// ============================================================
+async function example_merges() {
+  const wb = new Workbook();
+  const ws = wb.addSheet('Merges');
+
+  ws.setCell(1, 1, { value: 'Merged Heading', style: Styles.headerBlue });
+  ws.merge(1, 1, 1, 5); // Merge A1:E1
+
+  ws.setCell(2, 1, { value: 'Left Merged', style: Styles.headerGray });
+  ws.merge(2, 1, 4, 1); // Vertical merge A2:A4
+
+  ws.mergeByRef('B2:E4');
+  ws.setCell(2, 2, { value: 'Big merged area', style: style().center().wrap().build() });
+
+  await wb.writeFile('./output/04_merges.xlsx');
+}
+
+// ============================================================
+// 5. RICH TEXT
+// ============================================================
+async function example_richtext() {
+  const wb = new Workbook();
+  const ws = wb.addSheet('Rich Text');
+
+  ws.setCell(1, 1, {
+    richText: [
+      { text: 'Hello ',  font: { bold: true, color: 'FF0000FF', size: 14 } },
+      { text: 'World',   font: { italic: true, color: 'FFFF0000', size: 12 } },
+      { text: '!',       font: { bold: true, italic: true, size: 16 } },
+    ]
+  });
+
+  ws.setCell(3, 1, {
+    richText: [
+      { text: 'Revenue: ', font: { bold: true } },
+      { text: '$1,234.56', font: { color: 'FF00B050', bold: true } },
+      { text: ' (+12%)',   font: { color: 'FF0070C0' } },
+    ]
+  });
+
+  ws.setColumnWidth(1, 40);
+
+  await wb.writeFile('./output/05_richtext.xlsx');
+}
+
+// ============================================================
+// 6. FREEZE PANES & VIEWS
+// ============================================================
+async function example_panes() {
+  const wb = new Workbook();
+  const ws = wb.addSheet('Freeze');
+
+  // Header row
+  ws.writeRow(1, 1, ['ID', 'Name', 'Value', 'Date']);
+  for (let i = 0; i < 1; i++) {
+    ws.setStyle(1, i+1, Styles.tableHeader);
+  }
+
+  for (let r = 2; r <= 50; r++) {
+    ws.writeRow(r, 1, [r-1, `Item ${r-1}`, Math.random() * 1000, new Date()]);
+  }
+
+  ws.freeze(1, 0); // Freeze first row
+  // ws.freeze(0, 1); // Or freeze first column
+  // ws.freeze(1, 1); // Or freeze first row AND column
+
+  ws.view = { showGridLines: true, zoomScale: 100, tabSelected: true };
+
+  await wb.writeFile('./output/06_panes.xlsx');
+}
+
+// ============================================================
+// 7. CONDITIONAL FORMATTING
+// ============================================================
+async function example_conditional_formatting() {
+  const wb = new Workbook();
+  const ws = wb.addSheet('CF');
+
+  const data = [10, 85, 42, 99, 3, 67, 55, 78, 20, 91];
+  ws.writeColumn(1, 1, data);
+  ws.writeColumn(1, 2, data);
+  ws.writeColumn(1, 3, data);
+  ws.writeColumn(1, 4, data);
+
+  // Color scale: red-yellow-green
+  ws.addConditionalFormat({
+    sqref: 'A1:A10', type: 'colorScale',
+    colorScale: {
+      type: 'colorScale',
+      cfvo: [{ type: 'min' }, { type: 'percentile', val: '50' }, { type: 'max' }],
+      color: ['FFFF0000', 'FFFFFF00', 'FF00B050'],
+    }
+  });
+
+  // Data bar
+  ws.addConditionalFormat({
+    sqref: 'B1:B10', type: 'dataBar',
+    dataBar: { type: 'dataBar', minColor: 'FF638EC6', maxColor: 'FF638EC6', showValue: true }
+  });
+
+  // Icon set
+  ws.addConditionalFormat({
+    sqref: 'C1:C10', type: 'iconSet',
+    iconSet: {
+      type: 'iconSet', iconSet: '3TrafficLights1',
+      cfvo: [{ type: 'num', val: '0' }, { type: 'num', val: '33' }, { type: 'num', val: '67' }]
+    }
+  });
+
+  // Cell value rule: highlight cells > 70
+  ws.addConditionalFormat({
+    sqref: 'D1:D10', type: 'cellIs', operator: 'greaterThan', formula: '70',
+    style: style().bg(Colors.Green).fontColor(Colors.White).build(),
+    priority: 1,
+  });
+
+  // Top 10%
+  ws.addConditionalFormat({
+    sqref: 'E1:E10', type: 'top10', rank: 3, percent: false,
+    style: Styles.highlight, priority: 2,
+  });
+
+  await wb.writeFile('./output/07_conditional_formatting.xlsx');
+}
+
+// ============================================================
+// 8. TABLES
+// ============================================================
+async function example_tables() {
+  const wb = new Workbook();
+  const ws = wb.addSheet('Tables');
+
+  const headers = ['Product', 'Q1', 'Q2', 'Q3', 'Q4', 'Total'];
+  ws.writeRow(1, 1, headers);
+  ws.writeArray(2, 1, [
+    ['Widget A', 1200, 1350, 1100, 1500],
+    ['Widget B',  800,  950,  870, 1020],
+    ['Gadget X', 2100, 1980, 2250, 2400],
+    ['Gadget Y',  650,  720,  680,  800],
+  ]);
+
+  // Add SUM formula in Total column
+  for (let r = 2; r <= 5; r++) {
+    ws.setFormula(r, 6, `SUM(B${r}:E${r})`);
+    ws.setStyle(r, 6, style().bold().build());
+  }
+
+  ws.addTable({
+    name: 'SalesTable',
+    ref: 'A1:F5',
+    style: 'TableStyleMedium2',
+    showRowStripes: true,
+    totalsRow: true,
+    columns: [
+      { name: 'Product', totalsRowLabel: 'Total' },
+      { name: 'Q1',      totalsRowFunction: 'sum', numFmt: NumFmt.Integer },
+      { name: 'Q2',      totalsRowFunction: 'sum', numFmt: NumFmt.Integer },
+      { name: 'Q3',      totalsRowFunction: 'sum', numFmt: NumFmt.Integer },
+      { name: 'Q4',      totalsRowFunction: 'sum', numFmt: NumFmt.Integer },
+      { name: 'Total',   totalsRowFunction: 'sum', numFmt: NumFmt.Integer },
+    ]
+  });
+
+  for (let c = 1; c <= 6; c++) ws.setColumnWidth(c, 14);
+  ws.setColumnWidth(1, 20);
+
+  await wb.writeFile('./output/08_tables.xlsx');
+}
+
+// ============================================================
+// 9. CHARTS
+// ============================================================
+async function example_charts() {
+  const wb = new Workbook();
+  const ws = wb.addSheet('Charts');
+
+  // Data for chart
+  ws.writeRow(1, 1, ['Month', 'Sales', 'Expenses', 'Profit']);
+  const months = ['Jan','Feb','Mar','Apr','May','Jun'];
+  const sales   = [4200, 5100, 4800, 6200, 5800, 7100];
+  const expenses= [3100, 3400, 3200, 3800, 3600, 4100];
+  months.forEach((m, i) => {
+    ws.setValue(i+2, 1, m);
+    ws.setValue(i+2, 2, sales[i]);
+    ws.setValue(i+2, 3, expenses[i]);
+    ws.setFormula(i+2, 4, `B${i+2}-C${i+2}`);
+  });
+
+  // Column chart
+  ws.addChart({
+    type: 'column',
+    title: 'Monthly Performance',
+    series: [
+      { name: 'Sales',    values: 'Charts!$B$2:$B$7', categories: 'Charts!$A$2:$A$7' },
+      { name: 'Expenses', values: 'Charts!$C$2:$C$7', categories: 'Charts!$A$2:$A$7' },
+    ],
+    from: { col: 5, row: 0 },
+    to:   { col: 13, row: 15 },
+    xAxis: { title: 'Month' },
+    yAxis: { title: 'Amount ($)', gridLines: true },
+    legend: 'b',
+    style: 2,
+  });
+
+  // Line chart on the same sheet
+  ws.addChart({
+    type: 'line',
+    title: 'Sales Trend',
+    series: [
+      { name: 'Sales',  values: 'Charts!$B$2:$B$7', categories: 'Charts!$A$2:$A$7', color: Colors.ExcelBlue },
+      { name: 'Profit', values: 'Charts!$D$2:$D$7', categories: 'Charts!$A$2:$A$7', color: Colors.ExcelGreen },
+    ],
+    from: { col: 5, row: 16 },
+    to:   { col: 13, row: 31 },
+    legend: 'b',
+  });
+
+  // Pie chart
+  const ws2 = wb.addSheet('Pie Chart');
+  ws2.writeColumn(1, 1, ['North', 'South', 'East', 'West']);
+  ws2.writeColumn(1, 2, [35, 25, 20, 20]);
+
+  ws2.addChart({
+    type: 'pie',
+    title: 'Sales by Region',
+    varyColors: true,
+    series: [{
+      name: 'Region',
+      values:     'Pie Chart!$B$1:$B$4',
+      categories: 'Pie Chart!$A$1:$A$4',
+    }],
+    from: { col: 3, row: 0 },
+    to:   { col: 11, row: 15 },
+    legend: 'r',
+  });
+
+  await wb.writeFile('./output/09_charts.xlsx');
+}
+
+// ============================================================
+// 10. IMAGES
+// ============================================================
+async function example_images() {
+  const wb = new Workbook();
+  const ws = wb.addSheet('Images');
+
+  ws.setValue(1, 1, 'Image below:');
+
+  // 1x1 white PNG (minimal valid PNG for demo)
+  const pngBytes = new Uint8Array([
+    0x89,0x50,0x4E,0x47,0x0D,0x0A,0x1A,0x0A,  // PNG signature
+    0x00,0x00,0x00,0x0D,0x49,0x48,0x44,0x52,  // IHDR chunk length + type
+    0x00,0x00,0x00,0x01,0x00,0x00,0x00,0x01,  // Width=1, Height=1
+    0x08,0x02,0x00,0x00,0x00,0x90,0x77,0x53,  // Bit depth, color type, ...
+    0xDE,0x00,0x00,0x00,0x0C,0x49,0x44,0x41,  // IDAT
+    0x54,0x08,0xD7,0x63,0xF8,0xFF,0xFF,0x3F,
+    0x00,0x05,0xFE,0x02,0xFE,0xDC,0xCC,0x59,
+    0xE7,0x00,0x00,0x00,0x00,0x49,0x45,0x4E,
+    0x44,0xAE,0x42,0x60,0x82,
+  ]);
+
+  const img: Image = {
+    data: pngBytes,
+    format: 'png',
+    from:   { col: 1, row: 2, colOff: 0, rowOff: 0 },
+    width:  200,
+    height: 100,
+    altText: 'Sample image',
+  };
+
+  ws.addImage(img);
+
+  await wb.writeFile('./output/10_images.xlsx');
+}
+
+// ============================================================
+// 11. DATA VALIDATION
+// ============================================================
+async function example_data_validation() {
+  const wb = new Workbook();
+  const ws = wb.addSheet('Validation');
+
+  ws.writeRow(1, 1, ['Name', 'Status', 'Score', 'Date', 'Email']);
+  ws.setStyle(1, 1, Styles.tableHeader);
+  ws.setStyle(1, 2, Styles.tableHeader);
+  ws.setStyle(1, 3, Styles.tableHeader);
+  ws.setStyle(1, 4, Styles.tableHeader);
+  ws.setStyle(1, 5, Styles.tableHeader);
+
+  // Dropdown list
+  ws.addDataValidation('B2:B20', {
+    type: 'list',
+    list: ['Active', 'Inactive', 'Pending', 'Archived'],
+    showDropDown: true,
+    showErrorAlert: true,
+    errorTitle: 'Invalid Status',
+    error: 'Please select a valid status from the dropdown.',
+    showInputMessage: true,
+    promptTitle: 'Status',
+    prompt: 'Select the item status.',
+  });
+
+  // Number range validation
+  ws.addDataValidation('C2:C20', {
+    type: 'whole',
+    operator: 'between',
+    formula1: '0',
+    formula2: '100',
+    showErrorAlert: true,
+    errorTitle: 'Invalid Score',
+    error: 'Score must be between 0 and 100.',
+    allowBlank: true,
+  });
+
+  // Date validation
+  ws.addDataValidation('D2:D20', {
+    type: 'date',
+    operator: 'greaterThan',
+    formula1: 'TODAY()',
+    showErrorAlert: true,
+    errorTitle: 'Invalid Date',
+    error: 'Date must be in the future.',
+  });
+
+  // Text length validation
+  ws.addDataValidation('A2:A20', {
+    type: 'textLength',
+    operator: 'between',
+    formula1: '2',
+    formula2: '50',
+    showErrorAlert: true,
+    errorTitle: 'Name too short/long',
+    error: 'Name must be 2–50 characters.',
+  });
+
+  // Custom formula validation (no spaces in email)
+  ws.addDataValidation('E2:E20', {
+    type: 'custom',
+    formula1: 'ISNUMBER(FIND("@",E2))',
+    showErrorAlert: true,
+    errorTitle: 'Invalid Email',
+    error: 'Must contain @.',
+  });
+
+  for (let c = 1; c <= 5; c++) ws.setColumnWidth(c, 18);
+
+  await wb.writeFile('./output/11_validation.xlsx');
+}
+
+// ============================================================
+// 12. SPARKLINES
+// ============================================================
+async function example_sparklines() {
+  const wb = new Workbook();
+  const ws = wb.addSheet('Sparklines');
+
+  ws.writeRow(1, 1, ['Item', 'Jan','Feb','Mar','Apr','May','Jun','Trend','Bar']);
+  ws.setStyle(1, 1, Styles.tableHeader);
+  for (let c = 2; c <= 9; c++) ws.setStyle(1, c, Styles.tableHeader);
+
+  const rows = [
+    ['Product A', 10, 15, 13, 18, 22, 20],
+    ['Product B',  5,  8, 12,  9, 14, 16],
+    ['Product C', 20, 18, 21, 17, 19, 23],
+  ];
+
+  rows.forEach((row, i) => {
+    ws.writeRow(i+2, 1, row);
+    const r = i + 2;
+
+    // Line sparkline
+    ws.addSparkline({
+      type: 'line',
+      dataRange: `B${r}:G${r}`,
+      location: `H${r}`,
+      color: Colors.ExcelBlue,
+      highColor: Colors.Green,
+      lowColor: Colors.Red,
+      showHigh: true,
+      showLow: true,
+      showMarkers: true,
+    });
+
+    // Bar sparkline
+    ws.addSparkline({
+      type: 'bar',
+      dataRange: `B${r}:G${r}`,
+      location: `I${r}`,
+      color: Colors.ExcelOrange ?? 'FFED7D31',
+      negativeColor: Colors.Red,
+      showNegative: true,
+    });
+  });
+
+  ws.setColumnWidth(1, 15);
+  ws.setColumnWidth(8, 20);
+  ws.setColumnWidth(9, 20);
+
+  await wb.writeFile('./output/12_sparklines.xlsx');
+}
+
+// ============================================================
+// 13. PAGE SETUP, HEADERS & FOOTERS
+// ============================================================
+async function example_page_setup() {
+  const wb = new Workbook();
+  const ws = wb.addSheet('Page Setup');
+
+  // Fill with sample data
+  for (let r = 1; r <= 100; r++) {
+    ws.writeRow(r, 1, [`Row ${r}`, r * 10, r * 20, r * 30]);
+  }
+
+  ws.pageSetup = {
+    paperSize:    9,   // A4
+    orientation:  'landscape',
+    fitToPage:    true,
+    fitToWidth:   1,
+    fitToHeight:  0,
+    horizontalDpi: 300,
+    verticalDpi:   300,
+  };
+
+  ws.pageMargins = {
+    left: 0.5, right: 0.5,
+    top: 0.75, bottom: 0.75,
+    header: 0.3, footer: 0.3,
+  };
+
+  ws.headerFooter = {
+    oddHeader:  '&L&"Calibri,Bold"My Company&C&[Tab]&RConfidential',
+    oddFooter:  '&LPrinted: &D&CPage &P of &N&R&[Path]&[File]',
+    differentFirst: true,
+    firstHeader: '&C&"Calibri,Bold"&18Cover Page',
+    firstFooter: '&CConfidential',
+  };
+
+  ws.printOptions = {
+    gridLines: false,
+    headings: false,
+    centerHorizontal: true,
+  };
+
+  await wb.writeFile('./output/13_page_setup.xlsx');
+}
+
+// ============================================================
+// 14. SHEET PROTECTION
+// ============================================================
+async function example_protection() {
+  const wb = new Workbook();
+  const ws = wb.addSheet('Protected');
+
+  ws.setValue(1, 1, 'This cell is locked (default)');
+  ws.setCell(2, 1, {
+    value: 'This cell is editable',
+    style: { locked: false, fill: { type: 'pattern', pattern: 'solid', fgColor: 'FFFFFF00' } }
+  });
+
+  ws.protection = {
+    sheet: true,
+    password: 'secret',
+    selectLockedCells: true,
+    selectUnlockedCells: true,
+    formatCells: true,
+    insertRows: true,
+    deleteRows: true,
+    sort: true,
+    autoFilter: true,
+  };
+
+  await wb.writeFile('./output/14_protection.xlsx');
+}
+
+// ============================================================
+// 15. NAMED RANGES & MULTIPLE SHEETS
+// ============================================================
+async function example_named_ranges() {
+  const wb = new Workbook();
+
+  const wsData = wb.addSheet('Data');
+  wsData.writeColumn(1, 1, [100, 200, 300, 400, 500]);
+  wsData.writeColumn(1, 2, ['Alpha', 'Beta', 'Gamma', 'Delta', 'Epsilon']);
+
+  wb.addNamedRange({
+    name: 'SalesData',
+    ref: 'Data!$A$1:$A$5',
+  });
+
+  wb.addNamedRange({
+    name: 'ProductNames',
+    ref: 'Data!$B$1:$B$5',
+  });
+
+  const wsSummary = wb.addSheet('Summary');
+  wsSummary.setFormula(1, 1, 'SUM(SalesData)');
+  wsSummary.setFormula(2, 1, 'AVERAGE(SalesData)');
+  wsSummary.setFormula(3, 1, 'MAX(SalesData)');
+  wsSummary.setFormula(1, 3, 'INDEX(ProductNames,MATCH(MAX(SalesData),SalesData,0))');
+
+  // Hidden sheet
+  const wsConfig = wb.addSheet('Config', { state: 'hidden' });
+  wsConfig.setValue(1, 1, 'This sheet is hidden');
+
+  await wb.writeFile('./output/15_named_ranges.xlsx');
+}
+
+// ============================================================
+// 16. AUTO FILTER, OUTLINING, GROUPING
+// ============================================================
+async function example_autofilter() {
+  const wb = new Workbook();
+  const ws = wb.addSheet('AutoFilter');
+
+  ws.writeRow(1, 1, ['Region', 'Product', 'Q1', 'Q2', 'Q3', 'Q4']);
+  ws.setStyle(1, 1, Styles.tableHeader);
+  for (let c = 2; c <= 6; c++) ws.setStyle(1, c, Styles.tableHeader);
+
+  const data = [
+    ['North', 'Widget', 100, 120, 110, 130],
+    ['South', 'Widget', 80,  90,  85, 95],
+    ['North', 'Gadget', 200, 210, 205, 220],
+    ['South', 'Gadget', 150, 160, 155, 170],
+    ['East',  'Widget', 60,  70,  65,  80],
+    ['West',  'Gadget', 120, 130, 125, 140],
+  ];
+
+  ws.writeArray(2, 1, data);
+  ws.autoFilter = { ref: 'A1:F1' };
+
+  // Row grouping (outline)
+  ws.setRow(2, { outlineLevel: 1 });
+  ws.setRow(3, { outlineLevel: 1 });
+  ws.setRow(4, { outlineLevel: 2 });
+  ws.setRow(5, { outlineLevel: 2 });
+
+  for (let c = 1; c <= 6; c++) ws.setColumnWidth(c, 14);
+
+  await wb.writeFile('./output/16_autofilter.xlsx');
+}
+
+// ============================================================
+// 17. HYPERLINKS
+// ============================================================
+async function example_hyperlinks() {
+  const wb = new Workbook();
+  const ws = wb.addSheet('Hyperlinks');
+
+  const blueUnderline = style().fontColor(Colors.Blue).underline().build();
+
+  ws.setCell(1, 1, {
+    value: 'Visit Google',
+    style: blueUnderline,
+    hyperlink: { href: 'https://www.google.com', tooltip: 'Go to Google' }
+  });
+
+  ws.setCell(2, 1, {
+    value: 'Email Us',
+    style: blueUnderline,
+    hyperlink: { href: 'mailto:hello@example.com' }
+  });
+
+  ws.setCell(3, 1, {
+    value: 'Go to Sheet2!A1',
+    style: blueUnderline,
+    hyperlink: { href: '#Sheet2!A1', tooltip: 'Navigate to Sheet2' }
+  });
+
+  const ws2 = wb.addSheet('Sheet2');
+  ws2.setValue(1, 1, 'You navigated here!');
+
+  await wb.writeFile('./output/17_hyperlinks.xlsx');
+}
+
+// ============================================================
+// 18. COMMENTS
+// ============================================================
+async function example_comments() {
+  const wb = new Workbook();
+  const ws = wb.addSheet('Comments');
+
+  ws.setCell(1, 1, {
+    value: 'Hover for comment',
+    comment: { text: 'This is a cell comment.', author: 'ExcelForge' }
+  });
+
+  ws.setCell(3, 3, {
+    value: 42,
+    comment: { text: 'The answer to life, the universe, and everything.', author: 'Deep Thought' }
+  });
+
+  await wb.writeFile('./output/18_comments.xlsx');
+}
+
+// ============================================================
+// 19. COMPLETE FINANCIAL REPORT EXAMPLE
+// ============================================================
+async function example_financial_report() {
+  const wb = new Workbook();
+  wb.properties = {
+    title: 'Q4 2024 Financial Report',
+    author: 'Finance Team',
+    company: 'Acme Corp',
+    category: 'Financial',
+  };
+
+  const ws = wb.addSheet('P&L Statement');
+
+  // Title
+  ws.setCell(1, 1, { value: 'ACME CORP — Q4 2024 P&L', style: style().bold().fontSize(16).build() });
+  ws.merge(1, 1, 1, 5);
+
+  // Headers
+  ws.writeRow(3, 1, ['', 'Q1 2024', 'Q2 2024', 'Q3 2024', 'Q4 2024']);
+  for (let c = 1; c <= 5; c++) ws.setStyle(3, c, Styles.tableHeader);
+
+  // Revenue section
+  ws.setCell(4, 1, { value: 'REVENUE', style: style().bold().bg('FFD9E1F2').build() });
+  ws.merge(4, 1, 4, 5);
+
+  const revenueRows = [
+    ['Product Sales', 1200000, 1350000, 1100000, 1500000],
+    ['Services',       300000,  320000,  350000,  380000],
+    ['Other Revenue',   50000,   60000,   55000,   70000],
+  ];
+
+  revenueRows.forEach((row, i) => {
+    const r = 5 + i;
+    ws.setValue(r, 1, row[0] as string);
+    for (let c = 1; c <= 4; c++) {
+      ws.setValue(r, c + 1, row[c] as number);
+      ws.setStyle(r, c + 1, style().numFmt(NumFmt.Currency).build());
+    }
+  });
+
+  // Total Revenue (formula row)
+  ws.setCell(8, 1, { value: 'Total Revenue', style: style().bold().build() });
+  for (let c = 2; c <= 5; c++) {
+    ws.setCell(8, c, {
+      formula: `SUM(${String.fromCharCode(64+c)}5:${String.fromCharCode(64+c)}7)`,
+      style: style().bold().numFmt(NumFmt.Currency).borderTop('thin').build(),
+    });
+  }
+
+  // Expenses section
+  ws.setCell(10, 1, { value: 'EXPENSES', style: style().bold().bg('FFFCE4D6').build() });
+  ws.merge(10, 1, 10, 5);
+
+  const expenseRows = [
+    ['Cost of Goods',  600000,  680000,  550000,  750000],
+    ['Operating Exp',  200000,  210000,  220000,  230000],
+    ['Marketing',       80000,   90000,   85000,  100000],
+    ['R&D',             50000,   55000,   60000,   65000],
+  ];
+
+  expenseRows.forEach((row, i) => {
+    const r = 11 + i;
+    ws.setValue(r, 1, row[0] as string);
+    for (let c = 1; c <= 4; c++) {
+      ws.setValue(r, c + 1, row[c] as number);
+      ws.setStyle(r, c + 1, style().numFmt(NumFmt.Currency).build());
+    }
+  });
+
+  // Total Expenses
+  ws.setCell(15, 1, { value: 'Total Expenses', style: style().bold().build() });
+  for (let c = 2; c <= 5; c++) {
+    ws.setCell(15, c, {
+      formula: `SUM(${String.fromCharCode(64+c)}11:${String.fromCharCode(64+c)}14)`,
+      style: style().bold().numFmt(NumFmt.Currency).borderTop('thin').build(),
+    });
+  }
+
+  // Net Income
+  ws.setCell(17, 1, { value: 'NET INCOME', style: style().bold().fontSize(12).build() });
+  for (let c = 2; c <= 5; c++) {
+    const col = String.fromCharCode(64 + c);
+    ws.setCell(17, c, {
+      formula: `${col}8-${col}15`,
+      style: style().bold().fontSize(12).numFmt(NumFmt.Currency)
+        .border('medium').bg('FF70AD47').fontColor(Colors.White).build(),
+    });
+  }
+
+  // Margin row
+  ws.setCell(18, 1, { value: 'Net Margin %', style: style().bold().build() });
+  for (let c = 2; c <= 5; c++) {
+    const col = String.fromCharCode(64 + c);
+    ws.setCell(18, c, {
+      formula: `${col}17/${col}8`,
+      style: style().bold().numFmt(NumFmt.Percent2).build(),
+    });
+  }
+
+  // Conditional formatting on net income
+  ws.addConditionalFormat({
+    sqref: 'B17:E17', type: 'cellIs', operator: 'greaterThan', formula: '0',
+    style: style().fontColor(Colors.Green).build(), priority: 1,
+  });
+
+  // Column widths
+  ws.setColumnWidth(1, 22);
+  for (let c = 2; c <= 5; c++) ws.setColumnWidth(c, 16);
+
+  // Freeze pane
+  ws.freeze(3, 1);
+
+  // Chart sheet
+  const wsChart = wb.addSheet('Charts');
+  wsChart.writeRow(1, 1, ['Quarter', 'Revenue', 'Expenses', 'Net Income']);
+  [['Q1',1550000,930000,620000],['Q2',1730000,1035000,695000],
+   ['Q3',1505000,915000,590000],['Q4',1950000,1145000,805000]].forEach((row, i) => {
+    wsChart.writeRow(i+2, 1, row);
+  });
+
+  wsChart.addChart({
+    type: 'columnStacked',
+    title: 'Quarterly Financial Performance',
+    series: [
+      { name: 'Revenue',     values: 'Charts!$B$2:$B$5', categories: 'Charts!$A$2:$A$5', color: Colors.ExcelBlue },
+      { name: 'Expenses',    values: 'Charts!$C$2:$C$5', categories: 'Charts!$A$2:$A$5', color: Colors.ExcelOrange ?? 'FFED7D31' },
+    ],
+    from: { col: 5, row: 1 }, to: { col: 14, row: 18 },
+    xAxis: { title: 'Quarter' },
+    yAxis: { title: 'Amount ($)' },
+    legend: 'b', style: 2,
+  });
+
+  await wb.writeFile('./output/19_financial_report.xlsx');
+}
+
+// Run all examples
+async function runAll() {
+  const { mkdirSync } = await import('fs');
+  try { mkdirSync('./output', { recursive: true }); } catch {}
+
+  const examples = [
+    ['Basic',                  example_basic],
+    ['Formulas',               example_formulas],
+    ['Styles',                 example_styles],
+    ['Merges',                 example_merges],
+    ['Rich Text',              example_richtext],
+    ['Freeze Panes',           example_panes],
+    ['Conditional Formatting', example_conditional_formatting],
+    ['Tables',                 example_tables],
+    ['Charts',                 example_charts],
+    ['Images',                 example_images],
+    ['Data Validation',        example_data_validation],
+    ['Sparklines',             example_sparklines],
+    ['Page Setup',             example_page_setup],
+    ['Protection',             example_protection],
+    ['Named Ranges',           example_named_ranges],
+    ['AutoFilter',             example_autofilter],
+    ['Hyperlinks',             example_hyperlinks],
+    ['Comments',               example_comments],
+    ['Financial Report',       example_financial_report],
+  ] as const;
+
+  for (const [name, fn] of examples) {
+    try {
+      await fn();
+      console.log(`✅ ${name}`);
+    } catch (e) {
+      console.error(`❌ ${name}: ${e}`);
+    }
+  }
+}
+
+runAll().catch(console.error);
