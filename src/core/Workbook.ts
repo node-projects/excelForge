@@ -6,7 +6,7 @@ import { StyleRegistry } from '../styles/StyleRegistry.js';
 import { SharedStrings } from './SharedStrings.js';
 import { buildChartXml } from '../features/ChartBuilder.js';
 import { buildTableXml } from '../features/TableBuilder.js';
-import { buildZip, type ZipEntry } from '../utils/zip.js';
+import { buildZip, type ZipEntry, type ZipOptions } from '../utils/zip.js';
 import { strToBytes, base64ToBytes, escapeXml } from '../utils/helpers.js';
 import { readWorkbook, type ReadResult } from './WorkbookReader.js';
 import {
@@ -18,6 +18,16 @@ export class Workbook {
   private sheets: Worksheet[] = [];
   private namedRanges: NamedRange[] = [];
   properties: WorkbookProperties = {};
+
+  /**
+   * Compression level for the output ZIP (DEFLATE).
+   * 0 = no compression (STORE — fastest, largest file)
+   * 1 = fastest compression
+   * 6 = default (recommended — good balance of speed and size)
+   * 9 = maximum compression (slowest, smallest file)
+   * Default: 6
+   */
+  compressionLevel: number = 6;
 
   // ─── Extended / custom properties ─────────────────────────────────────────
 
@@ -248,7 +258,7 @@ export class Workbook {
       data: strToBytes(this._patchContentTypes(rr.contentTypesXml, customProps != null && customProps.length > 0)),
     });
 
-    return buildZip(entries);
+    return buildZip(entries, { level: this.compressionLevel });
   }
 
   // ── Fresh build ───────────────────────────────────────────────────────────
@@ -411,7 +421,7 @@ ${dRels.join('\n')}
 
     if (hasCustom) entries.push({ name: 'docProps/custom.xml', data: strToBytes(buildCustomXml(this.customProperties)) });
 
-    return buildZip(entries);
+    return buildZip(entries, { level: this.compressionLevel });
   }
 
   // ─── Internal helpers ──────────────────────────────────────────────────────

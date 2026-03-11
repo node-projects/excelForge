@@ -1,8 +1,8 @@
 # ExcelForge 📊
 
-A **complete TypeScript library** for creating Excel `.xlsx` files with **zero external dependencies**. Works in browsers, Node.js, Deno, Bun, and edge runtimes.
+A **complete TypeScript library** for reading and writing Excel `.xlsx` files with **zero external dependencies**. Works in browsers, Node.js, Deno, Bun, and edge runtimes.
 
-Inspired by EPPlus (C#), ExcelForge gives you the full power of the OOXML spec from TypeScript.
+Inspired by EPPlus (C#), ExcelForge gives you the full power of the OOXML spec — including real DEFLATE compression, round-trip editing of existing files, and rich property support.
 
 ---
 
@@ -10,443 +10,557 @@ Inspired by EPPlus (C#), ExcelForge gives you the full power of the OOXML spec f
 
 | Category | Features |
 |---|---|
+| **Read existing files** | Load `.xlsx` from file, `Uint8Array`, `base64`, or `Blob` |
+| **Patch-only writes** | Re-serialise only changed sheets; preserve pivot tables, VBA, charts, unknown parts verbatim |
+| **Compression** | Full LZ77 + Huffman DEFLATE (levels 0–9). Typical XML compresses 80–85% |
 | **Cell Values** | Strings, numbers, booleans, dates, formulas, array formulas, rich text |
-| **Styles** | Fonts (size, bold, italic, color, underline, strike, family), fills (solid, pattern, gradient), borders (all sides, styles, colors), alignment (horizontal, vertical, wrap, rotate, indent, shrink), number formats |
-| **Layout** | Merge cells, freeze/split panes, column widths, row heights, hide rows/cols, outline/grouping |
-| **Charts** | Bar, column (stacked/100%), line, area, pie, doughnut, scatter, radar, bubble — with titles, axes, legends |
-| **Images** | PNG, JPEG, GIF — positioned with two-cell or one-cell anchors |
+| **Styles** | Fonts, solid/pattern/gradient fills, all border styles, alignment, 30+ number format presets |
+| **Layout** | Merge cells, freeze/split panes, column widths, row heights, hide rows/cols, outline grouping |
+| **Charts** | Bar, column (stacked/100%), line, area, pie, doughnut, scatter, radar, bubble |
+| **Images** | PNG, JPEG, GIF — two-cell or one-cell anchors |
 | **Tables** | Styled Excel tables with totals row, filter buttons, column definitions |
 | **Conditional Formatting** | Cell rules, color scales, data bars, icon sets, top/bottom N, above/below average |
-| **Data Validation** | Dropdown lists, whole number, decimal, date, time, text length, custom formula |
-| **Sparklines** | Line, bar, stacked — with colors for high/low/first/last/negative |
+| **Data Validation** | Dropdowns, whole number, decimal, date, time, text length, custom formula |
+| **Sparklines** | Line, bar, stacked — with high/low/first/last/negative colors |
 | **Page Setup** | Paper size, orientation, margins, headers/footers (odd/even/first), print options |
-| **Protection** | Sheet protection with password (XOR hash), cell locking/hiding |
-| **Named Ranges** | Workbook and sheet-scoped named ranges |
+| **Protection** | Sheet protection with password, cell locking/hiding |
+| **Named Ranges** | Workbook and sheet-scoped |
 | **Auto Filter** | Dropdown filters on column headers |
-| **Hyperlinks** | External URLs, mailto, internal sheet navigation |
+| **Hyperlinks** | External URLs, mailto, internal navigation |
 | **Comments** | Cell comments with author |
-| **Multiple Sheets** | Any number of sheets, hidden/veryHidden state, tab colors |
-| **Workbook Properties** | Title, author, company, subject, keywords, dates, etc. |
-| **1904 date system** | Optional 1904 date epoch |
+| **Multiple Sheets** | Any number, hidden/veryHidden, tab colors |
+| **Core Properties** | Title, author, subject, keywords, description, language, revision, category… |
+| **Extended Properties** | Company, manager, application, appVersion, hyperlinkBase, word/line/page counts… |
+| **Custom Properties** | Typed key-value store: string, int, decimal, bool, date, r8, i8 |
 
 ---
 
-## Quick Start
+## Installation
+
+```bash
+# Copy the src/ directory into your project, or compile to dist/ first:
+tsc --outDir dist --target ES2020 --module NodeNext --moduleResolution NodeNext \
+    --declaration --strict --skipLibCheck src/index.ts [all src files]
+```
+
+No `npm install` required — zero runtime dependencies.
+
+---
+
+## Quick Start — Create a workbook
 
 ```typescript
 import { Workbook, style, Colors, NumFmt } from './src/index.js';
 
 const wb = new Workbook();
-wb.properties.title = 'My Report';
-wb.properties.author = 'ExcelForge';
+wb.coreProperties = { title: 'Q4 Report', creator: 'Alice', language: 'en-US' };
+wb.extendedProperties = { company: 'Acme Corp', appVersion: '1.0' };
 
 const ws = wb.addSheet('Sales Data');
 
-// Write a header row
+// Header row
 ws.writeRow(1, 1, ['Product', 'Q1', 'Q2', 'Q3', 'Q4', 'Total']);
 for (let c = 1; c <= 6; c++) {
   ws.setStyle(1, c, style().bold().bg(Colors.ExcelBlue).fontColor(Colors.White).center().build());
 }
 
-// Write data rows
+// Data rows
 ws.writeArray(2, 1, [
   ['Widget A', 1200, 1350, 1100, 1500],
   ['Widget B',  800,  950,  870, 1020],
   ['Gadget X', 2100, 1980, 2250, 2400],
 ]);
 
-// Add SUM formulas in column F
+// SUM formulas
 for (let r = 2; r <= 4; r++) {
   ws.setFormula(r, 6, `SUM(B${r}:E${r})`);
-  ws.setStyle(r, 6, style().bold().numFmt(NumFmt.Integer).build());
+  ws.setStyle(r, 6, style().bold().build());
 }
 
-// Set column widths
-ws.setColumnWidth(1, 20);
-for (let c = 2; c <= 6; c++) ws.setColumnWidth(c, 12);
+ws.freeze(1, 0); // freeze first row
 
-// Freeze header row
-ws.freeze(1, 0);
-
-// Browser: trigger download
-await wb.download('sales_report.xlsx');
-
-// Node.js: write to file
-await wb.writeFile('./sales_report.xlsx');
+// Output — compression level 6 by default (80–85% smaller than STORE)
+await wb.writeFile('./report.xlsx');          // Node.js
+await wb.download('report.xlsx');             // Browser
+const bytes = await wb.build();              // Uint8Array (any runtime)
+const b64   = await wb.buildBase64();        // base64 string
 ```
 
 ---
 
-## API Reference
+## Reading & modifying existing files
 
-### Workbook
+ExcelForge can load existing `.xlsx` files and either read their contents or patch them. Only the sheets you mark as dirty are re-serialised on write; everything else — pivot tables, VBA, drawings, slicers, macros — is preserved verbatim from the original ZIP.
+
+### Loading
+
+```typescript
+// Node.js / Deno / Bun
+const wb = await Workbook.fromFile('./existing.xlsx');
+
+// Universal (Uint8Array)
+const wb = await Workbook.fromBytes(uint8Array);
+
+// Browser (File / Blob input element)
+const wb = await Workbook.fromBlob(fileInputElement.files[0]);
+
+// base64 string (e.g. from an API or email attachment)
+const wb = await Workbook.fromBase64(base64String);
+```
+
+### Reading data
+
+```typescript
+console.log(wb.getSheetNames());         // ['Sheet1', 'Summary', 'Config']
+
+const ws = wb.getSheet('Summary');
+const cell = ws.getCell(3, 2);           // row 3, col 2
+console.log(cell.value);                 // 'Q4 Revenue'
+console.log(cell.formula);              // 'SUM(B10:B20)'
+console.log(cell.style?.font?.bold);    // true
+```
+
+### Modifying and saving
+
+```typescript
+const wb = await Workbook.fromFile('./report.xlsx');
+const ws = wb.getSheet('Sales');
+
+// Make changes
+ws.setValue(5, 3, 99000);
+ws.setStyle(5, 3, style().bg(Colors.LightGreen).build());
+ws.writeRow(20, 1, ['TOTAL', '', '=SUM(C2:C19)']);
+
+// Mark the sheet dirty — it will be re-serialised on write.
+// Sheets NOT marked dirty are written back byte-for-byte from the original.
+wb.markDirty('Sales');
+
+// Patch properties without re-serialising any sheets
+wb.coreProperties.title = 'Updated Report';
+wb.setCustomProperty('Status', { type: 'string', value: 'Approved' });
+
+await wb.writeFile('./report_updated.xlsx');
+```
+
+> **Tip:** If you forget to call `markDirty()`, your cell changes won't appear in the output because the original sheet XML will be used. Always call it after modifying a loaded sheet.
+
+---
+
+## Compression
+
+ExcelForge includes a full pure-TypeScript DEFLATE implementation (LZ77 lazy matching + dynamic/fixed Huffman coding) with no external dependencies. XML content — the bulk of any `.xlsx` — typically compresses to 80–85% of its original size.
+
+### Setting the compression level
 
 ```typescript
 const wb = new Workbook();
+wb.compressionLevel = 6;  // 0–9, default 6
+```
 
-wb.properties = {
-  title, author, company, subject, description,
-  keywords, category, status, created, modified,
-  lastModifiedBy, date1904
+| Level | Description | Typical size vs STORE |
+|---|---|---|
+| `0` | STORE — no compression, fastest | baseline |
+| `1` | FAST — fixed Huffman, minimal LZ77 | ~75% smaller |
+| `6` | **DEFAULT** — dynamic Huffman + lazy LZ77 | ~82% smaller |
+| `9` | BEST — maximum LZ77 effort | ~83% smaller (marginal gain over 6) |
+
+Level 6 is the default and the recommended choice — it achieves most of the compression benefit of level 9 at a fraction of the CPU cost.
+
+### Per-entry level override
+
+The `buildZip` function used internally also supports per-entry overrides, useful if you want images (already compressed) stored uncompressed while XML entries are compressed:
+
+```typescript
+import { buildZip } from './src/utils/zip.js';
+
+const zip = buildZip([
+  { name: 'xl/worksheets/sheet1.xml', data: xmlBytes },         // uses global level
+  { name: 'xl/media/image1.png',      data: pngBytes, level: 0 }, // forced STORE
+  { name: 'xl/styles.xml',            data: stylesBytes, level: 9 }, // max compression
+], { level: 6 });
+```
+
+By default, `buildZip` automatically stores image file types (`png`, `jpg`, `gif`, `tiff`, `emf`, `wmf`) uncompressed since they're already compressed formats.
+
+---
+
+## Document Properties
+
+ExcelForge reads and writes all three OOXML property namespaces.
+
+### Core properties (`docProps/core.xml`)
+
+```typescript
+wb.coreProperties = {
+  title:          'Annual Report 2024',
+  subject:        'Financial Summary',
+  creator:        'Finance Team',
+  keywords:       'excel quarterly finance',
+  description:    'Auto-generated from ERP export',
+  lastModifiedBy: 'Alice',
+  revision:       '3',
+  language:       'en-US',
+  category:       'Finance',
+  contentStatus:  'Final',
+  created:        new Date('2024-01-01'),
+  // modified is always set to current time on write
 };
-
-const ws   = wb.addSheet('Name', options?);
-const ws   = wb.getSheet('Name');
-const ws   = wb.getSheetByIndex(0);
-wb.removeSheet('Name');
-wb.addNamedRange({ name, ref, scope?, comment? });
-
-// Output
-const bytes  = await wb.build();           // Uint8Array
-const b64    = await wb.buildBase64();     // base64 string
-await wb.writeFile('./report.xlsx');        // Node.js
-await wb.download('report.xlsx');           // Browser
 ```
 
-### Worksheet
+### Extended properties (`docProps/app.xml`)
 
 ```typescript
-// Cell access
-ws.setValue(row, col, value)
-ws.setFormula(row, col, 'SUM(A1:A5)')
-ws.setStyle(row, col, cellStyle)
-ws.setCell(row, col, { value, formula, richText, style, comment, hyperlink })
-ws.getCell(row, col)
-ws.getCellByRef('A1')
-
-// Batch writing
-ws.writeRow(row, startCol, values[])
-ws.writeColumn(startRow, col, values[])
-ws.writeArray(startRow, startCol, values[][])
-
-// Layout
-ws.setColumnWidth(col, width)
-ws.setColumn(col, { width, hidden, outlineLevel, collapsed, style })
-ws.setRowHeight(row, height)
-ws.setRow(row, { height, hidden, outlineLevel, collapsed, style })
-
-// Merging
-ws.merge(startRow, startCol, endRow, endCol)
-ws.mergeByRef('A1:C3')
-
-// Freeze / split panes
-ws.freeze(rows?, cols?)    // e.g. ws.freeze(1) to freeze top row
-
-// Features
-ws.addImage(image)
-ws.addChart(chart)
-ws.addTable(table)
-ws.addConditionalFormat(cf)
-ws.addDataValidation(sqref, dv)
-ws.addSparkline(sparkline)
-
-// Sheet properties
-ws.autoFilter = { ref: 'A1:D1' }
-ws.view = { showGridLines, zoomScale, rightToLeft, view }
-ws.pageSetup = { paperSize, orientation, fitToPage, ... }
-ws.pageMargins = { left, right, top, bottom, header, footer }
-ws.headerFooter = { oddHeader, oddFooter, ... }
-ws.printOptions = { gridLines, headings, centerHorizontal }
-ws.protection = { sheet, password, ... }
-ws.options = { tabColor, state: 'hidden' | 'veryHidden' }
+wb.extendedProperties = {
+  application:       'ExcelForge',
+  appVersion:        '1.0.0',
+  company:           'Acme Corp',
+  manager:           'Bob Smith',
+  hyperlinkBase:     'https://intranet.acme.com/',
+  docSecurity:       0,
+  linksUpToDate:     true,
+  // These are computed automatically on write:
+  // titlesOfParts, headingPairs
+};
 ```
 
-### Style Builder (Fluent API)
+### Custom properties (`docProps/custom.xml`)
+
+Custom properties support typed values — they appear in Excel under **File → Properties → Custom**.
 
 ```typescript
-import { style, Styles, Colors, NumFmt } from './src/index.js';
+// Set custom properties at workbook level
+wb.customProperties = [
+  { name: 'ProjectCode',  value: { type: 'string',  value: 'PRJ-2024-007' } },
+  { name: 'Revision',     value: { type: 'int',     value: 5             } },
+  { name: 'Budget',       value: { type: 'decimal', value: 125000.00     } },
+  { name: 'IsApproved',   value: { type: 'bool',    value: true          } },
+  { name: 'ReviewDate',   value: { type: 'date',    value: new Date()    } },
+];
 
-// Build from scratch
-const myStyle = style()
+// Or use the helper methods
+wb.setCustomProperty('Status', { type: 'string', value: 'In Review' });
+wb.setCustomProperty('Score',  { type: 'decimal', value: 9.7 });
+wb.removeCustomProperty('OldField');
+
+// Read back
+const proj = wb.getCustomProperty('ProjectCode');
+console.log(proj?.value.value);  // 'PRJ-2024-007'
+
+// Full list
+for (const p of wb.customProperties) {
+  console.log(p.name, p.value.type, p.value.value);
+}
+```
+
+Available value types: `string`, `int`, `decimal`, `bool`, `date`, `r8` (8-byte float), `i8` (BigInt).
+
+---
+
+## Cell API reference
+
+### Writing values
+
+```typescript
+ws.setValue(row, col, value);          // string | number | boolean | Date
+ws.setFormula(row, col, 'SUM(A1:A5)');
+ws.setArrayFormula(row, col, 'row*col formula', 'A1:C3');
+ws.setStyle(row, col, cellStyle);
+ws.setCell(row, col, { value, formula, style, comment, hyperlink });
+
+// Bulk writes
+ws.writeRow(row, startCol, [v1, v2, v3]);
+ws.writeArray(startRow, startCol, [[...], [...], ...]);
+```
+
+### Reading values
+
+```typescript
+const cell = ws.getCell(row, col);
+cell.value     // the stored value (string | number | boolean | undefined)
+cell.formula   // formula string if present
+cell.style     // CellStyle object
+```
+
+### Styles
+
+```typescript
+import { style, Colors, NumFmt, Styles } from './src/index.js';
+
+// Fluent builder
+const headerStyle = style()
   .bold()
   .italic()
-  .fontSize(14)
-  .fontName('Arial')
-  .fontColor('#FF0000')         // or Colors.Red
-  .bg('#4472C4')                // solid fill
-  .fill('gray125')              // pattern fill
-  .border('thin')               // all sides
-  .borderTop('thick', Colors.Red)
-  .align('center', 'middle')
-  .wrap()
-  .rotate(45)
-  .indent(2)
+  .fontSize(13)
+  .fontColor(Colors.White)
+  .bg(Colors.ExcelBlue)
+  .border('thin')
+  .center()
+  .wrapText()
   .numFmt(NumFmt.Currency)
-  .locked(false)
   .build();
 
-// Pre-built styles
-Styles.headerBlue      // Bold, blue bg, white text, centered
-Styles.headerGray      // Bold, dark gray bg, white text
-Styles.tableHeader     // Bold, border, blue bg, centered
-Styles.currency        // $#,##0.00
-Styles.percent         // 0.00%
-Styles.date            // Short date
-Styles.bordered        // All thin borders
-Styles.highlight       // Yellow background
-Styles.bold            // Just bold
-Styles.centered        // Just centered
-Styles.redText         // Red font
-// ... and more
+// Built-in presets
+ws.setStyle(1, 1, Styles.bold);
+ws.setStyle(1, 2, Styles.headerBlue);
+ws.setStyle(2, 3, Styles.currency);
+ws.setStyle(3, 4, Styles.percent);
+```
 
-// Color constants
-Colors.White, Colors.Black, Colors.Red, Colors.Green
-Colors.Blue, Colors.Yellow, Colors.Orange, Colors.Gray
-Colors.ExcelBlue, Colors.ExcelOrange, Colors.ExcelGreen
-Colors.DarkBlue, Colors.LightGray, Colors.Transparent
+### Number formats
 
-// Number format strings
-NumFmt.General, NumFmt.Integer, NumFmt.Decimal2
-NumFmt.Currency, NumFmt.CurrencyNeg, NumFmt.Accounting
-NumFmt.Percent, NumFmt.Percent2
-NumFmt.ShortDate, NumFmt.LongDate, NumFmt.DateTime
-NumFmt.Scientific, NumFmt.Text, NumFmt.Multiple, NumFmt.ZeroDash
+```typescript
+NumFmt.General      // General
+NumFmt.Integer      // 0
+NumFmt.Decimal2     // #,##0.00
+NumFmt.Currency     // $#,##0.00
+NumFmt.Percent      // 0%
+NumFmt.Percent2     // 0.00%
+NumFmt.Scientific   // 0.00E+00
+NumFmt.ShortDate    // mm-dd-yy
+NumFmt.LongDate     // d-mmm-yy
+NumFmt.Time         // h:mm:ss AM/PM
+NumFmt.DateTime     // m/d/yy h:mm
+NumFmt.Accounting   // _($* #,##0.00_)
+NumFmt.Text         // @
+```
+
+### Layout
+
+```typescript
+ws.merge(r1, c1, r2, c2);              // merge a range
+ws.mergeByRef('A1:D1');
+ws.freeze(rows, cols);                 // freeze panes
+ws.setColumn(colIndex, { width: 20, hidden: false, style });
+ws.setRow(rowIndex, { height: 30, hidden: false });
+ws.autoFilter = { ref: 'A1:E1' };
+```
+
+### Conditional formatting
+
+```typescript
+ws.addConditionalFormat({
+  sqref: 'C2:C100',
+  type: 'colorScale',
+  colorScale: {
+    min: { type: 'min', color: 'FFF8696B' },
+    max: { type: 'max', color: 'FF63BE7B' },
+  },
+  priority: 1,
+});
+
+ws.addConditionalFormat({
+  sqref: 'D2:D100',
+  type: 'dataBar',
+  dataBar: { color: 'FF638EC6' },
+  priority: 2,
+});
+```
+
+### Data validation
+
+```typescript
+ws.addDataValidation({
+  sqref: 'B2:B100',
+  type: 'list',
+  formula1: '"North,South,East,West"',
+  showDropDown: false,
+  errorTitle: 'Invalid Region',
+  error: 'Please select a valid region.',
+});
 ```
 
 ### Charts
 
 ```typescript
 ws.addChart({
-  type: 'column',        // bar, column, line, area, pie, doughnut,
-                         // scatter, radar, bubble, barStacked, columnStacked100, ...
-  title: 'My Chart',
-  series: [
-    {
-      name: 'Series 1',
-      values:     'Sheet1!$B$2:$B$10',
-      categories: 'Sheet1!$A$2:$A$10',
-      color: Colors.ExcelBlue,
-    }
-  ],
-  from:   { col: 5, row: 1 },
-  to:     { col: 14, row: 18 },
-  xAxis:  { title: 'Month', gridLines: false },
-  yAxis:  { title: 'Revenue ($)', min: 0, max: 5000 },
-  legend: 'b',           // top | bottom | left | right | false
-  style:  2,             // built-in chart style 1–48
-  varyColors: true,
+  type: 'bar',
+  title: 'Sales by Region',
+  series: [{ name: 'Q1 Sales', dataRange: 'Sheet1!B2:B6', catRange: 'Sheet1!A2:A6' }],
+  position: { from: { row: 1, col: 8 }, to: { row: 20, col: 16 } },
+  legend: { position: 'bottom' },
 });
 ```
+
+Supported chart types: `bar`, `col`, `colStacked`, `col100`, `barStacked`, `bar100`, `line`, `lineStacked`, `area`, `pie`, `doughnut`, `scatter`, `radar`, `bubble`.
 
 ### Images
 
 ```typescript
-import { base64ToBytes } from './src/index.js';
+import { readFileSync } from 'fs';
+const imgData = readFileSync('./logo.png');
 
 ws.addImage({
-  data:   pngUint8Array,   // or base64 string
-  format: 'png',           // png | jpeg | gif
-  from:   { col: 1, row: 2, colOff: 0, rowOff: 0 },
-  to:     { col: 5, row: 10 },  // optional, use width/height instead
-  width:  300,             // pixels (used when 'to' is omitted)
-  height: 200,
-  altText: 'My image',
+  data:   imgData,          // Buffer, Uint8Array, or base64 string
+  format: 'png',
+  from:   { row: 1, col: 1 },
+  to:     { row: 8, col: 4 },
 });
 ```
 
-### Tables
-
-```typescript
-ws.addTable({
-  name:        'SalesTable',
-  ref:         'A1:F10',
-  style:       'TableStyleMedium2',
-  showRowStripes: true,
-  totalsRow:   true,
-  columns: [
-    { name: 'Product', totalsRowLabel: 'Total' },
-    { name: 'Q1', totalsRowFunction: 'sum', numFmt: '#,##0' },
-    { name: 'Q2', totalsRowFunction: 'sum' },
-  ]
-});
-```
-
-### Conditional Formatting
-
-```typescript
-// Color scale
-ws.addConditionalFormat({
-  sqref: 'A1:A20', type: 'colorScale',
-  colorScale: {
-    type: 'colorScale',
-    cfvo: [{ type: 'min' }, { type: 'max' }],
-    color: ['FFFF0000', 'FF00B050'],
-  }
-});
-
-// Data bars
-ws.addConditionalFormat({
-  sqref: 'B1:B20', type: 'dataBar',
-  dataBar: { type: 'dataBar', minColor: 'FF638EC6', maxColor: 'FF638EC6' }
-});
-
-// Icon sets
-ws.addConditionalFormat({
-  sqref: 'C1:C20', type: 'iconSet',
-  iconSet: {
-    type: 'iconSet', iconSet: '3TrafficLights1',
-    cfvo: [{ type: 'num', val: '0' }, { type: 'num', val: '33' }, { type: 'num', val: '67' }]
-  }
-});
-
-// Cell value rule
-ws.addConditionalFormat({
-  sqref: 'D1:D20', type: 'cellIs',
-  operator: 'greaterThan', formula: '100',
-  style: style().bg(Colors.Green).fontColor(Colors.White).build(),
-  priority: 1,
-});
-```
-
-### Data Validation
-
-```typescript
-// Dropdown list
-ws.addDataValidation('B2:B100', {
-  type: 'list',
-  list: ['Active', 'Inactive', 'Pending'],
-  showDropDown: true,
-  showErrorAlert: true,
-  errorTitle: 'Invalid',
-  error: 'Please select from the dropdown.',
-});
-
-// Number range
-ws.addDataValidation('C2:C100', {
-  type: 'whole',
-  operator: 'between',
-  formula1: '1',
-  formula2: '100',
-  showErrorAlert: true,
-});
-```
-
-### Sparklines
-
-```typescript
-ws.addSparkline({
-  type:       'line',        // line | bar | stacked
-  dataRange:  'B2:G2',
-  location:   'H2',
-  color:      Colors.ExcelBlue,
-  highColor:  Colors.Green,
-  lowColor:   Colors.Red,
-  showMarkers: true,
-  showHigh:   true,
-  showLow:    true,
-});
-```
-
-### Page Setup
+### Page setup
 
 ```typescript
 ws.pageSetup = {
-  paperSize:   9,           // 9 = A4, 1 = Letter
+  paperSize:   9,             // A4
   orientation: 'landscape',
+  scale:       90,
   fitToPage:   true,
   fitToWidth:  1,
   fitToHeight: 0,
-  scale:       90,
 };
 
-ws.pageMargins = { left: 0.5, right: 0.5, top: 0.75, bottom: 0.75 };
+ws.pageMargins = {
+  left: 0.5, right: 0.5, top: 0.75, bottom: 0.75,
+  header: 0.3, footer: 0.3,
+};
 
-// Headers/footers use Excel codes:
-// &L = left  &C = center  &R = right
-// &P = page number  &N = total pages  &D = date  &T = time
-// &[Tab] = sheet name  &"Font,Style" = font  &nn = font size
 ws.headerFooter = {
-  oddHeader: '&L&"Calibri,Bold"My Company&C&[Tab]&RConfidential',
-  oddFooter: '&LPrinted: &D &T&CPage &P of &N',
+  oddHeader: '&C&BQ4 Report&B',
+  oddFooter: '&LExcelForge&RPage &P of &N',
 };
 ```
 
-### Sheet Protection
+### Sheet protection
 
 ```typescript
-ws.protection = {
-  sheet:    true,
-  password: 'mypassword',
-  selectLockedCells:   true,
-  selectUnlockedCells: true,
-  formatCells:   true,    // false = prevent formatting
-  insertRows:    true,    // false = prevent insert
-  deleteRows:    true,
-  sort:          true,
-  autoFilter:    true,
-};
+ws.protect('mypassword', {
+  formatCells:   false,   // allow formatting
+  insertRows:    false,   // allow inserting rows
+  deleteRows:    false,
+  sort:          false,
+  autoFilter:    false,
+});
 
-// Make specific cells editable (unlocked)
-ws.setStyle(2, 1, { locked: false });
+// Lock individual cells (requires sheet protection to take effect)
+ws.setCell(1, 1, { value: 'Locked', style: { locked: true } });
+ws.setCell(2, 1, { value: 'Editable', style: { locked: false } });
 ```
 
 ---
 
-## Architecture
+## Output methods
+
+```typescript
+// Node.js: write to file
+await wb.writeFile('./output.xlsx');
+
+// Browser: trigger download
+await wb.download('report.xlsx');
+
+// Any runtime: get bytes
+const bytes: Uint8Array = await wb.build();
+const b64: string       = await wb.buildBase64();
+```
+
+---
+
+## ZIP / Compression API
+
+The `buildZip` and `deflateRaw` utilities are exported for direct use:
+
+```typescript
+import { buildZip, deflateRaw, type ZipEntry, type ZipOptions } from './src/utils/zip.js';
+
+// deflateRaw: compress bytes with raw DEFLATE (no zlib header)
+const compressed = deflateRaw(data, 6);  // level 0–9
+
+// buildZip: assemble a ZIP archive
+const zip = buildZip(entries, { level: 6 });
+
+// ZipEntry shape
+interface ZipEntry {
+  name:   string;
+  data:   Uint8Array;
+  level?: number;  // per-entry override
+}
+
+// ZipOptions shape
+interface ZipOptions {
+  level?:       number;    // global default (0–9)
+  noCompress?:  string[];  // extensions to always STORE
+}
+```
+
+---
+
+## Architecture overview
 
 ```
-src/
-├── index.ts              # Public API surface (all exports)
+ExcelForge
 ├── core/
-│   ├── types.ts          # All TypeScript types/interfaces
-│   ├── Workbook.ts       # Orchestrates everything, builds ZIP
-│   ├── Worksheet.ts      # Sheet data, XML serialization
-│   └── SharedStrings.ts  # String deduplication table
+│   ├── Workbook.ts         — orchestrates build/read/patch, holds properties
+│   ├── Worksheet.ts        — cells, formulas, styles, drawings, page setup
+│   ├── WorkbookReader.ts   — parse existing XLSX (ZIP → XML → object model)
+│   ├── SharedStrings.ts    — string deduplication table
+│   ├── properties.ts       — core / extended / custom property read+write
+│   └── types.ts            — all 80+ TypeScript interfaces
 ├── styles/
-│   ├── StyleRegistry.ts  # Converts CellStyle → xf/font/fill/border indices
-│   └── builders.ts       # StyleBuilder fluent API, Styles, Colors, NumFmt
+│   ├── StyleRegistry.ts    — interns fonts/fills/borders/xfs, emits styles.xml
+│   └── builders.ts         — fluent style() builder, Colors/NumFmt/Styles presets
 ├── features/
-│   ├── ChartBuilder.ts   # Produces chart XML (c:chartSpace)
-│   └── TableBuilder.ts   # Produces table XML
+│   ├── ChartBuilder.ts     — DrawingML chart XML for 15+ chart types
+│   └── TableBuilder.ts     — Excel table XML
 └── utils/
-    ├── helpers.ts         # Cell ref math, XML escaping, date serial, EMU
-    └── zip.ts            # Zero-dependency ZIP writer (STORE blocks)
+    ├── zip.ts              — ZIP writer with full LZ77+Huffman DEFLATE
+    ├── zipReader.ts        — ZIP reader (STORE + DEFLATE via DecompressionStream)
+    ├── xmlParser.ts        — roundtrip-safe XML parser (preserves unknown nodes)
+    └── helpers.ts          — cell ref math, XML escaping, date serials, EMU conversion
 ```
 
-The output `.xlsx` file is a ZIP archive containing:
-- `xl/workbook.xml` — sheet list, named ranges
-- `xl/worksheets/sheet{N}.xml` — cell data, formulas, merges, CF, tables
-- `xl/styles.xml` — fonts, fills, borders, number formats
-- `xl/sharedStrings.xml` — deduplicated strings
-- `xl/drawings/drawing{N}.xml` — images and charts positions
-- `xl/charts/chart{N}.xml` — chart definitions
-- `xl/media/image{N}.{ext}` — embedded image data
-- `xl/tables/table{N}.xml` — table definitions
-- `docProps/core.xml` & `docProps/app.xml` — metadata
-- `[Content_Types].xml` & `_rels/.rels` — OOXML manifest
+### Round-trip / patch strategy
+
+When you load an existing `.xlsx` and call `wb.build()`:
+
+1. The original ZIP is read and every entry is retained as raw bytes.
+2. Sheets **not** marked dirty via `wb.markDirty(name)` are written back verbatim — their original bytes are preserved unchanged.
+3. Sheets that **are** marked dirty are re-serialised with any changes applied.
+4. Core/extended/custom properties are always rewritten (they're cheap and typically user-modified).
+5. Styles and shared strings are always rewritten (dirty sheets need fresh indices).
+6. All other parts — drawings, charts, images, pivot tables, VBA modules, custom XML, connections, theme — are preserved verbatim.
+
+This means you can safely open a complex Excel file produced by another tool, change a few cells, and save without losing any features ExcelForge doesn't understand.
 
 ---
 
-## Browser Usage
+## Browser usage
+
+ExcelForge is fully tree-shakeable and has zero runtime dependencies. In the browser, use `CompressionStream` / `DecompressionStream` (available in all modern browsers since 2022) for decompression when reading files.
 
 ```html
+<input type="file" id="file" accept=".xlsx">
 <script type="module">
-  import { Workbook, style } from './src/index.js';
+import { Workbook } from './dist/index.js';
 
-  document.getElementById('download').addEventListener('click', async () => {
-    const wb = new Workbook();
-    const ws = wb.addSheet('Sheet1');
-    ws.setValue(1, 1, 'Hello, Excel!');
-    ws.setStyle(1, 1, style().bold().fontSize(20).bg('#4472C4').fontColor('#FFFFFF').center().build());
-    await wb.download('hello.xlsx');
-  });
+document.getElementById('file').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  const wb   = await Workbook.fromBlob(file);
+
+  console.log('Sheets:', wb.getSheetNames());
+  console.log('Title:', wb.coreProperties.title);
+
+  const ws = wb.getSheet(wb.getSheetNames()[0]);
+  console.log('A1:', ws.getCell(1, 1).value);
+
+  // Modify and re-download
+  ws.setValue(1, 1, 'Modified!');
+  wb.markDirty(wb.getSheetNames()[0]);
+  await wb.download('modified.xlsx');
+});
 </script>
 ```
 
 ---
 
-## No External Dependencies
+## Changelog
 
-ExcelForge uses only native Web APIs:
-- `TextEncoder` — UTF-8 string encoding
-- `atob` / `btoa` — base64 encode/decode (for images)
-- `URL.createObjectURL` — browser downloads only
-- `fs/promises` — Node.js file writes only
+### v2.0 — Read, Modify, Compress
 
-The ZIP implementation uses STORE (uncompressed) blocks for maximum compatibility.
+- **Read existing XLSX files** — `Workbook.fromFile()`, `fromBytes()`, `fromBase64()`, `fromBlob()`
+- **Patch-only writes** — preserve unknown parts verbatim, only re-serialise dirty sheets
+- **Full DEFLATE compression** — pure-TypeScript LZ77 + dynamic Huffman (levels 0–9), 80–85% smaller output
+- **Extended & custom properties** — full read/write of `core.xml`, `app.xml`, `custom.xml`
+- **New utilities** — `zipReader.ts`, `xmlParser.ts`, `properties.ts`
 
----
+### v1.0 — Initial release
 
-## License
-
-MIT
+- Full XLSX write support: cells, formulas, styles, charts, images, tables, conditional formatting, data validation, sparklines, page setup, protection, named ranges, auto filter, hyperlinks, comments
