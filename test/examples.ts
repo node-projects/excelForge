@@ -3,10 +3,10 @@
  * This file demonstrates every major feature of the library.
  */
 
-import { Workbook, Worksheet, style, Styles, Colors, NumFmt } from './src/index.js';
+import { Workbook, Worksheet, style, Styles, Colors, NumFmt } from '../src/index.js';
 import type {
   Chart, ConditionalFormat, Table, Sparkline, DataValidation, Image
-} from './src/index.js';
+} from '../src/index.js';
 
 // ============================================================
 // 1. BASIC WORKBOOK & SHEET CREATION

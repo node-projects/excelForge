@@ -1,0 +1,24 @@
+{
+  "name": "excelforge",
+  "version": "2.0.0",
+  "description": "A **complete TypeScript library** for reading and writing Excel `.xlsx` files with **zero external dependencies**. Works in browsers, Node.js, Deno, Bun, and edge runtimes.",
+  "homepage": "https://github.com/node-projects/excelForge#readme",
+  "bugs": {
+    "url": "https://github.com/node-projects/excelForge/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/node-projects/excelForge.git"
+  },
+  "license": "MIT",
+  "author": "",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build": "tsc"
+  },
+  "dependencies": {
+    "typescript": "^5.9.3"
+  }
+}
