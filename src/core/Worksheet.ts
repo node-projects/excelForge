@@ -43,6 +43,7 @@ export class Worksheet {
   sheetIndex = 0;
   rId = '';
   drawingRId = '';
+  legacyDrawingRId = '';
   tableRIds: string[] = [];
 
   constructor(name: string, options: WorksheetOptions = {}) {
@@ -153,6 +154,18 @@ export class Worksheet {
 
   getImages(): readonly Image[] { return this.images; }
 
+  /** Return all cells that have a comment, keyed by "col,row" */
+  getComments(): Array<{ row: number; col: number; comment: import('../core/types.js').Comment }> {
+    const out: Array<{ row: number; col: number; comment: import('../core/types.js').Comment }> = [];
+    for (const [key, cell] of this.cells) {
+      if (cell.comment) {
+        const [r, c] = key.split(',').map(Number);
+        out.push({ row: r, col: c, comment: cell.comment });
+      }
+    }
+    return out;
+  }
+
   // ─── Charts ──────────────────────────────────────────────────────────────────
 
   addChart(chart: Chart): this {
@@ -223,6 +236,9 @@ export class Worksheet {
     const drawingXml = (this.images.length || this.charts.length) && this.drawingRId
       ? `<drawing r:id="${this.drawingRId}"/>`
       : '';
+    const legacyDrawingXml = this.legacyDrawingRId
+      ? `<legacyDrawing r:id="${this.legacyDrawingRId}"/>`
+      : '';
     const sparklineXml = this._sparklineXml();
     const protectionXml = this._protectionXml();
     const pageSetupXml  = this._pageSetupXml();
@@ -249,6 +265,7 @@ ${pageMarginsXml}
 ${pageSetupXml}
 ${headerFooterXml}
 ${drawingXml}
+${legacyDrawingXml}
 ${sparklineXml}
 ${tablePartsXml}
 </worksheet>`;

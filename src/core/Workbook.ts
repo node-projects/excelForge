@@ -1,5 +1,5 @@
 import type {
-  WorkbookProperties, NamedRange, WorksheetOptions, Image
+  WorkbookProperties, NamedRange, WorksheetOptions, Image, Comment
 } from '../core/types.js';
 import { Worksheet } from './Worksheet.js';
 import { StyleRegistry } from '../styles/StyleRegistry.js';
@@ -7,7 +7,7 @@ import { SharedStrings } from './SharedStrings.js';
 import { buildChartXml } from '../features/ChartBuilder.js';
 import { buildTableXml } from '../features/TableBuilder.js';
 import { buildZip, type ZipEntry, type ZipOptions } from '../utils/zip.js';
-import { strToBytes, base64ToBytes, escapeXml } from '../utils/helpers.js';
+import { strToBytes, base64ToBytes, escapeXml, colIndexToLetter } from '../utils/helpers.js';
 import { readWorkbook, type ReadResult } from './WorkbookReader.js';
 import {
   buildCoreXml, buildAppXml, buildCustomXml,
@@ -277,7 +277,7 @@ export class Workbook {
     const sheetImageRIds  = new Map<Worksheet, string[]>();
     const sheetChartRIds  = new Map<Worksheet, string[]>();
     const sheetTableRIds  = new Map<Worksheet, string[]>();
-    let imgCtr = 1, chartCtr = 1, tableCtr = 1;
+    let imgCtr = 1, chartCtr = 1, tableCtr = 1, vmlCtr = 1;
 
     for (const ws of this.sheets) {
       const imgs = ws.getImages() as Image[];
@@ -286,6 +286,7 @@ export class Workbook {
       const imgRIds: string[] = [], chartRIds: string[] = [], tblRIds: string[] = [];
 
       if (imgs.length || charts.length) ws.drawingRId = `rId${globalRId++}`;
+      if (ws.getComments().length) ws.legacyDrawingRId = `rId${globalRId++}`;
 
       for (const img of imgs)    { const r = `rId${globalRId++}`; imgRIds.push(r);   allImages.push({ ws, img, ext: img.format === 'jpeg' ? 'jpg' : img.format, idx: imgCtr++ }); }
       for (let i=0;i<charts.length;i++) { const r = `rId${globalRId++}`; chartRIds.push(r); allCharts.push({ ws, chartIdx: i, globalIdx: chartCtr++ }); }
@@ -305,10 +306,17 @@ export class Workbook {
       const ct = ext === 'jpg' ? 'image/jpeg' : ext === 'png' ? 'image/png' : `image/${ext}`;
       imgCTs.add(`<Default Extension="${ext}" ContentType="${ct}"/>`);
     }
+    const sheetsWithComments = this.sheets.filter(ws => ws.getComments().length);
+    const vmlCT  = sheetsWithComments.length ? '<Default Extension="vml" ContentType="application/vnd.openxmlformats-officedocument.vmlDrawing"/>' : '';
+    let vmlIdx = 0;
+    const commentsCTs = sheetsWithComments.map(() =>
+      `<Override PartName="/xl/comments${++vmlIdx}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.comments+xml"/>`
+    ).join('');
     entries.push({ name: '[Content_Types].xml', data: strToBytes(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
 <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
 <Default Extension="xml" ContentType="application/xml"/>
+${vmlCT}
 ${[...imgCTs].join('')}
 <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
 <Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
@@ -317,6 +325,7 @@ ${this.sheets.map((_,i) => `<Override PartName="/xl/worksheets/sheet${i+1}.xml" 
 ${this.sheets.filter(ws=>ws.drawingRId).map((_,i) => `<Override PartName="/xl/drawings/drawing${i+1}.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>`).join('')}
 ${allCharts.map(({globalIdx}) => `<Override PartName="/xl/charts/chart${globalIdx}.xml" ContentType="application/vnd.openxmlformats-officedocument.drawingml.chart+xml"/>`).join('')}
 ${allTables.map(({globalTableId}) => `<Override PartName="/xl/tables/table${globalTableId}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml"/>`).join('')}
+${commentsCTs}
 <Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>
 <Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>
 ${hasCustom ? '<Override PartName="/docProps/custom.xml" ContentType="application/vnd.openxmlformats-officedocument.custom-properties+xml"/>' : ''}
@@ -365,6 +374,15 @@ ${namedRangesXml}
       }
       for (let j=0;j<tblEntries.length;j++) {
         wsRels.push(`<Relationship Id="${tblRIds_[j]}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/table" Target="../tables/table${tblEntries[j].globalTableId}.xml"/>`);
+      }
+      const sheetComments = ws.getComments();
+      if (sheetComments.length && ws.legacyDrawingRId) {
+        const vIdx = vmlCtr++;
+        const commRId = `rId${globalRId++}`;
+        wsRels.push(`<Relationship Id="${ws.legacyDrawingRId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/vmlDrawing" Target="../drawings/vmlDrawing${vIdx}.vml"/>`);
+        wsRels.push(`<Relationship Id="${commRId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments" Target="../comments${vIdx}.xml"/>`);
+        entries.push({ name: `xl/comments${vIdx}.xml`,             data: strToBytes(this._buildCommentsXml(sheetComments)) });
+        entries.push({ name: `xl/drawings/vmlDrawing${vIdx}.vml`,  data: strToBytes(this._buildVmlXml(sheetComments, i)) });
       }
       if (wsRels.length) {
         entries.push({ name: `xl/worksheets/_rels/sheet${i+1}.xml.rels`, data: strToBytes(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -505,6 +523,43 @@ ${hasCustom ? `<Relationship Id="rId4" Type="http://schemas.openxmlformats.org/o
     // @ts-ignore
     const fs = await import('fs/promises');
     await fs.writeFile(path, bytes);
+  }
+
+  // ─── Comments helpers ──────────────────────────────────────────────────────
+
+  private _buildCommentsXml(comments: Array<{ row: number; col: number; comment: Comment }>): string {
+    const authors = [...new Set(comments.map(c => c.comment.author ?? ''))];
+    const authorsXml = authors.map(a => `<author>${escapeXml(a)}</author>`).join('');
+    const commentsXml = comments.map(({ row, col, comment }) => {
+      const ref = `${colIndexToLetter(col)}${row}`;
+      const authorIdx = authors.indexOf(comment.author ?? '');
+      return `<comment ref="${ref}" authorId="${authorIdx}"><text><r><t>${escapeXml(comment.text)}</t></r></text></comment>`;
+    }).join('');
+    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<comments xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+<authors>${authorsXml}</authors>
+<commentList>${commentsXml}</commentList>
+</comments>`;
+  }
+
+  private _buildVmlXml(comments: Array<{ row: number; col: number; comment: Comment }>, sheetIdx: number): string {
+    const shapes = comments.map(({ row, col }, i) => {
+      // Position the comment box roughly 2 columns right and 0 rows above the cell
+      const left  = (col + 1) * 64;
+      const top   = (row - 1) * 20;
+      return `<v:shape id="_x0000_s${1025 + sheetIdx * 1000 + i}" type="#_x0000_t202" style="position:absolute;margin-left:${left}pt;margin-top:${top}pt;width:108pt;height:59.25pt;z-index:${i + 1};visibility:hidden" fillcolor="#ffffe1" o:insetmode="auto">
+<v:fill color2="#ffffe1"/>
+<v:shadow color="black" obscured="t"/>
+<v:path o:connecttype="none"/>
+<v:textbox style="mso-direction-alt:auto"><div style="text-align:left"/></v:textbox>
+<x:ClientData ObjectType="Note"><x:MoveWithCells/><x:SizeWithCells/><x:Anchor>${col + 1},15,${row - 1},10,${col + 3},15,${row + 4},4</x:Anchor><x:AutoFill>False</x:AutoFill><x:Row>${row - 1}</x:Row><x:Column>${col - 1}</x:Column></x:ClientData>
+</v:shape>`;
+    }).join('\n');
+    return `<xml xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel">
+<o:shapelayout v:ext="edit"><o:idmap v:ext="edit" data="1"/></o:shapelayout>
+<v:shapetype id="_x0000_t202" coordsize="21600,21600" o:spt="202" path="m,l,21600r21600,l21600,xe"><v:stroke joinstyle="miter"/><v:path gradientshapeok="t" o:connecttype="rect"/></v:shapetype>
+${shapes}
+</xml>`;
   }
 
   async download(filename = 'workbook.xlsx'): Promise<void> {
