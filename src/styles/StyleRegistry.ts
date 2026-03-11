@@ -106,6 +106,7 @@ export class StyleRegistry {
   private numFmts: Map<string, number> = new Map();
   private xfs:     string[] = [];
   private styleKey: Map<string, number> = new Map();
+  private dxfs: string[] = [];  // differential formats for conditional formatting
   private nextNumFmtId = 164;  // custom formats start at 164
 
   constructor() {
@@ -182,6 +183,34 @@ export class StyleRegistry {
     return idx;
   }
 
+
+  /**
+   * Register a differential format (for conditional formatting).
+   * Returns the dxfId (0-based index into <dxfs>).
+   * Unlike register(), dxf styles are incremental — only the specified
+   * attributes are written; omitted ones are inherited from the cell.
+   */
+  registerDxf(style: CellStyle): number {
+    const parts: string[] = [];
+    if (style.font)   parts.push(`<font>${fontXml(style.font)}</font>`);
+    if (style.fill)   parts.push(`<fill>${fillXml(style.fill)}</fill>`);
+    if (style.border) parts.push(borderXml(style.border));
+    if (style.numberFormat) {
+      const id = this.internNumFmt(style.numberFormat);
+      parts.push(`<numFmt numFmtId="${id}" formatCode="${escapeXml(style.numberFormat.formatCode)}"/>`);
+    }
+    if (style.alignment) {
+      parts.push(`<alignment${
+        style.alignment.horizontal   ? ` horizontal="${style.alignment.horizontal}"` : ''}${
+        style.alignment.vertical     ? ` vertical="${style.alignment.vertical}"` : ''}${
+        style.alignment.wrapText     ? ' wrapText="1"' : ''}${
+        style.alignment.textRotation ? ` textRotation="${style.alignment.textRotation}"` : ''}/>`);
+    }
+    const xml = parts.join('');
+    this.dxfs.push(xml);
+    return this.dxfs.length - 1;
+  }
+
   /** Produce styles.xml content */
   toXml(): string {
     const numFmtXml = this.numFmts.size
@@ -198,6 +227,7 @@ ${numFmtXml}
 <fonts count="${this.fonts.length}">${this.fonts.map(f => `<font>${f}</font>`).join('')}</fonts>
 <fills count="${this.fills.length}">${this.fills.map(f => `<fill>${f}</fill>`).join('')}</fills>
 <borders count="${this.borders.length}">${this.borders.join('')}</borders>
+${this.dxfs.length ? `<dxfs count="${this.dxfs.length}">${this.dxfs.map(d => `<dxf>${d}</dxf>`).join('')}</dxfs>` : ''}
 <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
 <cellXfs count="${this.xfs.length}">${this.xfs.join('')}</cellXfs>
 <cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>

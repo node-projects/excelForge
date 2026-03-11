@@ -244,7 +244,7 @@ async function example_conditional_formatting() {
     sqref: 'A1:A10', type: 'colorScale',
     colorScale: {
       type: 'colorScale',
-      cfvo: [{ type: 'min' }, { type: 'percentile', val: '50' }, { type: 'max' }],
+      cfvo: [{ type: 'min' }, { type: 'percent', val: '50' }, { type: 'max' }],
       color: ['FFFF0000', 'FFFFFF00', 'FF00B050'],
     }
   });
@@ -888,8 +888,9 @@ async function example_financial_report() {
 
 // Run all examples
 async function runAll() {
-  const { mkdirSync } = await import('fs');
-  try { mkdirSync('./output', { recursive: true }); } catch {}
+  // @ts-ignore
+  const fs = await import('fs/promises');
+  try { await fs.mkdir('./output', { recursive: true }); } catch {}
 
   const examples = [
     ['Basic',                  example_basic],

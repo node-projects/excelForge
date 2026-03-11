@@ -266,8 +266,20 @@ export interface CFColorScale {
 
 export interface CFDataBar {
   type: 'dataBar';
+  /** Bar fill color (preferred) */
+  color?: Color;
+  /** @deprecated use color */
   minColor?: Color;
+  /** @deprecated use color */
   maxColor?: Color;
+  /** cfvo type for min bound (default: 'min') */
+  minType?: 'min' | 'max' | 'percent' | 'num' | 'formula';
+  /** cfvo value for min bound */
+  minVal?: string | number;
+  /** cfvo type for max bound (default: 'max') */
+  maxType?: 'min' | 'max' | 'percent' | 'num' | 'formula';
+  /** cfvo value for max bound */
+  maxVal?: string | number;
   showValue?: boolean;
 }
 

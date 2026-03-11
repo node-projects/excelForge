@@ -202,6 +202,12 @@ export class Worksheet {
   // ─── XML Generation ──────────────────────────────────────────────────────────
 
   toXml(styles: StyleRegistry, shared: SharedStrings): string {
+    // <sheetPr> — fitToPage lives here per OOXML spec §18.3.1.82
+    const fitToPage = this.pageSetup?.fitToPage;
+    const tabColor  = this.options?.tabColor;
+    const sheetPrXml = (fitToPage || tabColor)
+      ? `<sheetPr>${tabColor ? `<tabColor rgb="${tabColor}"/>` : ''}${fitToPage ? '<pageSetPr fitToPage="1"/>' : ''}</sheetPr>`
+      : '';
     const sheetViewXml = this._sheetViewXml();
     const colsXml      = this._colsXml(styles);
     const sheetDataXml = this._sheetDataXml(styles, shared);
@@ -229,6 +235,7 @@ export class Worksheet {
   xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
   xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main"
   xmlns:xr="http://schemas.microsoft.com/office/spreadsheetml/2014/revision">
+${sheetPrXml}
 ${sheetViewXml}
 ${colsXml}
 ${sheetDataXml}
@@ -388,7 +395,7 @@ ${tablePartsXml}
 
   private _conditionalFormatXml(styles: StyleRegistry): string {
     return this.conditionalFormats.map(cf => {
-      const dxfId = cf.style ? styles.register(cf.style) : undefined;
+      const dxfId = cf.style ? styles.registerDxf(cf.style) : undefined;
       let inner = '';
 
       if (cf.colorScale?.type === 'colorScale') {
@@ -398,9 +405,12 @@ ${tablePartsXml}
         inner = `<colorScale>${cfvos}${colors}</colorScale>`;
       } else if (cf.dataBar?.type === 'dataBar') {
         const db = cf.dataBar;
-        const minC = db.minColor ? `<color rgb="${db.minColor.startsWith('#') ? 'FF'+db.minColor.slice(1) : db.minColor}"/>` : '';
-        const maxC = db.maxColor ? `<color rgb="${db.maxColor.startsWith('#') ? 'FF'+db.maxColor.slice(1) : db.maxColor}"/>` : '';
-        inner = `<dataBar${db.showValue === false ? ' showValue="0"' : ''}>${minC}${maxC}</dataBar>`;
+        // OOXML requires cfvo min and max, then color element(s)
+        const minCfvo = `<cfvo type="${db.minType ?? 'min'}"${db.minVal != null ? ` val="${db.minVal}"` : ''}/>`;
+        const maxCfvo = `<cfvo type="${db.maxType ?? 'max'}"${db.maxVal != null ? ` val="${db.maxVal}"` : ''}/>`;
+        const color   = db.color ?? db.minColor ?? 'FF638EC6';
+        const rgb     = color.startsWith('#') ? 'FF'+color.slice(1) : color;
+        inner = `<dataBar${db.showValue === false ? ' showValue="0"' : ''}>${minCfvo}${maxCfvo}<color rgb="${rgb}"/></dataBar>`;
       } else if (cf.iconSet?.type === 'iconSet') {
         const is = cf.iconSet;
         const cfvos = is.cfvo.map(v => `<cfvo type="${v.type}"${v.val ? ` val="${v.val}"` : ''}/>`).join('');
@@ -410,7 +420,7 @@ ${tablePartsXml}
       const ruleAttrs = [
         `type="${cf.type}"`,
         cf.operator ? `operator="${cf.operator}"` : '',
-        dxfId !== undefined && dxfId > 0 ? `dxfId="${dxfId}"` : '',
+        dxfId !== undefined ? `dxfId="${dxfId}"` : '',
         `priority="${cf.priority ?? 1}"`,
         cf.aboveAverage === false ? `aboveAverage="0"` : '',
         cf.percent ? `percent="1"` : '',
@@ -480,7 +490,6 @@ ${tablePartsXml}
     const attrs = [
       p.paperSize      ? `paperSize="${p.paperSize}"` : '',
       p.orientation    ? `orientation="${p.orientation}"` : '',
-      p.fitToPage      ? 'fitToPage="1"' : '',
       p.fitToWidth  !== undefined ? `fitToWidth="${p.fitToWidth}"` : '',
       p.fitToHeight !== undefined ? `fitToHeight="${p.fitToHeight}"` : '',
       p.scale          ? `scale="${p.scale}"` : '',
