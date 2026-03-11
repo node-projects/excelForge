@@ -555,12 +555,16 @@ ${tablePartsXml}
 
   private _sparklineXml(): string {
     if (!this.sparklines.length) return '';
+    const colorEl = (name: string, c?: string) => {
+      if (!c) return '';
+      // Normalize to 8-digit AARRGGBB; strip leading '#' if present
+      const rgb = c.startsWith('#') ? 'FF' + c.slice(1) : c;
+      return `<x14:${name} rgb="${rgb}"/>`;
+    };
     const groups = this.sparklines.map(s => {
-      const colorAttr = (name: string, c?: string) =>
-        c ? `<x14:${name}><a:srgbClr xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" val="${c.replace('#','')}"/></x14:${name}>` : '';
-      const sparkXml = `<x14:sparkline><xm:f>${escapeXml(s.dataRange)}</xm:f><xm:sqref>${s.location}</xm:sqref></x14:sparkline>`;
+      const sparkType = s.type === 'bar' ? 'column' : s.type;
       const attrs = [
-        `type="${s.type}"`,
+        `type="${sparkType}"`,
         s.lineWidth !== undefined ? `lineWeight="${s.lineWidth}"` : '',
         s.showMarkers  ? 'markers="1"'  : '',
         s.showFirst    ? 'first="1"'    : '',
@@ -572,17 +576,21 @@ ${tablePartsXml}
         s.maxAxisType  ? `maxAxisType="${s.maxAxisType}"` : '',
       ].filter(Boolean).join(' ');
       const colors = [
-        colorAttr('colorSeries',  s.color),
-        colorAttr('colorHigh',    s.highColor),
-        colorAttr('colorLow',     s.lowColor),
-        colorAttr('colorFirst',   s.firstColor),
-        colorAttr('colorLast',    s.lastColor),
-        colorAttr('colorNegative',s.negativeColor),
-        colorAttr('colorMarkers', s.markersColor),
+        colorEl('colorSeries',  s.color),
+        colorEl('colorHigh',    s.highColor),
+        colorEl('colorLow',     s.lowColor),
+        colorEl('colorFirst',   s.firstColor),
+        colorEl('colorLast',    s.lastColor),
+        colorEl('colorNegative',s.negativeColor),
+        colorEl('colorMarkers', s.markersColor),
       ].join('');
-      return `<x14:sparklineGroup ${attrs}>${colors}${sparkXml}</x14:sparklineGroup>`;
+      // xm:f requires a fully-qualified sheet reference
+      const dataRef = s.dataRange.includes('!') ? s.dataRange : `${this.name}!${s.dataRange}`;
+      const sparkline = `<x14:sparklines><x14:sparkline><xm:f>${escapeXml(dataRef)}</xm:f><xm:sqref>${s.location}</xm:sqref></x14:sparkline></x14:sparklines>`;
+      return `<x14:sparklineGroup ${attrs}>${colors}${sparkline}</x14:sparklineGroup>`;
     });
-    return `<x14:sparklineGroups xmlns:xm="http://schemas.microsoft.com/office/excel/2006/main">${groups.join('')}</x14:sparklineGroups>`;
+    const inner = `<x14:sparklineGroups xmlns:xm="http://schemas.microsoft.com/office/excel/2006/main">${groups.join('')}</x14:sparklineGroups>`;
+    return `<extLst><ext uri="{05C60535-1F16-4fd2-B633-F4F36F0B64E0}" xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main">${inner}</ext></extLst>`;
   }
 
   /** Drawing XML (images + charts) — returned separately for the drawing part */
