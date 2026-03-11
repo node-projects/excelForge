@@ -239,15 +239,15 @@ ${sheetPrXml}
 ${sheetViewXml}
 ${colsXml}
 ${sheetDataXml}
-${mergesXml}
+${protectionXml}
 ${autoFilterXml}
+${mergesXml}
 ${cfXml}
 ${dvXml}
-${protectionXml}
-${pageSetupXml}
-${pageMarginsXml}
-${headerFooterXml}
 ${printOptionsXml}
+${pageMarginsXml}
+${pageSetupXml}
+${headerFooterXml}
 ${drawingXml}
 ${sparklineXml}
 ${tablePartsXml}
@@ -497,7 +497,7 @@ ${tablePartsXml}
       p.verticalDpi    ? `verticalDpi="${p.verticalDpi}"` : '',
       p.firstPageNumber ? `firstPageNumber="${p.firstPageNumber}" useFirstPageNumber="1"` : '',
     ].filter(Boolean).join(' ');
-    return `<pageSetup ${attrs} r:id="rId1"/>`;
+    return `<pageSetup ${attrs}/>`;
   }
 
   private _pageMarginsXml(): string {

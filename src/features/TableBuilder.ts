@@ -14,10 +14,7 @@ export function buildTableXml(table: Table, tableId: number): string {
       : '';
     const totLabel = table.totalsRow && col.totalsRowLabel
       ? ` totalsRowLabel="${escapeXml(col.totalsRowLabel)}"` : '';
-    const numFmt = col.numFmt
-      ? `<tableColumn id="${id}" name="${escapeXml(col.name)}"${totAttrs}${totLabel}><dataValidation><formula1>"${escapeXml(col.numFmt)}"</formula1></dataValidation></tableColumn>`
-      : `<tableColumn id="${id}" name="${escapeXml(col.name)}"${totAttrs}${totLabel}/>`;
-    return numFmt;
+    return `<tableColumn id="${id}" name="${escapeXml(col.name)}"${totAttrs}${totLabel}/>`;
   }).join('');
 
   const styleAttrs = [

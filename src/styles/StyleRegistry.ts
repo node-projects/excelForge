@@ -227,10 +227,10 @@ ${numFmtXml}
 <fonts count="${this.fonts.length}">${this.fonts.map(f => `<font>${f}</font>`).join('')}</fonts>
 <fills count="${this.fills.length}">${this.fills.map(f => `<fill>${f}</fill>`).join('')}</fills>
 <borders count="${this.borders.length}">${this.borders.join('')}</borders>
-${this.dxfs.length ? `<dxfs count="${this.dxfs.length}">${this.dxfs.map(d => `<dxf>${d}</dxf>`).join('')}</dxfs>` : ''}
 <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
 <cellXfs count="${this.xfs.length}">${this.xfs.join('')}</cellXfs>
 <cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
+${this.dxfs.length ? `<dxfs count="${this.dxfs.length}">${this.dxfs.map(d => `<dxf>${d}</dxf>`).join('')}</dxfs>` : ''}
 </styleSheet>`;
   }
 }
