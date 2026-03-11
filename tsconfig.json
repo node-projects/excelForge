@@ -34,11 +34,5 @@
   "include": [
     "./src/**/*",
     "./test/**/*"
-  ],
-  "exclude": [
-    "dist",
-    "**/*.d.ts",
-    "node_modules",
-    "**/*.spec.ts"
   ]
 }
