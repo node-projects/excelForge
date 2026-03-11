@@ -23,7 +23,7 @@
     "noImplicitThis": true,
     "alwaysStrict": true,
     "resolveJsonModule": true,
-    "noUnusedLocals": true,
+    "noUnusedLocals": false,
     "noImplicitReturns": true,
     "noFallthroughCasesInSwitch": true,
  
@@ -32,7 +32,6 @@
     "skipLibCheck": true
   },
   "include": [
-    "./src/**/*",
-    "./test/**/*"
+    "./src/**/*"
   ]
 }

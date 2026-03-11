@@ -3,10 +3,8 @@
  * This file demonstrates every major feature of the library.
  */
 
-import { Workbook, Worksheet, style, Styles, Colors, NumFmt } from '../dist/index.js';
-import type {
-  Chart, ConditionalFormat, Table, Sparkline, DataValidation, Image
-} from '../dist/index.js';
+import { Workbook, Worksheet, style, Styles, Colors, NumFmt } from '../index.js';
+import type { Chart, ConditionalFormat, Table, Sparkline, DataValidation, Image } from '../index.js';
 import { deflateSync } from 'zlib';
 
 // ============================================================

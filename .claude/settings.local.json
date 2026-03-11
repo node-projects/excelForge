@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run:*)",
+      "Bash(cd /C/Data/Git/Github/ExcelForge && npx tsc --project tsconfig.json --noEmit 2>&1 | head -5; echo \"---\"; ls dist/styles/ 2>/dev/null)",
+      "Bash(cd /C/Data/Git/Github/ExcelForge && npx tsc src/styles/StyleRegistry.ts src/features/TableBuilder.ts --outDir dist --target esnext --module esnext --moduleResolution node --declaration --sourceMap --esModuleInterop --skipLibCheck 2>&1)",
+      "Bash(cd /C/Data/Git/Github/ExcelForge && node test/examples.js 2>&1 | grep -E \"\\(07|08|❌\\)\")",
+      "Bash(cd /C/Data/Git/Github/ExcelForge && node test/examples.js 2>&1)",
+      "Bash(cd /C/Data/Git/Github/ExcelForge && npx tsc src/core/Worksheet.ts --outDir dist --target esnext --module esnext --moduleResolution node --declaration --sourceMap --esModuleInterop --skipLibCheck 2>&1 && node test/examples.js 2>&1)",
+      "Bash(cd /C/Data/Git/Github/ExcelForge && npx tsc src/core/Worksheet.ts src/core/Workbook.ts --outDir dist --target esnext --module esnext --moduleResolution node --declaration --sourceMap --esModuleInterop --skipLibCheck 2>&1)",
+      "Bash(cd /C/Data/Git/Github/ExcelForge && node -e \"\nconst fs = require\\('fs'\\);\nconst { Workbook } = require\\('./dist/index.js'\\);\n// Quick check: unzip 18_comments.xlsx and list files\nconst { execSync } = require\\('child_process'\\);\ntry {\n  const out = execSync\\('node -e \\\\\"const fs=require\\(\\\\\\\\\\\\\"fs/promises\\\\\\\\\\\\\"\\);const {readWorkbook}=require\\(\\\\\\\\\\\\\"./dist/core/WorkbookReader.js\\\\\\\\\\\\\"\\);async function main\\(\\){const b=await fs.readFile\\(\\\\\\\\\\\\\"./output/18_comments.xlsx\\\\\\\\\\\\\"\\);const r=await readWorkbook\\(new Uint8Array\\(b\\)\\);console.log\\(JSON.stringify\\(r.unknownParts.map\\(\\([k]\\)=>k\\)\\)\\);}main\\(\\).catch\\(console.error\\)\\\\\"'\\).toString\\(\\);\n  console.log\\(out\\);\n} catch\\(e\\) { console.log\\(e.message\\); }\n\" 2>&1 || true)",
+      "Bash(cd /C/Data/Git/Github/ExcelForge && python3 -c \"\nimport zipfile, sys\nwith zipfile.ZipFile\\('output/18_comments.xlsx'\\) as z:\n    for name in z.namelist\\(\\):\n        print\\(name\\)\n    print\\('---'\\)\n    print\\(z.read\\('xl/comments1.xml'\\).decode\\(\\)\\)\n\" 2>&1)",
+      "Bash(cd /C/Data/Git/Github/ExcelForge && npx tsc src/features/TableBuilder.ts --outDir dist --target esnext --module esnext --moduleResolution node --declaration --sourceMap --esModuleInterop --skipLibCheck 2>&1 && node test/examples.js 2>&1 | grep -E \"Table|❌\")",
+      "Bash(cd /C/Data/Git/Github/ExcelForge && npx tsc src/core/Worksheet.ts src/features/TableBuilder.ts --outDir dist --target esnext --module esnext --moduleResolution node --declaration --sourceMap --esModuleInterop --skipLibCheck 2>&1 && node test/examples.js 2>&1)",
+      "Bash(cd /C/Data/Git/Github/ExcelForge && npx tsc test/examples.ts --outDir test --target esnext --module esnext --moduleResolution node --esModuleInterop --skipLibCheck --allowJs 2>&1 && node test/examples.js 2>&1 | grep -E \"Table|❌\")"
+    ]
+  }
+}
