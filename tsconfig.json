@@ -1,0 +1,44 @@
+{
+  "compilerOptions": {  
+    "outDir": "./dist",
+    "rootDir": "src",  
+    "target": "esnext",
+    "module": "esnext",
+    "allowJs": true,
+    "declaration": true,
+    "sourceMap": true,
+    "removeComments": true,
+    "importHelpers": true,
+    "forceConsistentCasingInFileNames": true,
+
+    "strictFunctionTypes": true,
+    "strictBindCallApply": true,
+    "strictPropertyInitialization": false,
+    "strictNullChecks": false,
+
+    "experimentalDecorators": true, //if we use std generators, we need the metadata to be emited!
+    "emitDecoratorMetadata": false,
+    "useDefineForClassFields": false, //we need this false, unless we use accessor keyword! 
+
+    "noImplicitThis": true,
+    "alwaysStrict": true,
+    "resolveJsonModule": true,
+    "noUnusedLocals": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+ 
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "skipLibCheck": true
+  },
+  "include": [
+    "./src/**/*",
+    "./test/**/*"
+  ],
+  "exclude": [
+    "dist",
+    "**/*.d.ts",
+    "node_modules",
+    "**/*.spec.ts"
+  ]
+}
