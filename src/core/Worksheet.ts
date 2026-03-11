@@ -9,11 +9,17 @@ import type { SharedStrings } from '../core/SharedStrings.js';
 import type { StyleRegistry } from '../styles/StyleRegistry.js';
 import {
   colIndexToLetter, colLetterToIndex, indicesToCellRef,
-  cellRefToIndices, escapeXml, strToBytes, dateToSerial,
+  cellRefToIndices, parseRange, escapeXml, strToBytes, dateToSerial,
   pxToEmu, colWidthToEmu, rowHeightToEmu, base64ToBytes,
 } from '../utils/helpers.js';
 
 type CellMap = Map<string, Cell>;
+
+// SUBTOTAL function numbers (101–110 ignore hidden rows, matching Excel table behaviour)
+const SUBTOTAL_FN: Record<string, number> = {
+  average: 101, count: 102, countNums: 103, max: 104, min: 105,
+  stdDev: 107, sum: 109, var: 110, vars: 111,
+};
 
 export class Worksheet {
   readonly name: string;
@@ -186,6 +192,23 @@ export class Worksheet {
 
   addTable(table: Table): this {
     this.tables.push(table);
+    if (table.totalsRow && table.columns?.length) {
+      const { startRow, startCol, endRow } = parseRange(table.ref);
+      const dataStart = startRow + 1;   // first data row (after header)
+      const dataEnd   = endRow - 1;     // last data row (before totals)
+      table.columns.forEach((col, i) => {
+        const colIdx = startCol + i;
+        if (col.totalsRowLabel) {
+          this.setValue(endRow, colIdx, col.totalsRowLabel);
+        } else if (col.totalsRowFunction && col.totalsRowFunction !== 'none') {
+          const fn = SUBTOTAL_FN[col.totalsRowFunction];
+          if (fn !== undefined) {
+            const letter = colIndexToLetter(colIdx);
+            this.setFormula(endRow, colIdx, `SUBTOTAL(${fn},${letter}${dataStart}:${letter}${dataEnd})`);
+          }
+        }
+      });
+    }
     return this;
   }
 

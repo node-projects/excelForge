@@ -328,7 +328,7 @@ export type TableStyle =
 
 export interface TableColumn {
   name:          string;
-  totalsRowFunction?: 'sum'|'count'|'average'|'max'|'min'|'stdDev'|'var'|'countNums'|'custom'|'none';
+  totalsRowFunction?: 'sum'|'count'|'average'|'max'|'min'|'stdDev'|'var'|'vars'|'countNums'|'custom'|'none';
   totalsRowFormula?: string;
   totalsRowLabel?: string;
   filterButton?:  boolean;
