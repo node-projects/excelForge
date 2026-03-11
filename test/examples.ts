@@ -3,10 +3,11 @@
  * This file demonstrates every major feature of the library.
  */
 
-import { Workbook, Worksheet, style, Styles, Colors, NumFmt } from '../src/index.js';
+import { Workbook, Worksheet, style, Styles, Colors, NumFmt } from '../dist/index.js';
 import type {
   Chart, ConditionalFormat, Table, Sparkline, DataValidation, Image
-} from '../src/index.js';
+} from '../dist/index.js';
+import { deflateSync } from 'zlib';
 
 // ============================================================
 // 1. BASIC WORKBOOK & SHEET CREATION
@@ -304,7 +305,7 @@ async function example_tables() {
 
   ws.addTable({
     name: 'SalesTable',
-    ref: 'A1:F5',
+    ref: 'A1:F6',
     style: 'TableStyleMedium2',
     showRowStripes: true,
     totalsRow: true,
@@ -403,18 +404,90 @@ async function example_images() {
 
   ws.setValue(1, 1, 'Image below:');
 
-  // 1x1 white PNG (minimal valid PNG for demo)
-  const pngBytes = new Uint8Array([
-    0x89,0x50,0x4E,0x47,0x0D,0x0A,0x1A,0x0A,  // PNG signature
-    0x00,0x00,0x00,0x0D,0x49,0x48,0x44,0x52,  // IHDR chunk length + type
-    0x00,0x00,0x00,0x01,0x00,0x00,0x00,0x01,  // Width=1, Height=1
-    0x08,0x02,0x00,0x00,0x00,0x90,0x77,0x53,  // Bit depth, color type, ...
-    0xDE,0x00,0x00,0x00,0x0C,0x49,0x44,0x41,  // IDAT
-    0x54,0x08,0xD7,0x63,0xF8,0xFF,0xFF,0x3F,
-    0x00,0x05,0xFE,0x02,0xFE,0xDC,0xCC,0x59,
-    0xE7,0x00,0x00,0x00,0x00,0x49,0x45,0x4E,
-    0x44,0xAE,0x42,0x60,0x82,
-  ]);
+  // Generate a 200x120 PNG showing a mini bar chart with Excel brand colors
+  const pngBytes = (() => {
+    const W = 200, H = 120;
+
+    // CRC32 table
+    const crcTable = new Uint32Array(256);
+    for (let n = 0; n < 256; n++) {
+      let c = n;
+      for (let k = 0; k < 8; k++) c = (c & 1) ? 0xEDB88320 ^ (c >>> 1) : c >>> 1;
+      crcTable[n] = c;
+    }
+    const crc32 = (buf: Uint8Array, seed = 0xFFFFFFFF): number => {
+      let c = seed;
+      for (const b of buf) c = crcTable[(c ^ b) & 0xFF] ^ (c >>> 8);
+      return (c ^ 0xFFFFFFFF) >>> 0;
+    };
+
+    const u32be = (n: number) => new Uint8Array([n>>>24, (n>>>16)&0xFF, (n>>>8)&0xFF, n&0xFF]);
+
+    const chunk = (type: string, data: Uint8Array): Uint8Array => {
+      const typeBytes = new TextEncoder().encode(type);
+      const crcBuf = new Uint8Array(4 + data.length);
+      crcBuf.set(typeBytes); crcBuf.set(data, 4);
+      const crc = u32be(crc32(crcBuf));
+      const out = new Uint8Array(4 + 4 + data.length + 4);
+      out.set(u32be(data.length));
+      out.set(typeBytes, 4);
+      out.set(data, 8);
+      out.set(crc, 8 + data.length);
+      return out;
+    };
+
+    // Colors: ExcelBlue, ExcelOrange, ExcelGreen, ExcelYellow, ExcelPurple
+    const palette: [number,number,number][] = [
+      [0x44,0x72,0xC4], [0xED,0x7D,0x31], [0x70,0xAD,0x47],
+      [0xFF,0xC0,0x00], [0x7F,0x48,0xCC],
+    ];
+    const barValues = [0.55, 0.80, 0.45, 0.95, 0.65];
+    const barCount  = barValues.length;
+    const margin    = 10;
+    const barW      = Math.floor((W - margin * 2) / barCount) - 4;
+    const maxBarH   = H - margin * 2;
+
+    // Build raw RGBA pixel rows
+    const raw = new Uint8Array((1 + W * 3) * H); // filter byte + RGB per row
+    let pos = 0;
+    for (let y = 0; y < H; y++) {
+      raw[pos++] = 0; // filter type None
+      for (let x = 0; x < W; x++) {
+        let r = 0xF2, g = 0xF2, b = 0xF2; // light-grey background
+        for (let i = 0; i < barCount; i++) {
+          const bx = margin + i * (barW + 4);
+          const bh = Math.round(barValues[i] * maxBarH);
+          const by = H - margin - bh;
+          if (x >= bx && x < bx + barW && y >= by && y < H - margin) {
+            [r, g, b] = palette[i % palette.length];
+          }
+        }
+        raw[pos++] = r; raw[pos++] = g; raw[pos++] = b;
+      }
+    }
+
+    const idat = deflateSync(raw);
+
+    const ihdrData = new Uint8Array(13);
+    const dv = new DataView(ihdrData.buffer);
+    dv.setUint32(0, W); dv.setUint32(4, H);
+    ihdrData[8] = 8;   // bit depth
+    ihdrData[9] = 2;   // color type RGB
+    // compression, filter, interlace = 0
+
+    const sig = new Uint8Array([0x89,0x50,0x4E,0x47,0x0D,0x0A,0x1A,0x0A]);
+    const ihdr = chunk('IHDR', ihdrData);
+    const idatChunk = chunk('IDAT', idat);
+    const iend = chunk('IEND', new Uint8Array(0));
+
+    const total = sig.length + ihdr.length + idatChunk.length + iend.length;
+    const png = new Uint8Array(total);
+    let off = 0;
+    for (const part of [sig, ihdr, idatChunk, iend]) {
+      png.set(part, off); off += part.length;
+    }
+    return png;
+  })();
 
   const img: Image = {
     data: pngBytes,

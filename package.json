@@ -20,5 +20,8 @@
   },
   "dependencies": {
     "typescript": "^5.9.3"
+  },
+  "devDependencies": {
+    "zlib": "^1.0.5"
   }
 }
