@@ -16,12 +16,16 @@
   "main": "index.js",
   "scripts": {
     "test": "node ./dist/test/examples.js",
-    "build": "tsc"
+    "build": "tsc",
+    "prepublishOnly": "npm run build && npm run bundle",
+    "bundle": "esbuild ./dist/index.js --format=esm --minify --external:@node-projects/base-custom-webcomponent --platform=neutral --bundle --outfile=./dist/index-min.js"
+ 
   },
   "dependencies": {
     "typescript": "^5.9.3"
   },
   "devDependencies": {
+    "esbuild": "^0.25.10",
     "zlib": "^1.0.5"
   }
 }
