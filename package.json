@@ -1,5 +1,5 @@
 {
-  "name": "excelforge",
+  "name": "@node-projects/excelforge",
   "version": "2.0.0",
   "description": "A **complete TypeScript library** for reading and writing Excel `.xlsx` files with **zero external dependencies**. Works in browsers, Node.js, Deno, Bun, and edge runtimes.",
   "homepage": "https://github.com/node-projects/excelForge#readme",
