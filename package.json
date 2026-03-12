@@ -18,7 +18,7 @@
     "test": "node ./dist/test/examples.js",
     "build": "tsc",
     "prepublishOnly": "npm run build && npm run bundle",
-    "bundle": "esbuild ./dist/index.js --format=esm --minify --external:@node-projects/base-custom-webcomponent --platform=neutral --bundle --outfile=./dist/index-min.js"
+    "bundle": "esbuild ./dist/index.js --format=esm --minify --external:fs/promises --external:zlib --platform=neutral --bundle --outfile=./dist/index-min.js"
   },
   "devDependencies": {
     "esbuild": "^0.25.10",
