@@ -957,6 +957,67 @@ async function example_financial_report() {
   await wb.writeFile('./output/19_financial_report.xlsx');
 }
 
+// ============================================================
+// 20. LOAD EXISTING TABLE (ErrorsAndWarnings.xlsx)
+// ============================================================
+async function example_load_table() {
+  const wb = await Workbook.fromFile('./src/test/ErrorsAndWarnings.xlsx');
+
+  const sheetNames = wb.getSheetNames();
+  console.log('  Sheets:', sheetNames);
+
+  const ws = wb.getSheet(sheetNames[0]);
+  if (!ws) throw new Error('No sheet found');
+
+  const tables = ws.getTables();
+  console.log('  Tables found:', tables.length);
+  if (tables.length === 0) throw new Error('No tables found — table loading is broken');
+
+  const table = tables[0];
+  if (!table) throw new Error('No table found');
+  console.log('  Table:', table.name, 'ref:', table.ref, 'columns:', table.columns.map(c => c.name));
+
+  // Extend the table with new data rows
+  const { startRow, startCol, endRow, endCol } = parseRangeHelper(table.ref);
+  const newRow = endRow + 1;
+  ws.writeRow(newRow, startCol, ['New Error', 'TestModule', 'critical', new Date(), 'Added by test']);
+
+  // Update table ref to include the new row
+  const startColLetter = colIndexToLetterHelper(startCol);
+  const endColLetter = colIndexToLetterHelper(endCol);
+  table.ref = `${startColLetter}${startRow}:${endColLetter}${newRow}`;
+  console.log('  Updated table ref:', table.ref);
+
+  wb.markDirty(sheetNames[0]);
+  await wb.writeFile('./output/20_loaded_table.xlsx');
+
+  // Verify round-trip: reload and check tables are still there
+  const wb2 = await Workbook.fromFile('./output/20_loaded_table.xlsx');
+  const ws2 = wb2.getSheet(sheetNames[0]);
+  const tables2 = ws2!.getTables();
+  if (tables2.length === 0) throw new Error('Round-trip failed: no tables in re-loaded file');
+  console.log('  Round-trip OK, tables:', tables2.length);
+}
+
+// helpers used by the test (re-import the utility)
+function parseRangeHelper(ref: string) {
+  const [start, end] = ref.split(':');
+  const s = parseCellRef(start), e = parseCellRef(end);
+  return { startRow: s.row, startCol: s.col, endRow: e.row, endCol: e.col };
+}
+function parseCellRef(ref: string) {
+  const m = ref.match(/^([A-Z]+)(\d+)$/);
+  if (!m) throw new Error('Invalid ref: ' + ref);
+  let col = 0;
+  for (const ch of m[1]) col = col * 26 + (ch.charCodeAt(0) - 64);
+  return { row: parseInt(m[2], 10), col };
+}
+function colIndexToLetterHelper(col: number): string {
+  let s = '';
+  while (col > 0) { const r = (col - 1) % 26; s = String.fromCharCode(65 + r) + s; col = Math.floor((col - 1) / 26); }
+  return s;
+}
+
 // Run all examples
 async function runAll() {
   // @ts-ignore
@@ -983,6 +1044,7 @@ async function runAll() {
     ['Hyperlinks',             example_hyperlinks],
     ['Comments',               example_comments],
     ['Financial Report',       example_financial_report],
+    ['Load Table',             example_load_table],
   ] as const;
 
   for (const [name, fn] of examples) {

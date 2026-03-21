@@ -16,7 +16,7 @@ import type {
   Alignment, NumberFormat, MergeRange, FreezePane, SheetView,
   PageSetup, PageMargins, HeaderFooter, PrintOptions, SheetProtection,
   AutoFilter, ConditionalFormat, DataValidation, Cell, CellValue,
-  RichTextRun, Comment, Hyperlink,
+  RichTextRun, Comment, Hyperlink, Table, TableColumn,
 } from './types.js';
 import { Worksheet } from './Worksheet.js';
 import { SharedStrings } from './SharedStrings.js';
@@ -296,6 +296,8 @@ interface ParsedSheet {
   originalXml: string;
   /** Unknown top-level elements (pivot tables, VML, etc.) — preserved verbatim */
   unknownParts: string[];
+  /** Relationship IDs of tables referenced by <tableParts> */
+  tableRIds: string[];
 }
 
 function parseWorksheet(
@@ -307,6 +309,7 @@ function parseWorksheet(
   const ws = new Worksheet(name);
   const root = parseXml(xml);
   const unknownParts: string[] = [];
+  const tableRIds: string[] = [];
 
   const knownTags = new Set([
     'sheetPr','dimension','sheetViews','sheetFormatPr','cols',
@@ -324,6 +327,12 @@ function parseWorksheet(
       case 'sheetData':     parseSheetData(node, ws, styles, sharedStrings); break;
       case 'mergeCells':    parseMerges(node, ws);       break;
       case 'autoFilter':    ws.autoFilter = { ref: node.attrs['ref'] ?? '' }; break;
+      case 'tableParts':
+        for (const tp of children(node, 'tablePart')) {
+          const rid = tp.attrs['r:id'] ?? '';
+          if (rid) tableRIds.push(rid);
+        }
+        break;
       case 'sheetProtection': parseProtection(node, ws); break;
       case 'pageMargins':   parsePageMargins(node, ws); break;
       case 'pageSetup':     parsePageSetup(node, ws);   break;
@@ -337,7 +346,7 @@ function parseWorksheet(
     }
   }
 
-  return { ws, originalXml: xml, unknownParts };
+  return { ws, originalXml: xml, unknownParts, tableRIds };
 }
 
 function parseSheetViews(node: XmlNode, ws: Worksheet): void {
@@ -523,6 +532,60 @@ function parsePrintOptions(node: XmlNode, ws: Worksheet): void {
   };
 }
 
+// ─── Table XML parsing ────────────────────────────────────────────────────────
+
+function parseTableXml(xml: string): Table | null {
+  try {
+    const root = parseXml(xml);
+    const tag = localName(root.tag);
+    if (tag !== 'table') return null;
+
+    const name        = root.attrs['name'] ?? '';
+    const displayName = root.attrs['displayName'] ?? name;
+    const ref         = root.attrs['ref'] ?? '';
+    const totalsCount = parseInt(root.attrs['totalsRowCount'] ?? '0', 10);
+
+    const columns: TableColumn[] = [];
+    const colsNode = find(root, 'tableColumns');
+    if (colsNode) {
+      for (const col of children(colsNode, 'tableColumn')) {
+        const tc: TableColumn = { name: col.attrs['name'] ?? '' };
+        if (col.attrs['totalsRowFunction']) tc.totalsRowFunction = col.attrs['totalsRowFunction'] as any;
+        if (col.attrs['totalsRowFormula']) tc.totalsRowFormula = col.attrs['totalsRowFormula'];
+        if (col.attrs['totalsRowLabel'])  tc.totalsRowLabel = col.attrs['totalsRowLabel'];
+        columns.push(tc);
+      }
+    }
+
+    const table: Table = { name, ref, columns };
+    if (displayName && displayName !== name) table.displayName = displayName;
+    if (totalsCount > 0) table.totalsRow = true;
+
+    const styleNode = find(root, 'tableStyleInfo');
+    if (styleNode) {
+      if (styleNode.attrs['name'])              table.style = styleNode.attrs['name'] as any;
+      if (styleNode.attrs['showFirstColumn'] === '1')   table.showFirstColumn = true;
+      if (styleNode.attrs['showLastColumn'] === '1')    table.showLastColumn = true;
+      if (styleNode.attrs['showRowStripes'] === '1')    table.showRowStripes = true;
+      if (styleNode.attrs['showColumnStripes'] === '1') table.showColumnStripes = true;
+    }
+
+    return table;
+  } catch {
+    return null;
+  }
+}
+
+/** Resolve a relative path (e.g. "../tables/table1.xml") against a base directory */
+function resolvePath(base: string, relative: string): string {
+  const parts = base.replace(/\/$/, '').split('/');
+  for (const seg of relative.split('/')) {
+    if (seg === '..') parts.pop();
+    else if (seg !== '.') parts.push(seg);
+  }
+  return parts.join('/');
+}
+
 // ─── Main reader ──────────────────────────────────────────────────────────────
 
 export interface ReadResult {
@@ -627,11 +690,37 @@ export async function readWorkbook(data: Uint8Array): Promise<ReadResult> {
     const sheetXml = getText(target) ?? '';
     if (!sheetXml) continue;
 
-    const { ws, originalXml, unknownParts: sheetUnknown } = parseWorksheet(
+    const { ws, originalXml, unknownParts: sheetUnknown, tableRIds } = parseWorksheet(
       sheetXml, name, styles, sharedStrings,
     );
     ws.sheetIndex = sheets.length + 1;
     ws.rId = rId;
+
+    // Resolve table references and parse table XML files
+    if (tableRIds.length) {
+      // Sheet rels file path: xl/worksheets/_rels/sheet<N>.xml.rels
+      const sheetFileName = target.split('/').pop() ?? '';
+      const sheetDir = target.substring(0, target.lastIndexOf('/') + 1);
+      const sheetRelsPath = `${sheetDir}_rels/${sheetFileName}.rels`;
+      const sheetRels = allRels.get(sheetRelsPath);
+      if (sheetRels) {
+        for (const tblRId of tableRIds) {
+          const tblRel = sheetRels.get(tblRId);
+          if (!tblRel) continue;
+          // Resolve relative path (e.g. "../tables/table1.xml" relative to xl/worksheets/)
+          const tblTarget = tblRel.target.startsWith('/')
+            ? tblRel.target.slice(1)
+            : resolvePath(sheetDir, tblRel.target);
+          const tblXml = getText(tblTarget);
+          if (tblXml) {
+            const table = parseTableXml(tblXml);
+            if (table) ws.addTable(table);
+          }
+        }
+        ws.tableRIds = tableRIds;
+      }
+    }
+
     sheets.push({ ws, sheetId, rId, originalXml, unknownParts: sheetUnknown });
   }
 
