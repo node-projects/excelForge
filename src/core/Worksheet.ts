@@ -414,11 +414,6 @@ ${tablePartsXml}
       return `<c r="${ref}"${sAttr}><v>${v}</v></c>`;
     }
 
-    // String — check if it starts with '=' (formula string)
-    if (typeof v === 'string' && v.startsWith('=')) {
-      return `<c r="${ref}"${sAttr}><f>${escapeXml(v.slice(1))}</f></c>`;
-    }
-
     const si = shared.intern(v as string);
     return `<c r="${ref}" t="s"${sAttr}><v>${si}</v></c>`;
   }
