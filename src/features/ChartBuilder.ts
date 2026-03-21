@@ -43,7 +43,7 @@ function axisXml(id: number, crossId: number, axis?: ChartAxis, delete_ = false)
   <c:scaling><c:orientation val="minMax"/>${minMax}</c:scaling>
   <c:delete val="0"/>
   <c:axPos val="l"/>
-  ${title}${gridLines}${numFmt}
+  ${gridLines}${title}${numFmt}
   <c:crossAx val="${crossId}"/>
 </c:valAx>`;
 }
@@ -57,7 +57,7 @@ function catAxisXml(id: number, crossId: number, axis?: ChartAxis): string {
   <c:scaling><c:orientation val="minMax"/></c:scaling>
   <c:delete val="0"/>
   <c:axPos val="b"/>
-  ${title}${gridLines}
+  ${gridLines}${title}
   <c:crossAx val="${crossId}"/>
 </c:catAx>`;
 }
@@ -160,6 +160,7 @@ export function buildChartXml(chart: Chart): string {
 <c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart"
   xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
   xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+${chart.style ? `<c:style val="${chart.style}"/>` : ''}
 <c:chart>
   ${title}
   <c:autoTitleDeleted val="${chart.title ? '0' : '1'}"/>
@@ -170,6 +171,5 @@ export function buildChartXml(chart: Chart): string {
   ${legXml}
   <c:plotVisOnly val="1"/>
 </c:chart>
-${chart.style ? `<c:style val="${chart.style}"/>` : ''}
 </c:chartSpace>`;
 }

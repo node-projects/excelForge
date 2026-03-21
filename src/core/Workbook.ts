@@ -178,14 +178,17 @@ export class Workbook {
   private async _buildPatched(): Promise<Uint8Array> {
     const rr = this._readResult!;
     const entries: ZipEntry[] = [];
+    const hasDirty = this._dirtySheets.size > 0;
 
     const styles = new StyleRegistry();
     const shared = new SharedStrings();
 
-    // Re-serialise dirty sheets (collecting styles & shared strings as we go)
+    // When any sheet is dirty we must re-serialise ALL sheets so that every
+    // sheet uses the same fresh style-registry / shared-strings indices.
+    // When nothing is dirty we preserve the original styles & shared strings.
     const sheetXmls = new Map<number, string>();
-    for (let i = 0; i < this.sheets.length; i++) {
-      if (this._dirtySheets.has(i)) {
+    if (hasDirty) {
+      for (let i = 0; i < this.sheets.length; i++) {
         sheetXmls.set(i, this.sheets[i].toXml(styles, shared));
       }
     }
@@ -219,14 +222,21 @@ export class Workbook {
     // ── Workbook XML (patch sheet names) ───────────────────────────────────
     entries.push({ name: 'xl/workbook.xml', data: strToBytes(this._patchWorkbookXml(rr.workbookXml)) });
 
-    // ── Styles (always rewrite — may have new xfs) ─────────────────────────
-    entries.push({ name: 'xl/styles.xml',        data: strToBytes(styles.toXml()) });
-    entries.push({ name: 'xl/sharedStrings.xml', data: strToBytes(shared.toXml()) });
+    // ── Styles & shared strings ────────────────────────────────────────────
+    if (hasDirty) {
+      // All sheets re-serialised → use fresh registries
+      entries.push({ name: 'xl/styles.xml',        data: strToBytes(styles.toXml()) });
+      entries.push({ name: 'xl/sharedStrings.xml', data: strToBytes(shared.toXml()) });
+    } else {
+      // No sheets modified → preserve originals so indices remain valid
+      entries.push({ name: 'xl/styles.xml',        data: strToBytes(rr.stylesXml) });
+      entries.push({ name: 'xl/sharedStrings.xml', data: strToBytes(rr.sharedXml) });
+    }
 
     // ── Sheets ────────────────────────────────────────────────────────────
     for (let i = 0; i < this.sheets.length; i++) {
       const path = `xl/worksheets/sheet${i + 1}.xml`;
-      if (this._dirtySheets.has(i)) {
+      if (hasDirty) {
         entries.push({ name: path, data: strToBytes(sheetXmls.get(i) ?? '') });
       } else {
         // Preserve original sheet — inject any unknown parts back in
@@ -238,9 +248,36 @@ export class Workbook {
       }
     }
 
-    // ── Unknown parts — verbatim ───────────────────────────────────────────
+    // ── Unknown parts — verbatim (skip table files that belong to dirty sheets) ──
+    const dirtyTablePaths = new Set<string>();
+    if (hasDirty) {
+      for (let i = 0; i < this.sheets.length; i++) {
+        if (rr.sheets[i]?.tablePaths) {
+          for (const tp of rr.sheets[i].tablePaths) dirtyTablePaths.add(tp);
+        }
+      }
+    }
     for (const [path, data] of rr.unknownParts) {
-      entries.push({ name: path, data });
+      if (!dirtyTablePaths.has(path)) {
+        entries.push({ name: path, data });
+      }
+    }
+
+    // ── Regenerate table XMLs when sheets are dirty ───────────────────────
+    if (hasDirty) {
+      for (let i = 0; i < this.sheets.length; i++) {
+        const ws = this.sheets[i];
+        const tables = ws.getTables();
+        const paths = rr.sheets[i]?.tablePaths ?? [];
+        for (let j = 0; j < tables.length; j++) {
+          const tblPath = paths[j];
+          if (tblPath) {
+            const idMatch = tblPath.match(/table(\d+)\.xml$/);
+            const tableId = idMatch ? parseInt(idMatch[1], 10) : j + 1;
+            entries.push({ name: tblPath, data: strToBytes(buildTableXml(tables[j], tableId)) });
+          }
+        }
+      }
     }
 
     // ── Rels ──────────────────────────────────────────────────────────────
@@ -248,7 +285,7 @@ export class Workbook {
     entries.push({ name: 'xl/_rels/workbook.xml.rels', data: strToBytes(this._buildWorkbookRels(rr)) });
 
     for (const [relPath, relMap] of rr.allRels) {
-      if (relPath === 'xl/_rels/workbook.xml.rels') continue;
+      if (relPath === 'xl/_rels/workbook.xml.rels' || relPath === '_rels/.rels') continue;
       entries.push({ name: relPath, data: strToBytes(this._relsToXml(relMap)) });
     }
 

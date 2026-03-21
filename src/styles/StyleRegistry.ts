@@ -49,7 +49,7 @@ function fillXml(fill: Fill): string {
   // gradient
   const f = fill as GradientFill;
   const stops = f.stops.map(s =>
-    `<gradientStop position="${s.position}"><color rgb="${s.color.startsWith('#') ? 'FF'+s.color.slice(1) : s.color}"/></gradientStop>`
+    `<stop position="${s.position}"><color rgb="${s.color.startsWith('#') ? 'FF'+s.color.slice(1) : s.color}"/></stop>`
   ).join('');
   const attrs = [
     f.gradientType ? `type="${f.gradientType}"` : '',

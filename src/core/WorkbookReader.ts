@@ -226,7 +226,7 @@ function parseFill(node: XmlNode): Fill {
   }
   const gradient = child(node, 'gradientFill');
   if (gradient) {
-    const stops = children(gradient, 'gradientStop').map(s => {
+    const stops = children(gradient, 'stop').concat(children(gradient, 'gradientStop')).map(s => {
       const colorNode = child(s, 'color');
       return {
         position: parseFloat(s.attrs['position'] ?? '0'),
@@ -595,6 +595,8 @@ export interface ReadResult {
     rId: string;
     originalXml: string;
     unknownParts: string[];
+    /** Resolved paths of table XML files belonging to this sheet */
+    tablePaths: string[];
   }>;
   styles:         ParsedStyles;
   stylesXml:      string;       // original — for patching
@@ -697,6 +699,7 @@ export async function readWorkbook(data: Uint8Array): Promise<ReadResult> {
     ws.rId = rId;
 
     // Resolve table references and parse table XML files
+    const tablePaths: string[] = [];
     if (tableRIds.length) {
       // Sheet rels file path: xl/worksheets/_rels/sheet<N>.xml.rels
       const sheetFileName = target.split('/').pop() ?? '';
@@ -715,13 +718,14 @@ export async function readWorkbook(data: Uint8Array): Promise<ReadResult> {
           if (tblXml) {
             const table = parseTableXml(tblXml);
             if (table) ws.addTable(table);
+            tablePaths.push(tblTarget);
           }
         }
         ws.tableRIds = tableRIds;
       }
     }
 
-    sheets.push({ ws, sheetId, rId, originalXml, unknownParts: sheetUnknown });
+    sheets.push({ ws, sheetId, rId, originalXml, unknownParts: sheetUnknown, tablePaths });
   }
 
   // Collect truly unknown parts (not sheets, styles, strings, rels, content-types, props)

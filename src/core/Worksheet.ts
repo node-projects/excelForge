@@ -242,7 +242,7 @@ export class Worksheet {
     const fitToPage = this.pageSetup?.fitToPage;
     const tabColor  = this.options?.tabColor;
     const sheetPrXml = (fitToPage || tabColor)
-      ? `<sheetPr>${tabColor ? `<tabColor rgb="${tabColor}"/>` : ''}${fitToPage ? '<pageSetPr fitToPage="1"/>' : ''}</sheetPr>`
+      ? `<sheetPr>${tabColor ? `<tabColor rgb="${tabColor}"/>` : ''}${fitToPage ? '<pageSetUpPr fitToPage="1"/>' : ''}</sheetPr>`
       : '';
     const sheetViewXml = this._sheetViewXml();
     const colsXml      = this._colsXml(styles);
