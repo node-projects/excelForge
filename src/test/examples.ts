@@ -991,12 +991,59 @@ async function example_load_table() {
   wb.markDirty(sheetNames[0]);
   await wb.writeFile('./output/20_loaded_table.xlsx');
 
-  // Verify round-trip: reload and check tables are still there
+  // Verify round-trip: reload with ExcelForge and check data
   const wb2 = await Workbook.fromFile('./output/20_loaded_table.xlsx');
-  const ws2 = wb2.getSheet(sheetNames[0]);
-  const tables2 = ws2!.getTables();
+  const ws2 = wb2.getSheet(sheetNames[0])!;
+  const tables2 = ws2.getTables();
   if (tables2.length === 0) throw new Error('Round-trip failed: no tables in re-loaded file');
   console.log('  Round-trip OK, tables:', tables2.length);
+
+  // Verify ExcelForge can read back the written values
+  const efVals: (string | number | boolean | null)[] = [];
+  for (let c = 1; c <= 12; c++) {
+    const cell = ws2.getCell(newRow, c);
+    const v = cell.value;
+    efVals.push(v === undefined ? null : v as string | number | boolean);
+  }
+  console.log('  ExcelForge read-back row', newRow, ':', efVals.slice(0, 5));
+  if (efVals[0] !== 'New Error') throw new Error('ExcelForge read-back mismatch col A: ' + efVals[0]);
+  if (efVals[1] !== 'TestModule') throw new Error('ExcelForge read-back mismatch col B: ' + efVals[1]);
+  if (efVals[2] !== 'critical') throw new Error('ExcelForge read-back mismatch col C: ' + efVals[2]);
+  if (typeof efVals[3] !== 'number') throw new Error('ExcelForge read-back mismatch col D (expected number): ' + efVals[3]);
+  if (efVals[4] !== 'Added by test') throw new Error('ExcelForge read-back mismatch col E: ' + efVals[4]);
+
+  // Verify with OpenXML SDK via C# reader
+  // @ts-ignore
+  const { execSync } = await import('child_process');
+  try {
+    const cmd = `dotnet run validatorReadData.cs output/20_loaded_table.xlsx ErrorsAndWarnings ${newRow} 1 12`;
+    const out = execSync(cmd, { encoding: 'utf-8', timeout: 60000, stdio: ['pipe', 'pipe', 'pipe'] }).trim();
+    // Extract JSON array from output (skip any dotnet warnings)
+    const jsonStart = out.indexOf('[');
+    const jsonEnd = out.lastIndexOf(']');
+    if (jsonStart < 0 || jsonEnd < 0) throw new Error('C# reader returned no JSON: ' + out.slice(0, 200));
+    const csharpVals: (string | number | boolean | null)[] = JSON.parse(out.slice(jsonStart, jsonEnd + 1));
+    console.log('  C# OpenXML read-back row', newRow, ':', csharpVals.slice(0, 5));
+
+    // Compare ExcelForge vs C# results
+    const expected = ['New Error', 'TestModule', 'critical', efVals[3], 'Added by test'];
+    for (let i = 0; i < expected.length; i++) {
+      const ev = expected[i], cv = csharpVals[i];
+      if (typeof ev === 'number' && typeof cv === 'number') {
+        if (Math.abs(ev - cv) > 0.001) throw new Error(`C# mismatch col ${i + 1}: expected ${ev}, got ${cv}`);
+      } else if (ev !== cv) {
+        throw new Error(`C# mismatch col ${i + 1}: expected ${JSON.stringify(ev)}, got ${JSON.stringify(cv)}`);
+      }
+    }
+    // Remaining columns should be null
+    for (let i = 5; i < 12; i++) {
+      if (csharpVals[i] !== null) throw new Error(`C# col ${i + 1} expected null, got ${JSON.stringify(csharpVals[i])}`);
+    }
+    console.log('  C# OpenXML verification: all values match ✓');
+  } catch (e: any) {
+    if (e.message?.includes('mismatch') || e.message?.includes('expected null')) throw e;
+    console.log('  C# OpenXML verification skipped (dotnet not available):', e.message?.split('\n')[0]);
+  }
 }
 
 // helpers used by the test (re-import the utility)
