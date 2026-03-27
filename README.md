@@ -2,7 +2,7 @@
 
 A **complete TypeScript library** for reading and writing Excel `.xlsx` files with **zero external dependencies**. Works in browsers, Node.js, Deno, Bun, and edge runtimes.
 
-Inspired by EPPlus (C#), ExcelForge gives you the full power of the OOXML spec — including real DEFLATE compression, round-trip editing of existing files, and rich property support.
+ExcelForge gives you the full power of the OOXML spec — including real DEFLATE compression, round-trip editing of existing files, and rich property support.
 
 ---
 
