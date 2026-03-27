@@ -510,6 +510,44 @@ export interface Sparkline {
   lineWidth?:     number;
 }
 
+// ─── Pivot Table ──────────────────────────────────────────────────────────────
+
+export type PivotFunction =
+  | 'sum' | 'count' | 'average' | 'max' | 'min'
+  | 'product' | 'countNums' | 'stdDev' | 'stdDevp' | 'var' | 'varp';
+
+export interface PivotDataField {
+  /** Source field name (must match a column header in the source range) */
+  field: string;
+  /** Display name shown in the pivot table (defaults to "Sum of <field>") */
+  name?: string;
+  /** Aggregation function (default: 'sum') */
+  func?: PivotFunction;
+}
+
+export interface PivotTable {
+  /** Unique name for the pivot table, e.g. "PivotTable1" */
+  name: string;
+  /** Name of the sheet containing the source data */
+  sourceSheet: string;
+  /** Source data range including header row, e.g. "A1:D10" */
+  sourceRef: string;
+  /** Cell address of the pivot table's top-left corner, e.g. "F1" */
+  targetCell: string;
+  /** Field names to display as row labels (in order) */
+  rowFields: string[];
+  /** Field names to display as column labels (in order) */
+  colFields: string[];
+  /** Fields to aggregate in the values area */
+  dataFields: PivotDataField[];
+  /** Pivot table style name (default: "PivotStyleMedium9") */
+  style?: string;
+  /** Show grand totals for rows (default: true) */
+  rowGrandTotals?: boolean;
+  /** Show grand totals for columns (default: true) */
+  colGrandTotals?: boolean;
+}
+
 // ─── Workbook Options ─────────────────────────────────────────────────────────
 
 export interface WorkbookProperties {

@@ -1,11 +1,12 @@
 import type {
-  WorkbookProperties, NamedRange, WorksheetOptions, Image, Comment
+  WorkbookProperties, NamedRange, WorksheetOptions, Image, Comment, PivotTable
 } from '../core/types.js';
 import { Worksheet } from './Worksheet.js';
 import { StyleRegistry } from '../styles/StyleRegistry.js';
 import { SharedStrings } from './SharedStrings.js';
 import { buildChartXml } from '../features/ChartBuilder.js';
 import { buildTableXml } from '../features/TableBuilder.js';
+import { buildPivotTableFiles } from '../features/PivotTableBuilder.js';
 import { buildZip, type ZipEntry, type ZipOptions } from '../utils/zip.js';
 import { strToBytes, base64ToBytes, escapeXml, colIndexToLetter } from '../utils/helpers.js';
 import { readWorkbook, type ReadResult } from './WorkbookReader.js';
@@ -311,10 +312,12 @@ export class Workbook {
     const allImages:  Array<{ ws: Worksheet; img: Image; ext: string; idx: number }> = [];
     const allCharts:  Array<{ ws: Worksheet; chartIdx: number; globalIdx: number }> = [];
     const allTables:  Array<{ ws: Worksheet; tableIdx: number; globalTableId: number }> = [];
+    const allPivotTables: Array<{ ws: Worksheet; pt: PivotTable; pivotIdx: number; cacheId: number; pivotRId: string; cacheRId: string }> = [];
     const sheetImageRIds  = new Map<Worksheet, string[]>();
     const sheetChartRIds  = new Map<Worksheet, string[]>();
     const sheetTableRIds  = new Map<Worksheet, string[]>();
-    let imgCtr = 1, chartCtr = 1, tableCtr = 1, vmlCtr = 1;
+    const sheetPivotRIds  = new Map<Worksheet, string[]>();
+    let imgCtr = 1, chartCtr = 1, tableCtr = 1, vmlCtr = 1, pivotCtr = 1, pivotCacheIdCtr = 0;
 
     for (const ws of this.sheets) {
       const imgs = ws.getImages() as Image[];
@@ -333,6 +336,15 @@ export class Workbook {
       sheetChartRIds.set(ws, chartRIds);
       sheetTableRIds.set(ws, tblRIds);
       ws.tableRIds = tblRIds;
+
+      const ptRIds: string[] = [];
+      for (const pt of ws.getPivotTables()) {
+        const pivotRId = `rId${globalRId++}`;
+        const cacheRId = `rId${globalRId++}`;
+        ptRIds.push(pivotRId);
+        allPivotTables.push({ ws, pt, pivotIdx: pivotCtr++, cacheId: pivotCacheIdCtr++, pivotRId, cacheRId });
+      }
+      sheetPivotRIds.set(ws, ptRIds);
     }
 
     const hasCustom = this.customProperties.length > 0;
@@ -362,6 +374,9 @@ ${this.sheets.map((_,i) => `<Override PartName="/xl/worksheets/sheet${i+1}.xml" 
 ${this.sheets.filter(ws=>ws.drawingRId).map((_,i) => `<Override PartName="/xl/drawings/drawing${i+1}.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>`).join('')}
 ${allCharts.map(({globalIdx}) => `<Override PartName="/xl/charts/chart${globalIdx}.xml" ContentType="application/vnd.openxmlformats-officedocument.drawingml.chart+xml"/>`).join('')}
 ${allTables.map(({globalTableId}) => `<Override PartName="/xl/tables/table${globalTableId}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml"/>`).join('')}
+${allPivotTables.map(p => `<Override PartName="/xl/pivotTables/pivotTable${p.pivotIdx}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.pivotTable+xml"/>`).join('\n')}
+${allPivotTables.map(p => `<Override PartName="/xl/pivotCache/pivotCacheDefinition${p.pivotIdx}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.pivotCacheDefinition+xml"/>`).join('\n')}
+${allPivotTables.map(p => `<Override PartName="/xl/pivotCache/pivotCacheRecords${p.pivotIdx}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.pivotCacheRecords+xml"/>`).join('\n')}
 ${commentsCTs}
 <Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>
 <Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>
@@ -375,11 +390,15 @@ ${hasCustom ? '<Override PartName="/docProps/custom.xml" ContentType="applicatio
 ${this.sheets.map((ws,i) => `<Relationship Id="${ws.rId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i+1}.xml"/>`).join('')}
 <Relationship Id="rIdStyles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
 <Relationship Id="rIdShared" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/>
+${allPivotTables.map(p => `<Relationship Id="${p.cacheRId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/pivotCacheDefinition" Target="pivotCache/pivotCacheDefinition${p.pivotIdx}.xml"/>`).join('\n')}
 </Relationships>`) });
 
     const date1904 = this.properties.date1904 ? `<workbookPr date1904="1"/>` : '<workbookPr/>';
     const namedRangesXml = this.namedRanges.length
       ? `<definedNames>${this.namedRanges.map(nr => `<definedName name="${escapeXml(nr.name)}"${nr.scope ? ` localSheetId="${this.sheets.findIndex(s=>s.name===nr.scope)}"` : ''}>${escapeXml(nr.ref)}</definedName>`).join('')}</definedNames>` : '';
+    const pivotCachesXml = allPivotTables.length
+      ? `<pivotCaches>${allPivotTables.map(p => `<pivotCache cacheId="${p.cacheId}" r:id="${p.cacheRId}"/>`).join('')}</pivotCaches>`
+      : '';
 
     entries.push({ name: 'xl/workbook.xml', data: strToBytes(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
@@ -388,6 +407,7 @@ ${date1904}
 <sheets>${this.sheets.map((ws,i) => `<sheet name="${escapeXml(ws.name)}" sheetId="${i+1}" r:id="${ws.rId}"${ws.options?.state && ws.options.state !== 'visible' ? ` state="${ws.options.state}"` : ''}/>`).join('')}</sheets>
 ${namedRangesXml}
 <calcPr calcId="191028"/>
+${pivotCachesXml}
 </workbook>`) });
 
     // Per-sheet
@@ -411,6 +431,11 @@ ${namedRangesXml}
       }
       for (let j=0;j<tblEntries.length;j++) {
         wsRels.push(`<Relationship Id="${tblRIds_[j]}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/table" Target="../tables/table${tblEntries[j].globalTableId}.xml"/>`);
+      }
+      const ptRIds_ = sheetPivotRIds.get(ws) ?? [];
+      const ptEntries = allPivotTables.filter(p => p.ws === ws);
+      for (let j = 0; j < ptEntries.length; j++) {
+        wsRels.push(`<Relationship Id="${ptRIds_[j]}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/pivotTable" Target="../pivotTables/pivotTable${ptEntries[j].pivotIdx}.xml"/>`);
       }
       const sheetComments = ws.getComments();
       if (sheetComments.length && ws.legacyDrawingRId) {
@@ -457,6 +482,20 @@ ${dRels.join('\n')}
     }
     for (const { ws, tableIdx, globalTableId } of allTables) {
       entries.push({ name: `xl/tables/table${globalTableId}.xml`, data: strToBytes(buildTableXml(ws.getTables()[tableIdx], globalTableId)) });
+    }
+
+    for (const { ws, pt, pivotIdx, cacheId: cId } of allPivotTables) {
+      const sourceWs   = this.sheets.find(s => s.name === pt.sourceSheet);
+      const sourceData = sourceWs ? sourceWs.readRange(pt.sourceRef) : [[]];
+      const { pivotTableXml, cacheDefXml, cacheRecordsXml } = buildPivotTableFiles(pt, sourceData, pivotIdx, cId);
+      const wbRel = (type: string, target: string) =>
+        `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">\n<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/${type}" Target="${target}"/>\n</Relationships>`;
+
+      entries.push({ name: `xl/pivotTables/pivotTable${pivotIdx}.xml`,                               data: strToBytes(pivotTableXml) });
+      entries.push({ name: `xl/pivotTables/_rels/pivotTable${pivotIdx}.xml.rels`,                    data: strToBytes(wbRel('pivotCacheDefinition', `../pivotCache/pivotCacheDefinition${pivotIdx}.xml`)) });
+      entries.push({ name: `xl/pivotCache/pivotCacheDefinition${pivotIdx}.xml`,                      data: strToBytes(cacheDefXml) });
+      entries.push({ name: `xl/pivotCache/_rels/pivotCacheDefinition${pivotIdx}.xml.rels`,           data: strToBytes(wbRel('pivotCacheRecords', `pivotCacheRecords${pivotIdx}.xml`)) });
+      entries.push({ name: `xl/pivotCache/pivotCacheRecords${pivotIdx}.xml`,                         data: strToBytes(cacheRecordsXml) });
     }
 
     entries.push({ name: 'xl/styles.xml',        data: strToBytes(styles.toXml()) });

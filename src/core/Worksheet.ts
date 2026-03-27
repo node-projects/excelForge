@@ -3,7 +3,7 @@ import type {
   ConditionalFormat, Table, AutoFilter, FreezePane, SplitPane,
   SheetProtection, PageSetup, PageMargins, HeaderFooter, PrintOptions,
   SheetView, ColumnDef, RowDef, Sparkline, DataValidation,
-  WorksheetOptions,
+  WorksheetOptions, PivotTable,
 } from '../core/types.js';
 import type { SharedStrings } from '../core/SharedStrings.js';
 import type { StyleRegistry } from '../styles/StyleRegistry.js';
@@ -29,6 +29,7 @@ export class Worksheet {
   private charts: Chart[] = [];
   private conditionalFormats: ConditionalFormat[] = [];
   private tables: Table[] = [];
+  private pivotTables: PivotTable[] = [];
   private sparklines: Sparkline[] = [];
   private colDefs: Map<number, ColumnDef> = new Map();
   private rowDefs: Map<number, RowDef>    = new Map();
@@ -213,6 +214,30 @@ export class Worksheet {
   }
 
   getTables(): readonly Table[] { return this.tables; }
+
+  // ─── Pivot Tables ────────────────────────────────────────────────────────────
+
+  addPivotTable(pt: PivotTable): this {
+    this.pivotTables.push(pt);
+    return this;
+  }
+
+  getPivotTables(): readonly PivotTable[] { return this.pivotTables; }
+
+  /** Read all cell values from a range as a 2-D array (row-major). */
+  readRange(ref: string): CellValue[][] {
+    const { startRow, startCol, endRow, endCol } = parseRange(ref);
+    const result: CellValue[][] = [];
+    for (let r = startRow; r <= endRow; r++) {
+      const row: CellValue[] = [];
+      for (let c = startCol; c <= endCol; c++) {
+        const cell = this.cells.get(this.key(r, c));
+        row.push(cell?.value ?? null);
+      }
+      result.push(row);
+    }
+    return result;
+  }
 
   // ─── Sparklines ──────────────────────────────────────────────────────────────
 

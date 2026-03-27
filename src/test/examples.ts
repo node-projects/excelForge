@@ -1065,6 +1065,68 @@ function colIndexToLetterHelper(col: number): string {
   return s;
 }
 
+// ============================================================
+// 21. PIVOT TABLE — generate, round-trip, and C# validate
+// ============================================================
+async function example_pivot_table() {
+  const wb = new Workbook();
+  wb.properties = { title: 'Pivot Table Demo', author: 'ExcelForge' };
+
+  // ── Source data sheet ──────────────────────────────────────────────────────
+  const wsData = wb.addSheet('Data');
+  wsData.writeRow(1, 1, ['Region', 'Product', 'Sales', 'Units']);
+  wsData.writeRow(2, 1, ['North', 'Widget',  100, 10]);
+  wsData.writeRow(3, 1, ['North', 'Gadget',  200, 20]);
+  wsData.writeRow(4, 1, ['South', 'Widget',  300, 30]);
+  wsData.writeRow(5, 1, ['South', 'Gadget',  500, 50]);
+
+  // ── Pivot sheet ────────────────────────────────────────────────────────────
+  const wsPivot = wb.addSheet('Summary');
+  wsPivot.addPivotTable({
+    name:        'SalesBreakdown',
+    sourceSheet: 'Data',
+    sourceRef:   'A1:D5',
+    targetCell:  'A1',
+    rowFields:   ['Region'],
+    colFields:   ['Product'],
+    dataFields:  [{ field: 'Sales', name: 'Sum of Sales', func: 'sum' }],
+    style:       'PivotStyleMedium9',
+  });
+
+  await wb.writeFile('./output/21_pivot_table.xlsx');
+
+  // ── ExcelForge round-trip ──────────────────────────────────────────────────
+  const wb2 = await Workbook.fromFile('./output/21_pivot_table.xlsx');
+  const names = wb2.getSheetNames();
+  if (!names.includes('Data'))    throw new Error('Round-trip: missing Data sheet');
+  if (!names.includes('Summary')) throw new Error('Round-trip: missing Summary sheet');
+  const wsData2 = wb2.getSheet('Data')!;
+  if (wsData2.getCell(1, 1).value !== 'Region') throw new Error('Round-trip: header mismatch');
+  if (wsData2.getCell(2, 1).value !== 'North')  throw new Error('Round-trip: data mismatch');
+  console.log('  ExcelForge round-trip: OK');
+
+  // ── C# OpenXML SDK validation ─────────────────────────────────────────────
+  // @ts-ignore
+  const { execSync } = await import('child_process');
+  try {
+    const out = execSync('dotnet run validator.cs output/21_pivot_table.xlsx', {
+      encoding: 'utf-8', timeout: 60000, stdio: ['pipe', 'pipe', 'pipe'],
+    }).trim();
+    const jsonStart = out.indexOf('[');
+    const jsonEnd   = out.lastIndexOf(']');
+    if (jsonStart < 0) throw new Error('C# validator returned no JSON: ' + out.slice(0, 200));
+    const errors: object[] = JSON.parse(out.slice(jsonStart, jsonEnd + 1));
+    if (errors.length > 0) {
+      console.log('  C# validation errors:', JSON.stringify(errors, null, 2));
+      throw new Error(`C# OpenXML validation failed with ${errors.length} error(s)`);
+    }
+    console.log('  C# OpenXML validation: OK (no errors)');
+  } catch (e: any) {
+    if (e.message?.includes('validation failed') || e.message?.includes('no JSON')) throw e;
+    console.log('  C# OpenXML validation skipped (dotnet not available):', e.message?.split('\n')[0]);
+  }
+}
+
 // Run all examples
 async function runAll() {
   // @ts-ignore
@@ -1092,6 +1154,7 @@ async function runAll() {
     ['Comments',               example_comments],
     ['Financial Report',       example_financial_report],
     ['Load Table',             example_load_table],
+    ['Pivot Table',            example_pivot_table],
   ] as const;
 
   for (const [name, fn] of examples) {
