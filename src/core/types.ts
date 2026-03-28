@@ -386,6 +386,15 @@ export interface PageMargins {
   footer?: number;
 }
 
+// ─── Page Breaks ─────────────────────────────────────────────────────────────
+
+export interface PageBreak {
+  /** Row (for rowBreaks) or column (for colBreaks) index, 1-based */
+  id:     number;
+  /** Whether this is a manual break (default true) */
+  manual?: boolean;
+}
+
 // ─── Header/Footer ────────────────────────────────────────────────────────────
 
 export interface HeaderFooter {

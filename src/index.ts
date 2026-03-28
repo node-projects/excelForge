@@ -97,6 +97,7 @@ export type {
   SheetProtection,
   PageSetup,
   PageMargins,
+  PageBreak,
   HeaderFooter,
   PrintOptions,
   SheetView,

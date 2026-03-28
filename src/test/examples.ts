@@ -1406,6 +1406,203 @@ async function example_vba_complex() {
   }
 }
 
+// ============================================================
+// CONDITIONAL FORMATTING & DATA VALIDATION ROUND-TRIP TEST
+// ============================================================
+async function example_cf_dv_roundtrip() {
+  // @ts-ignore
+  const fs = await import('fs/promises');
+
+  // ── Part 1: Create a workbook with CF and DV, round-trip it ──
+  const wb = new Workbook();
+  const ws = wb.addSheet('CFTest');
+
+  // Add data
+  for (let r = 1; r <= 20; r++) {
+    ws.setValue(r, 1, `Item ${r}`);
+    ws.setValue(r, 2, r * 10);
+    ws.setValue(r, 3, r % 3 === 0 ? 'Yes' : 'No');
+  }
+
+  // Add conditional formats
+  ws.addConditionalFormat({
+    sqref: 'B1:B20',
+    type: 'cellIs',
+    operator: 'greaterThan',
+    formula: '100',
+    priority: 1,
+    style: { font: { bold: true, color: 'FFFF0000' }, fill: { type: 'pattern', pattern: 'solid', fgColor: 'FFFFFFCC' } as any },
+  });
+  ws.addConditionalFormat({
+    sqref: 'B1:B20',
+    type: 'colorScale',
+    priority: 2,
+    colorScale: {
+      type: 'colorScale',
+      cfvo: [{ type: 'min' }, { type: 'max' }],
+      color: ['FF63BE7B', 'FFF8696B'],
+    },
+  });
+  ws.addConditionalFormat({
+    sqref: 'B1:B20',
+    type: 'dataBar',
+    priority: 3,
+    dataBar: { type: 'dataBar', color: 'FF638EC6' },
+  });
+  ws.addConditionalFormat({
+    sqref: 'C1:C20',
+    type: 'containsText',
+    operator: 'equal',
+    text: 'Yes',
+    formula: 'NOT(ISERROR(SEARCH("Yes",C1)))',
+    priority: 4,
+    style: { fill: { type: 'pattern', pattern: 'solid', fgColor: 'FFC6EFCE' } as any },
+  });
+
+  // Add data validations
+  ws.addDataValidation('C1:C20', {
+    type: 'list',
+    list: ['Yes', 'No', 'Maybe'],
+    showErrorAlert: true,
+    errorTitle: 'Invalid',
+    error: 'Pick Yes, No, or Maybe',
+    showInputMessage: true,
+    promptTitle: 'Select',
+    prompt: 'Choose a value',
+  });
+  ws.addDataValidation('B1:B20', {
+    type: 'whole',
+    operator: 'between',
+    formula1: '0',
+    formula2: '500',
+    allowBlank: true,
+    showErrorAlert: true,
+    errorTitle: 'Out of range',
+    error: 'Must be 0-500',
+  });
+
+  const bytes1 = await wb.build();
+
+  // Round-trip: read back and verify
+  const wb2 = await Workbook.fromBytes(bytes1);
+  const ws2 = wb2.getSheet('CFTest')!;
+  const cfs = ws2.getConditionalFormats();
+  const dvs = ws2.getDataValidations();
+
+  if (cfs.length !== 4) throw new Error(`Expected 4 CFs, got ${cfs.length}`);
+  if (dvs.size !== 2) throw new Error(`Expected 2 DVs, got ${dvs.size}`);
+
+  // Verify CF types
+  if (cfs[0].type !== 'cellIs') throw new Error(`CF[0] type: ${cfs[0].type}`);
+  if (cfs[0].operator !== 'greaterThan') throw new Error(`CF[0] operator: ${cfs[0].operator}`);
+  if (cfs[0].formula !== '100') throw new Error(`CF[0] formula: ${cfs[0].formula}`);
+  if (!cfs[0].style?.font?.bold) throw new Error('CF[0] should have bold font style');
+  if (cfs[1].type !== 'colorScale') throw new Error(`CF[1] type: ${cfs[1].type}`);
+  if (!cfs[1].colorScale) throw new Error('CF[1] should have colorScale');
+  if (cfs[2].type !== 'dataBar') throw new Error(`CF[2] type: ${cfs[2].type}`);
+  if (!cfs[2].dataBar) throw new Error('CF[2] should have dataBar');
+  if (cfs[3].type !== 'containsText') throw new Error(`CF[3] type: ${cfs[3].type}`);
+
+  // Verify DV
+  const dvList = dvs.get('C1:C20');
+  if (!dvList) throw new Error('DV for C1:C20 not found');
+  if (dvList.type !== 'list') throw new Error(`DV type: ${dvList.type}`);
+  if (!dvList.list || dvList.list.join(',') !== 'Yes,No,Maybe') throw new Error(`DV list: ${dvList.list}`);
+  if (dvList.errorTitle !== 'Invalid') throw new Error(`DV errorTitle: ${dvList.errorTitle}`);
+
+  const dvWhole = dvs.get('B1:B20');
+  if (!dvWhole) throw new Error('DV for B1:B20 not found');
+  if (dvWhole.type !== 'whole') throw new Error(`DV type: ${dvWhole.type}`);
+  if (dvWhole.operator !== 'between') throw new Error(`DV operator: ${dvWhole.operator}`);
+
+  console.log('  Create + round-trip: OK (4 CFs, 2 DVs preserved)');
+
+  // ── Part 2: Round-trip a dirty workbook — CF/DV must survive re-serialization ──
+  wb2.markDirty('CFTest');
+  ws2.setValue(1, 4, 'added');
+  const bytes2 = await wb2.build();
+  const wb3 = await Workbook.fromBytes(bytes2);
+  const ws3 = wb3.getSheet('CFTest')!;
+  if (ws3.getConditionalFormats().length !== 4) throw new Error('CFs lost after dirty round-trip');
+  if (ws3.getDataValidations().size !== 2) throw new Error('DVs lost after dirty round-trip');
+  console.log('  Dirty round-trip: OK (CF/DV survive re-serialization)');
+
+  // ── Part 3: Round-trip aaa.xlsm and verify CF/DV counts ──
+  try {
+    const aaaData = await fs.readFile('src/test/aaa.xlsm');
+    const wbA = await Workbook.fromBytes(new Uint8Array(aaaData));
+    const cfCounts: Record<string, number> = {};
+    const dvCounts: Record<string, number> = {};
+    for (const name of wbA.getSheetNames()) {
+      const s = wbA.getSheet(name)!;
+      const nCf = s.getConditionalFormats().length;
+      const nDv = s.getDataValidations().size;
+      if (nCf) cfCounts[name] = nCf;
+      if (nDv) dvCounts[name] = nDv;
+    }
+
+    // Force dirty and re-build
+    wbA.markDirty(wbA.getSheetNames()[0]);
+    const aaaOut = await wbA.build();
+    const wbA2 = await Workbook.fromBytes(aaaOut);
+
+    for (const name of wbA2.getSheetNames()) {
+      const s = wbA2.getSheet(name)!;
+      const nCf = s.getConditionalFormats().length;
+      const nDv = s.getDataValidations().size;
+      if (cfCounts[name] && nCf !== cfCounts[name]) {
+        throw new Error(`aaa.xlsm "${name}" CF: expected ${cfCounts[name]}, got ${nCf}`);
+      }
+      if (dvCounts[name] && nDv !== dvCounts[name]) {
+        throw new Error(`aaa.xlsm "${name}" DV: expected ${dvCounts[name]}, got ${nDv}`);
+      }
+    }
+    console.log(`  aaa.xlsm round-trip: OK (CF/DV counts match across ${Object.keys(cfCounts).length} sheets)`);
+  } catch (e: any) {
+    if (e.code === 'ENOENT') console.log('  aaa.xlsm test skipped (file not found)');
+    else throw e;
+  }
+}
+
+// ============================================================
+// PAGE BREAKS TEST
+// ============================================================
+async function example_page_breaks() {
+  // @ts-ignore
+  const fs = await import('fs/promises');
+
+  // Create workbook with page breaks
+  const wb = new Workbook();
+  const ws = wb.addSheet('Breaks');
+  for (let r = 1; r <= 50; r++) ws.setValue(r, 1, `Row ${r}`);
+  ws.addRowBreak(10);
+  ws.addRowBreak(25);
+  ws.addRowBreak(40);
+  ws.addColBreak(3);
+  ws.addColBreak(6);
+
+  const bytes = await wb.build();
+  const wb2 = await Workbook.fromBytes(bytes);
+  const ws2 = wb2.getSheet('Breaks')!;
+  if (ws2.getRowBreaks().length !== 3) throw new Error(`Expected 3 row breaks, got ${ws2.getRowBreaks().length}`);
+  if (ws2.getColBreaks().length !== 2) throw new Error(`Expected 2 col breaks, got ${ws2.getColBreaks().length}`);
+  if (ws2.getRowBreaks()[0].id !== 10) throw new Error(`First row break at ${ws2.getRowBreaks()[0].id}`);
+  if (ws2.getRowBreaks()[1].id !== 25) throw new Error(`Second row break at ${ws2.getRowBreaks()[1].id}`);
+  if (ws2.getColBreaks()[0].id !== 3) throw new Error(`First col break at ${ws2.getColBreaks()[0].id}`);
+  console.log('  Create + round-trip: OK (3 row, 2 col breaks)');
+
+  // Dirty round-trip
+  wb2.markDirty('Breaks');
+  ws2.setValue(1, 2, 'modified');
+  const bytes2 = await wb2.build();
+  const wb3 = await Workbook.fromBytes(bytes2);
+  const ws3 = wb3.getSheet('Breaks')!;
+  if (ws3.getRowBreaks().length !== 3) throw new Error('Row breaks lost after dirty RT');
+  if (ws3.getColBreaks().length !== 2) throw new Error('Col breaks lost after dirty RT');
+  console.log('  Dirty round-trip: OK (breaks survive re-serialization)');
+
+}
+
 // Run all examples
 async function runAll() {
   // @ts-ignore
@@ -1436,6 +1633,8 @@ async function runAll() {
     ['Pivot Table',            example_pivot_table],
     ['VBA Macros',             example_vba],
     ['VBA Complex',            example_vba_complex],
+    ['CF/DV Round-trip',       example_cf_dv_roundtrip],
+    ['Page Breaks',            example_page_breaks],
   ] as const;
 
   for (const [name, fn] of examples) {

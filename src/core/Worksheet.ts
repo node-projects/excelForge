@@ -3,7 +3,7 @@ import type {
   ConditionalFormat, Table, AutoFilter, FreezePane, SplitPane,
   SheetProtection, PageSetup, PageMargins, HeaderFooter, PrintOptions,
   SheetView, ColumnDef, RowDef, Sparkline, DataValidation,
-  WorksheetOptions, PivotTable,
+  WorksheetOptions, PivotTable, PageBreak,
 } from '../core/types.js';
 import type { SharedStrings } from '../core/SharedStrings.js';
 import type { StyleRegistry } from '../styles/StyleRegistry.js';
@@ -34,7 +34,9 @@ export class Worksheet {
   private colDefs: Map<number, ColumnDef> = new Map();
   private rowDefs: Map<number, RowDef>    = new Map();
   private dataValidations: Map<string, DataValidation> = new Map();
-  /** Raw XML fragments for elements we don't parse (rowBreaks, colBreaks, etc.) */
+  private rowBreaks: PageBreak[] = [];
+  private colBreaks: PageBreak[] = [];
+  /** Raw XML fragments for elements we don't parse */
   private preservedXml: string[] = [];
 
   options: WorksheetOptions;
@@ -259,6 +261,21 @@ export class Worksheet {
     return this;
   }
 
+  // ─── Page Breaks ────────────────────────────────────────────────────────────
+
+  addRowBreak(row: number, manual = true): this {
+    this.rowBreaks.push({ id: row, manual });
+    return this;
+  }
+
+  addColBreak(col: number, manual = true): this {
+    this.colBreaks.push({ id: col, manual });
+    return this;
+  }
+
+  getRowBreaks(): readonly PageBreak[] { return this.rowBreaks; }
+  getColBreaks(): readonly PageBreak[] { return this.colBreaks; }
+
   // ─── Preserved XML (round-trip) ─────────────────────────────────────────────
 
   addPreservedXml(xml: string): this {
@@ -306,6 +323,8 @@ export class Worksheet {
     const pageMarginsXml = this._pageMarginsXml();
     const headerFooterXml = this._headerFooterXml();
     const printOptionsXml = this._printOptionsXml();
+    const rowBreaksXml = this._pageBreaksXml('rowBreaks', this.rowBreaks, 16383);
+    const colBreaksXml = this._pageBreaksXml('colBreaks', this.colBreaks, 1048575);
 
     return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
@@ -325,6 +344,8 @@ ${printOptionsXml}
 ${pageMarginsXml}
 ${pageSetupXml}
 ${headerFooterXml}
+${rowBreaksXml}
+${colBreaksXml}
 ${drawingXml}
 ${legacyDrawingXml}
 ${sparklineXml}
@@ -608,6 +629,15 @@ ${this.preservedXml.join('\n')}
       p.centerVertical   ? 'verticalCentered="1"' : '',
     ].filter(Boolean).join(' ');
     return attrs ? `<printOptions ${attrs}/>` : '';
+  }
+
+  private _pageBreaksXml(tag: string, breaks: PageBreak[], maxVal: number): string {
+    if (!breaks.length) return '';
+    const manualCount = breaks.filter(b => b.manual !== false).length;
+    const brks = breaks.map(b =>
+      `<brk id="${b.id}" max="${maxVal}"${b.manual !== false ? ' man="1"' : ''}/>`
+    ).join('');
+    return `<${tag} count="${breaks.length}" manualBreakCount="${manualCount}">${brks}</${tag}>`;
   }
 
   private _sparklineXml(): string {

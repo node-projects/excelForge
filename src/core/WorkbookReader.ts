@@ -344,7 +344,7 @@ function parseWorksheet(
     'sheetData','mergeCells','conditionalFormatting','dataValidations',
     'sheetProtection','printOptions','pageMargins','pageSetup',
     'headerFooter','drawing','tableParts','autoFilter',
-    'picture','oleObjects','ctrlProps',
+    'rowBreaks','colBreaks','picture','oleObjects','ctrlProps',
   ]);
 
   for (const node of root.children) {
@@ -372,13 +372,21 @@ function parseWorksheet(
       case 'dataValidations':
         parseDataValidations(node, ws);
         break;
+      case 'rowBreaks':
+        for (const brk of children(node, 'brk')) {
+          const id = parseInt(brk.attrs['id'] ?? '0', 10);
+          if (id > 0) ws.addRowBreak(id, brk.attrs['man'] === '1');
+        }
+        break;
+      case 'colBreaks':
+        for (const brk of children(node, 'brk')) {
+          const id = parseInt(brk.attrs['id'] ?? '0', 10);
+          if (id > 0) ws.addColBreak(id, brk.attrs['man'] === '1');
+        }
+        break;
       default:
         if (!knownTags.has(tag)) {
           unknownParts.push(nodeToXml(node));
-        }
-        // Preserve rowBreaks, colBreaks, and other known-but-unparsed tags as raw XML
-        if (tag === 'rowBreaks' || tag === 'colBreaks') {
-          ws.addPreservedXml(nodeToXml(node));
         }
         break;
     }
