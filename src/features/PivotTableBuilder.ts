@@ -42,7 +42,7 @@ export function buildPivotTableFiles(
   const dataFldIdxs = pt.dataFields.map(df => fieldIdx.get(df.field) ?? 0);
 
   // ── Collect unique values per field (in order of first appearance) ────────
-  const uniqueVals: string[][]           = Array.from({ length: numFields }, () => []);
+  const uniqueVals: string[][]           = Array.from({ length: numFields }, () => <any>[]);
   const uniqueMap:  Map<string, number>[] = Array.from({ length: numFields }, () => new Map());
   const isNumeric:  boolean[]            = new Array(numFields).fill(true);
 

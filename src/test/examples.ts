@@ -5,6 +5,7 @@
 
 import { Workbook, Worksheet, style, Styles, Colors, NumFmt, VbaProject } from '../index.js';
 import type { Chart, ConditionalFormat, Table, Sparkline, DataValidation, Image } from '../index.js';
+//@ts-ignore
 import { deflateSync } from 'zlib';
 
 // ============================================================

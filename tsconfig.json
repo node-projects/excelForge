@@ -3,7 +3,7 @@
     "outDir": "./dist",
     "rootDir": "src",  
     "target": "esnext",
-    "module": "esnext",
+    "module": "nodenext",
     "allowJs": true,
     "declaration": true,
     "sourceMap": true,
@@ -27,7 +27,7 @@
     "noImplicitReturns": true,
     "noFallthroughCasesInSwitch": true,
  
-    "moduleResolution": "node",
+    "moduleResolution": "nodenext",
     "esModuleInterop": true,
     "skipLibCheck": true
   },
