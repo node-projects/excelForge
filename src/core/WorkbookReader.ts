@@ -16,7 +16,7 @@ import type {
   Alignment, NumberFormat, MergeRange, FreezePane, SheetView,
   PageSetup, PageMargins, HeaderFooter, PrintOptions, SheetProtection,
   AutoFilter, ConditionalFormat, DataValidation, Cell, CellValue,
-  RichTextRun, Comment, Hyperlink, Table, TableColumn,
+  RichTextRun, Comment, Hyperlink, Table, TableColumn, ValidationType,
 } from './types.js';
 import { Worksheet } from './Worksheet.js';
 import { SharedStrings } from './SharedStrings.js';
@@ -81,6 +81,8 @@ interface ParsedStyles {
   xfs: CellStyle[];
   /** custom numFmtId → formatCode */
   numFmts: Map<number, string>;
+  /** dxf index → CellStyle (differential formats for conditional formatting) */
+  dxfs: CellStyle[];
 }
 
 function parseStyles(xml: string): ParsedStyles {
@@ -179,7 +181,30 @@ function parseStyles(xml: string): ParsedStyles {
     }
   }
 
-  return { xfs, numFmts };
+  // Parse dxfs (differential formats for conditional formatting)
+  const dxfs: CellStyle[] = [];
+  const dxfsNode = find(root, 'dxfs');
+  if (dxfsNode) {
+    for (const dxf of children(dxfsNode, 'dxf')) {
+      const style: CellStyle = {};
+      const fontNode = child(dxf, 'font');
+      if (fontNode) style.font = parseFont(fontNode);
+      const fillNode = child(dxf, 'fill');
+      if (fillNode) style.fill = parseFill(fillNode);
+      const borderNode = child(dxf, 'border');
+      if (borderNode) style.border = parseBorder(borderNode);
+      const numFmtDxf = child(dxf, 'numFmt');
+      if (numFmtDxf) {
+        const code = numFmtDxf.attrs['formatCode'] ?? '';
+        if (code) style.numberFormat = { formatCode: code };
+      }
+      const alignDxf = child(dxf, 'alignment');
+      if (alignDxf) style.alignment = parseAlignment(alignDxf);
+      dxfs.push(style);
+    }
+  }
+
+  return { xfs, numFmts, dxfs };
 }
 
 function find(node: XmlNode, localTag: string): XmlNode | undefined {
@@ -319,7 +344,7 @@ function parseWorksheet(
     'sheetData','mergeCells','conditionalFormatting','dataValidations',
     'sheetProtection','printOptions','pageMargins','pageSetup',
     'headerFooter','drawing','tableParts','autoFilter',
-    'rowBreaks','colBreaks','picture','oleObjects','ctrlProps',
+    'picture','oleObjects','ctrlProps',
   ]);
 
   for (const node of root.children) {
@@ -341,9 +366,19 @@ function parseWorksheet(
       case 'pageSetup':     parsePageSetup(node, ws);   break;
       case 'headerFooter':  parseHeaderFooter(node, ws); break;
       case 'printOptions':  parsePrintOptions(node, ws); break;
+      case 'conditionalFormatting':
+        parseConditionalFormatting(node, ws, styles);
+        break;
+      case 'dataValidations':
+        parseDataValidations(node, ws);
+        break;
       default:
         if (!knownTags.has(tag)) {
           unknownParts.push(nodeToXml(node));
+        }
+        // Preserve rowBreaks, colBreaks, and other known-but-unparsed tags as raw XML
+        if (tag === 'rowBreaks' || tag === 'colBreaks') {
+          ws.addPreservedXml(nodeToXml(node));
         }
         break;
     }
@@ -533,6 +568,116 @@ function parsePrintOptions(node: XmlNode, ws: Worksheet): void {
     centerHorizontal:  node.attrs['horizontalCentered']  === '1',
     centerVertical:    node.attrs['verticalCentered']    === '1',
   };
+}
+
+// ─── Conditional formatting parsing ──────────────────────────────────────────
+
+function parseConditionalFormatting(node: XmlNode, ws: Worksheet, styles: ParsedStyles): void {
+  const sqref = node.attrs['sqref'] ?? '';
+  for (const rule of children(node, 'cfRule')) {
+    const type = (rule.attrs['type'] ?? 'cellIs') as ConditionalFormat['type'];
+    const cf: ConditionalFormat = { sqref, type };
+
+    if (rule.attrs['operator']) cf.operator = rule.attrs['operator'] as any;
+    if (rule.attrs['priority'])  cf.priority = parseInt(rule.attrs['priority'], 10);
+    if (rule.attrs['text'])      cf.text = rule.attrs['text'];
+    if (rule.attrs['aboveAverage'] === '0') cf.aboveAverage = false;
+    if (rule.attrs['percent'] === '1') cf.percent = true;
+    if (rule.attrs['rank'])     cf.rank = parseInt(rule.attrs['rank'], 10);
+    if (rule.attrs['timePeriod']) cf.timePeriod = rule.attrs['timePeriod'];
+
+    // Resolve dxfId to CellStyle
+    if (rule.attrs['dxfId'] !== undefined) {
+      const dxfId = parseInt(rule.attrs['dxfId'], 10);
+      if (styles.dxfs[dxfId]) cf.style = styles.dxfs[dxfId];
+    }
+
+    // Parse formulas
+    const formulas = children(rule, 'formula');
+    if (formulas[0]?.text) cf.formula = formulas[0].text;
+    if (formulas[1]?.text) cf.formula2 = formulas[1].text;
+
+    // Parse colorScale
+    const csNode = child(rule, 'colorScale');
+    if (csNode) {
+      const cfvos = children(csNode, 'cfvo').map(c => ({
+        type: (c.attrs['type'] ?? 'min') as any,
+        val: c.attrs['val'],
+      }));
+      const colors = children(csNode, 'color').map(c => c.attrs['rgb'] ?? c.attrs['theme'] ?? '');
+      cf.colorScale = { type: 'colorScale', cfvo: cfvos, color: colors };
+    }
+
+    // Parse dataBar
+    const dbNode = child(rule, 'dataBar');
+    if (dbNode) {
+      const cfvos = children(dbNode, 'cfvo');
+      const colorNode = child(dbNode, 'color');
+      cf.dataBar = {
+        type: 'dataBar',
+        showValue: dbNode.attrs['showValue'] !== '0' ? undefined : false,
+        minType: cfvos[0]?.attrs['type'] as any,
+        minVal: cfvos[0]?.attrs['val'],
+        maxType: cfvos[1]?.attrs['type'] as any,
+        maxVal: cfvos[1]?.attrs['val'],
+        color: colorNode?.attrs['rgb'],
+      };
+    }
+
+    // Parse iconSet
+    const isNode = child(rule, 'iconSet');
+    if (isNode) {
+      const cfvos = children(isNode, 'cfvo').map(c => ({
+        type: c.attrs['type'] ?? 'percent',
+        val: c.attrs['val'],
+      }));
+      cf.iconSet = {
+        type: 'iconSet',
+        iconSet: (isNode.attrs['iconSet'] ?? '3TrafficLights1') as any,
+        cfvo: cfvos,
+        showValue: isNode.attrs['showValue'] === '0' ? false : undefined,
+        reverse: isNode.attrs['reverse'] === '1' ? true : undefined,
+      };
+    }
+
+    ws.addConditionalFormat(cf);
+  }
+}
+
+// ─── Data validation parsing ─────────────────────────────────────────────────
+
+function parseDataValidations(node: XmlNode, ws: Worksheet): void {
+  for (const dv of children(node, 'dataValidation')) {
+    const sqref = dv.attrs['sqref'] ?? '';
+    if (!sqref) continue;
+
+    const type = (dv.attrs['type'] ?? 'whole') as DataValidation['type'];
+    const val: DataValidation = { type };
+
+    if (dv.attrs['operator']) val.operator = dv.attrs['operator'] as any;
+    if (dv.attrs['allowBlank'] === '1') val.allowBlank = true;
+    if (dv.attrs['showErrorMessage'] === '1') val.showErrorAlert = true;
+    if (dv.attrs['errorTitle']) val.errorTitle = dv.attrs['errorTitle'];
+    if (dv.attrs['error'])      val.error = dv.attrs['error'];
+    if (dv.attrs['showInputMessage'] === '1') val.showInputMessage = true;
+    if (dv.attrs['promptTitle']) val.promptTitle = dv.attrs['promptTitle'];
+    if (dv.attrs['prompt'])      val.prompt = dv.attrs['prompt'];
+    // showDropDown in OOXML means "suppress dropdown" (inverted semantics)
+    if (dv.attrs['showDropDown'] === '1') val.showDropDown = false;
+
+    const f1 = child(dv, 'formula1');
+    const f2 = child(dv, 'formula2');
+    if (f1?.text) {
+      if (type === 'list' && f1.text.startsWith('"') && f1.text.endsWith('"')) {
+        val.list = f1.text.slice(1, -1).split(',');
+      } else {
+        val.formula1 = f1.text;
+      }
+    }
+    if (f2?.text) val.formula2 = f2.text;
+
+    ws.addDataValidation(sqref, val);
+  }
 }
 
 // ─── Table XML parsing ────────────────────────────────────────────────────────

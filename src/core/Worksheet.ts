@@ -34,6 +34,8 @@ export class Worksheet {
   private colDefs: Map<number, ColumnDef> = new Map();
   private rowDefs: Map<number, RowDef>    = new Map();
   private dataValidations: Map<string, DataValidation> = new Map();
+  /** Raw XML fragments for elements we don't parse (rowBreaks, colBreaks, etc.) */
+  private preservedXml: string[] = [];
 
   options: WorksheetOptions;
   view?: SheetView;
@@ -189,6 +191,10 @@ export class Worksheet {
     return this;
   }
 
+  getConditionalFormats(): readonly ConditionalFormat[] { return this.conditionalFormats; }
+
+  getDataValidations(): ReadonlyMap<string, DataValidation> { return this.dataValidations; }
+
   // ─── Tables ──────────────────────────────────────────────────────────────────
 
   addTable(table: Table): this {
@@ -250,6 +256,13 @@ export class Worksheet {
 
   addDataValidation(sqref: string, dv: DataValidation): this {
     this.dataValidations.set(sqref, dv);
+    return this;
+  }
+
+  // ─── Preserved XML (round-trip) ─────────────────────────────────────────────
+
+  addPreservedXml(xml: string): this {
+    this.preservedXml.push(xml);
     return this;
   }
 
@@ -316,6 +329,7 @@ ${drawingXml}
 ${legacyDrawingXml}
 ${sparklineXml}
 ${tablePartsXml}
+${this.preservedXml.join('\n')}
 </worksheet>`;
   }
 
