@@ -457,30 +457,31 @@ ${this.preservedXml.join('\n')}
 
   private _sheetDataXml(styles: StyleRegistry, shared: SharedStrings): string {
     const sortedRows = [...this.cells.entries()].sort((a, b) => a[0] - b[0]);
-    const rowsXml = sortedRows.map(([rowIdx, colMap]) => {
-      const cells = [...colMap.entries()] as Array<[number, Cell]>;
+    const out: string[] = ['<sheetData>'];
+
+    for (let ri = 0; ri < sortedRows.length; ri++) {
+      const [rowIdx, colMap] = sortedRows[ri];
       const rowDef = this.rowDefs.get(rowIdx);
       const rowStyleIdx = rowDef?.style ? styles.register(rowDef.style) : 0;
-      const rowAttrs = [
-        `r="${rowIdx}"`,
-        rowDef?.height    ? `ht="${rowDef.height}" customHeight="1"` : '',
-        rowDef?.hidden    ? `hidden="1"` : '',
-        rowDef?.outlineLevel ? `outlineLevel="${rowDef.outlineLevel}"` : '',
-        rowDef?.collapsed ? `collapsed="1"` : '',
-        rowStyleIdx       ? `s="${rowStyleIdx}" customFormat="1"` : '',
-        rowDef?.thickTop  ? `thickTop="1"` : '',
-        rowDef?.thickBot  ? `thickBot="1"` : '',
-      ].filter(Boolean).join(' ');
+      let attrs = `r="${rowIdx}"`;
+      if (rowDef?.height)       attrs += ` ht="${rowDef.height}" customHeight="1"`;
+      if (rowDef?.hidden)       attrs += ' hidden="1"';
+      if (rowDef?.outlineLevel) attrs += ` outlineLevel="${rowDef.outlineLevel}"`;
+      if (rowDef?.collapsed)    attrs += ' collapsed="1"';
+      if (rowStyleIdx)          attrs += ` s="${rowStyleIdx}" customFormat="1"`;
+      if (rowDef?.thickTop)     attrs += ' thickTop="1"';
+      if (rowDef?.thickBot)     attrs += ' thickBot="1"';
 
-      const sortedCells = cells.sort((a, b) => a[0] - b[0]);
-      const cellsXml = sortedCells.map(([colIdx, cell]) =>
-        this._cellXml(rowIdx, colIdx, cell, styles, shared)
-      ).join('');
+      out.push(`<row ${attrs}>`);
+      const sortedCells = [...colMap.entries()].sort((a, b) => a[0] - b[0]);
+      for (let ci = 0; ci < sortedCells.length; ci++) {
+        out.push(this._cellXml(rowIdx, sortedCells[ci][0], sortedCells[ci][1], styles, shared));
+      }
+      out.push('</row>');
+    }
 
-      return `<row ${rowAttrs}>${cellsXml}</row>`;
-    });
-
-    return `<sheetData>${rowsXml.join('')}</sheetData>`;
+    out.push('</sheetData>');
+    return out.join('');
   }
 
   private _cellXml(row: number, col: number, cell: Cell, styles: StyleRegistry, shared: SharedStrings): string {

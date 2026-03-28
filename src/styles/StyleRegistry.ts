@@ -112,6 +112,9 @@ export class StyleRegistry {
   private fonts:   string[] = [];
   private fills:   string[] = [];
   private borders: string[] = [];
+  private fontIdx:   Map<string, number> = new Map();
+  private fillIdx:   Map<string, number> = new Map();
+  private borderIdx: Map<string, number> = new Map();
   private numFmts: Map<string, number> = new Map();
   private xfs:     string[] = [];
   private styleKey: Map<string, number> = new Map();
@@ -120,39 +123,45 @@ export class StyleRegistry {
 
   constructor() {
     // Default required entries
-    this.fonts.push(fontXml({ name: 'Calibri', size: 11, scheme: 'minor' }));
-    this.fills.push(fillXml({ type: 'pattern', pattern: 'none' }));
-    this.fills.push(fillXml({ type: 'pattern', pattern: 'gray125' }));
-    this.borders.push(borderXml({}));
+    const defFont = fontXml({ name: 'Calibri', size: 11, scheme: 'minor' });
+    this.fonts.push(defFont); this.fontIdx.set(defFont, 0);
+    const fill0 = fillXml({ type: 'pattern', pattern: 'none' });
+    const fill1 = fillXml({ type: 'pattern', pattern: 'gray125' });
+    this.fills.push(fill0, fill1); this.fillIdx.set(fill0, 0); this.fillIdx.set(fill1, 1);
+    const defBorder = borderXml({});
+    this.borders.push(defBorder); this.borderIdx.set(defBorder, 0);
     // Default xf (style 0)
     this.xfs.push(`<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>`);
   }
 
   private internFont(f: Font | undefined): number {
     if (!f) return 0;
-    const key = JSON.stringify(f);
-    const idx = this.fonts.findIndex((_, i) => this.fonts[i] === fontXml(f));
-    if (idx >= 0) return idx;
-    this.fonts.push(fontXml(f));
-    return this.fonts.length - 1;
+    const xml = fontXml(f);
+    const existing = this.fontIdx.get(xml);
+    if (existing !== undefined) return existing;
+    const idx = this.fonts.length;
+    this.fonts.push(xml); this.fontIdx.set(xml, idx);
+    return idx;
   }
 
   private internFill(f: Fill | undefined): number {
     if (!f) return 0;
     const xml = fillXml(f);
-    const idx = this.fills.indexOf(xml);
-    if (idx >= 0) return idx;
-    this.fills.push(xml);
-    return this.fills.length - 1;
+    const existing = this.fillIdx.get(xml);
+    if (existing !== undefined) return existing;
+    const idx = this.fills.length;
+    this.fills.push(xml); this.fillIdx.set(xml, idx);
+    return idx;
   }
 
   private internBorder(b: Border | undefined): number {
     if (!b) return 0;
     const xml = borderXml(b);
-    const idx = this.borders.indexOf(xml);
-    if (idx >= 0) return idx;
-    this.borders.push(xml);
-    return this.borders.length - 1;
+    const existing = this.borderIdx.get(xml);
+    if (existing !== undefined) return existing;
+    const idx = this.borders.length;
+    this.borders.push(xml); this.borderIdx.set(xml, idx);
+    return idx;
   }
 
   private internNumFmt(fmt: NumberFormat | undefined, builtinId?: number): number {

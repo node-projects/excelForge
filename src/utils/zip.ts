@@ -38,25 +38,42 @@ function crc32(data: Uint8Array): number {
 // ─── Bit writer ───────────────────────────────────────────────────────────────
 
 class BitWriter {
-  buf: number[] = [];
+  buf: Uint8Array;
+  pos = 0;
   private bits = 0;
   private bitLen = 0;
+
+  constructor(initialSize = 65536) {
+    this.buf = new Uint8Array(initialSize);
+  }
+
+  private grow(): void {
+    const next = new Uint8Array(this.buf.length * 2);
+    next.set(this.buf);
+    this.buf = next;
+  }
 
   writeBits(val: number, n: number): void {
     this.bits |= (val & ((1 << n) - 1)) << this.bitLen;
     this.bitLen += n;
     while (this.bitLen >= 8) {
-      this.buf.push(this.bits & 0xFF);
+      if (this.pos >= this.buf.length) this.grow();
+      this.buf[this.pos++] = this.bits & 0xFF;
       this.bits >>>= 8;
       this.bitLen -= 8;
     }
   }
 
-  flush(): void {
-    if (this.bitLen > 0) { this.buf.push(this.bits & 0xFF); this.bits = 0; this.bitLen = 0; }
+  writeByte(b: number): void {
+    if (this.pos >= this.buf.length) this.grow();
+    this.buf[this.pos++] = b;
   }
 
-  toBytes(): Uint8Array { return new Uint8Array(this.buf); }
+  flush(): void {
+    if (this.bitLen > 0) { this.writeByte(this.bits & 0xFF); this.bits = 0; this.bitLen = 0; }
+  }
+
+  toBytes(): Uint8Array { return this.buf.subarray(0, this.pos); }
 }
 
 // ─── Huffman coding ───────────────────────────────────────────────────────────
@@ -70,25 +87,37 @@ function buildCodeLengths(freq: Uint32Array, maxBits: number): Uint8Array {
   if (nonZero.length === 0) return lengths;
   if (nonZero.length === 1) { lengths[nonZero[0]] = 1; return lengths; }
 
-  // Package-merge algorithm for length-limited Huffman
-  // Simplified: use standard Huffman + clamp to maxBits
+  // Standard Huffman + clamp to maxBits, using binary min-heap
   type Node = { freq: number; sym: number; left?: Node; right?: Node };
-  let heap: Node[] = nonZero.map(s => ({ freq: freq[s], sym: s }));
+  const heap: Node[] = nonZero.map(s => ({ freq: freq[s], sym: s }));
 
-  // Build min-heap by insertion sort for small sizes, or full heap for large
-  const merge = (): void => {
-    heap.sort((a, b) => a.freq - b.freq);
-    while (heap.length > 1) {
-      const a = heap.shift()!;
-      const b = heap.shift()!;
-      const node: Node = { freq: a.freq + b.freq, sym: -1, left: a, right: b };
-      // Insert in sorted position
-      let idx = 0;
-      while (idx < heap.length && heap[idx].freq <= node.freq) idx++;
-      heap.splice(idx, 0, node);
+  // Build binary min-heap (heapify)
+  const siftDown = (arr: Node[], i: number, end: number) => {
+    while (true) {
+      let min = i; const l = 2*i+1, r = 2*i+2;
+      if (l < end && arr[l].freq < arr[min].freq) min = l;
+      if (r < end && arr[r].freq < arr[min].freq) min = r;
+      if (min === i) break;
+      const tmp = arr[i]; arr[i] = arr[min]; arr[min] = tmp; i = min;
     }
   };
-  merge();
+  const siftUp = (arr: Node[], i: number) => {
+    while (i > 0) {
+      const p = (i - 1) >> 1;
+      if (arr[p].freq <= arr[i].freq) break;
+      const tmp = arr[i]; arr[i] = arr[p]; arr[p] = tmp; i = p;
+    }
+  };
+  // Heapify
+  for (let i = (heap.length >> 1) - 1; i >= 0; i--) siftDown(heap, i, heap.length);
+  // Extract-min and merge
+  let hSize = heap.length;
+  while (hSize > 1) {
+    const a = heap[0]; heap[0] = heap[--hSize]; siftDown(heap, 0, hSize);
+    const b = heap[0];
+    heap[0] = { freq: a.freq + b.freq, sym: -1, left: a, right: b };
+    siftDown(heap, 0, hSize);
+  }
 
   // Assign depths
   const setDepth = (node: Node | undefined, depth: number): void => {
@@ -179,25 +208,24 @@ const LENGTH_BASE  = [3,4,5,6,7,8,9,10,11,13,15,17,19,23,27,31,35,43,51,59,67,83
 const DIST_EXTRA = [0,0,0,0,1,1,2,2,3,3,4,4,5,5,6,6,7,7,8,8,9,9,10,10,11,11,12,12,13,13];
 const DIST_BASE  = [1,2,3,4,5,7,9,13,17,25,33,49,65,97,129,193,257,385,513,769,1025,1537,2049,3073,4097,6145,8193,12289,16385,24577];
 
-function lenCode(len: number): [number, number, number] {
-  // Returns [symbol, extraBits, extraVal]
-  for (let i = 0; i < 29; i++) {
-    if (len <= LENGTH_BASE[i] + (1 << LENGTH_EXTRA[i]) - 1 && len >= LENGTH_BASE[i]) {
-      return [257 + i, LENGTH_EXTRA[i], len - LENGTH_BASE[i]];
-    }
-  }
-  return [285, 0, 0];
+// Pre-built lookup table: length (3–258) → [symbol, extraBits, extraVal]
+const _lenLUT: [number, number, number][] = new Array(259);
+for (let i = 0; i < 29; i++) {
+  const base = LENGTH_BASE[i], extra = LENGTH_EXTRA[i];
+  for (let v = base; v < base + (1 << extra); v++) if (v <= 258) _lenLUT[v] = [257 + i, extra, v - base];
+}
+_lenLUT[258] = [285, 0, 0]; // special case
+
+function lenCode(len: number): [number, number, number] { return _lenLUT[len]; }
+
+// Pre-built lookup table: distance (1–32768) → [symbol, extraBits, extraVal]
+const _distLUT: [number, number, number][] = new Array(32769);
+for (let i = 0; i < 30; i++) {
+  const base = DIST_BASE[i], extra = DIST_EXTRA[i];
+  for (let v = base; v < base + (1 << extra); v++) if (v <= 32768) _distLUT[v] = [i, extra, v - base];
 }
 
-function distCode(dist: number): [number, number, number] {
-  for (let i = 0; i < 30; i++) {
-    const max = DIST_BASE[i] + (1 << DIST_EXTRA[i]) - 1;
-    if (dist >= DIST_BASE[i] && dist <= max) {
-      return [i, DIST_EXTRA[i], dist - DIST_BASE[i]];
-    }
-  }
-  return [29, 13, 0];
-}
+function distCode(dist: number): [number, number, number] { return _distLUT[dist]; }
 
 // ─── LZ77 ─────────────────────────────────────────────────────────────────────
 
@@ -208,12 +236,30 @@ const CHAIN_LEN_FAST = 8;
 const CHAIN_LEN_DEFAULT = 32;
 const CHAIN_LEN_BEST = 128;
 
-type Token = { lit: number } | { len: number; dist: number };
+/**
+ * Compact token storage: avoids per-token object allocation.
+ * Tokens are stored in parallel typed arrays:
+ *   litLen[i] > 0, dist[i] === 0  → literal (litLen = byte value + 1, so 1–256)
+ *   litLen[i] > 0, dist[i] > 0    → match (litLen = length, dist = distance)
+ */
+interface Tokens { litLen: Uint16Array; dist: Uint16Array; count: number; }
 
-function lz77(data: Uint8Array, effort: number): Token[] {
+function lz77(data: Uint8Array, effort: number): Tokens {
   const chainLen = effort <= 1 ? CHAIN_LEN_FAST : effort <= 6 ? CHAIN_LEN_DEFAULT : CHAIN_LEN_BEST;
-  const tokens: Token[] = [];
   const n = data.length;
+  // Worst case: every byte is a literal
+  let cap = Math.min(n + 1, 65536);
+  let litLen = new Uint16Array(cap);
+  let dist = new Uint16Array(cap);
+  let count = 0;
+
+  const ensure = () => {
+    if (count >= cap) {
+      cap = cap * 2;
+      const nl = new Uint16Array(cap); nl.set(litLen); litLen = nl;
+      const nd = new Uint16Array(cap); nd.set(dist); dist = nd;
+    }
+  };
 
   // Hash table: 3-byte hash → most recent position
   const HSIZE = 65536;
@@ -224,13 +270,9 @@ function lz77(data: Uint8Array, effort: number): Token[] {
     ((data[pos] * 0x1021 ^ data[pos+1] * 0x9B ^ data[pos+2]) & (HSIZE - 1)) >>> 0;
 
   let i = 0;
-  let pendingLit = -1;
 
-  const emitLit = (b: number) => { tokens.push({ lit: b }); };
-  const emitMatch = (len: number, dist: number) => {
-    if (pendingLit >= 0) { emitLit(pendingLit); pendingLit = -1; }
-    tokens.push({ len, dist });
-  };
+  const emitLit = (b: number) => { ensure(); litLen[count] = b + 1; dist[count] = 0; count++; };
+  const emitMatch = (len: number, d: number) => { ensure(); litLen[count] = len; dist[count] = d; count++; };
 
   while (i < n) {
     if (i + 2 >= n) { emitLit(data[i++]); continue; }
@@ -242,13 +284,12 @@ function lz77(data: Uint8Array, effort: number): Token[] {
     let steps = 0;
 
     while (chain >= 0 && steps < chainLen) {
-      const dist = i - chain;
-      if (dist > WSIZE) break;
-      // Compare
+      const d = i - chain;
+      if (d > WSIZE) break;
       let mLen = 0;
       const limit = Math.min(MAX_MATCH, n - i);
       while (mLen < limit && data[chain + mLen] === data[i + mLen]) mLen++;
-      if (mLen > matchLen) { matchLen = mLen; matchDist = dist; }
+      if (mLen > matchLen) { matchLen = mLen; matchDist = d; }
       if (matchLen === MAX_MATCH) break;
       chain = prev[chain & (WSIZE - 1)];
       steps++;
@@ -276,13 +317,11 @@ function lz77(data: Uint8Array, effort: number): Token[] {
           steps2++;
         }
         if (lazyLen > matchLen + 1) {
-          // Emit current byte as literal, use lazy match next iteration
           emitLit(data[i]);
           i++;
           prev[i & (WSIZE - 1)] = head[h2];
           head[h2] = i;
           emitMatch(lazyLen, lazyDist);
-          // Advance past the match, keeping hash updated
           for (let k = 1; k < lazyLen; k++) {
             i++;
             if (i + 2 < n) {
@@ -310,7 +349,7 @@ function lz77(data: Uint8Array, effort: number): Token[] {
     }
   }
 
-  return tokens;
+  return { litLen, dist, count };
 }
 
 // ─── DEFLATE block encoder ─────────────────────────────────────────────────────
@@ -349,7 +388,7 @@ function encodeCodeLengths(lengths: number[], bw: BitWriter,
 }
 
 function deflateBlock(
-  tokens: Token[],
+  tokens: Tokens,
   bw: BitWriter,
   isLast: boolean,
   useDynamic: boolean,
@@ -358,14 +397,16 @@ function deflateBlock(
   const litFreq  = new Uint32Array(286);
   const distFreq = new Uint32Array(30);
   litFreq[256] = 1; // EOB always present
+  const { litLen: tLitLen, dist: tDist, count: tCount } = tokens;
 
-  for (const tok of tokens) {
-    if ('lit' in tok) {
-      litFreq[tok.lit]++;
+  for (let t = 0; t < tCount; t++) {
+    if (tDist[t] === 0) {
+      // literal: stored as byte+1
+      litFreq[tLitLen[t] - 1]++;
     } else {
-      const [lSym] = lenCode(tok.len);
+      const [lSym] = lenCode(tLitLen[t]);
       litFreq[lSym]++;
-      const [dSym] = distCode(tok.dist);
+      const [dSym] = distCode(tDist[t]);
       distFreq[dSym]++;
     }
   }
@@ -413,17 +454,18 @@ function deflateBlock(
   }
 
   // Emit tokens
-  for (const tok of tokens) {
-    if ('lit' in tok) {
-      const l = litLens[tok.lit];
-      bw.writeBits(reverseBits(litCodes[tok.lit], l), l);
+  for (let t = 0; t < tCount; t++) {
+    if (tDist[t] === 0) {
+      const sym = tLitLen[t] - 1;
+      const l = litLens[sym];
+      bw.writeBits(reverseBits(litCodes[sym], l), l);
     } else {
-      const [lSym, lExtra, lVal] = lenCode(tok.len);
+      const [lSym, lExtra, lVal] = lenCode(tLitLen[t]);
       const ll = litLens[lSym];
       bw.writeBits(reverseBits(litCodes[lSym], ll), ll);
       if (lExtra > 0) bw.writeBits(lVal, lExtra);
 
-      const [dSym, dExtra, dVal] = distCode(tok.dist);
+      const [dSym, dExtra, dVal] = distCode(tDist[t]);
       const dl = distLens[dSym];
       bw.writeBits(reverseBits(distCodes[dSym], dl), dl);
       if (dExtra > 0) bw.writeBits(dVal, dExtra);
@@ -490,8 +532,11 @@ export function deflateRaw(data: Uint8Array, level = 6): Uint8Array {
       bw.flush(); // align to byte
       // Write len and ~len
       const len = size;
-      bw.buf.push(len & 0xFF, (len >> 8) & 0xFF, (~len) & 0xFF, ((~len) >> 8) & 0xFF);
-      for (let i = 0; i < size; i++) bw.buf.push(data[offset + i]);
+      bw.writeByte(len & 0xFF); bw.writeByte((len >> 8) & 0xFF);
+      bw.writeByte((~len) & 0xFF); bw.writeByte(((~len) >> 8) & 0xFF);
+      // Ensure capacity and copy block
+      while (bw.pos + size > bw.buf.length) bw.buf = (() => { const n = new Uint8Array(bw.buf.length * 2); n.set(bw.buf); return n; })();
+      bw.buf.set(data.subarray(offset, offset + size), bw.pos); bw.pos += size;
       offset += size;
       if (data.length === 0) break;
     }
@@ -510,7 +555,7 @@ export function deflateRaw(data: Uint8Array, level = 6): Uint8Array {
     const tokens = lz77(chunk, effort);
     deflateBlock(tokens, bw, isLast, useDynamic);
     offset += chunk.length;
-    if (data.length === 0) { deflateBlock([], bw, true, useDynamic); break; }
+    if (data.length === 0) { deflateBlock({ litLen: new Uint16Array(0), dist: new Uint16Array(0), count: 0 }, bw, true, useDynamic); break; }
   }
 
   bw.flush();

@@ -1,11 +1,14 @@
 /** Convert column index (1-based) to letter(s): 1→A, 27→AA */
+const _colCache: string[] = [];
 export function colIndexToLetter(n: number): string {
-  let s = '';
-  while (n > 0) {
-    const r = (n - 1) % 26;
+  if (_colCache[n]) return _colCache[n];
+  let s = '', v = n;
+  while (v > 0) {
+    const r = (v - 1) % 26;
     s = String.fromCharCode(65 + r) + s;
-    n = Math.floor((n - 1) / 26);
+    v = Math.floor((v - 1) / 26);
   }
+  _colCache[n] = s;
   return s;
 }
 
@@ -39,14 +42,11 @@ export function parseRange(range: string) {
   return { startRow: s.row, startCol: s.col, endRow: e.row, endCol: e.col };
 }
 
-/** Escape XML entities */
+/** Escape XML entities (single-pass) */
+const _xmlEsc: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' };
+const _xmlRe = /[&<>"']/g;
 export function escapeXml(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&apos;');
+  return _xmlRe.test(s) ? (_xmlRe.lastIndex = 0, s.replace(_xmlRe, ch => _xmlEsc[ch])) : s;
 }
 
 /** Build XML attribute string from object, skipping undefined */
@@ -107,7 +107,10 @@ export function base64ToBytes(b64: string): Uint8Array {
 
 /** Encode Uint8Array to base64 */
 export function bytesToBase64(data: Uint8Array): string {
-  let bin = '';
-  for (let i = 0; i < data.length; i++) bin += String.fromCharCode(data[i]);
-  return btoa(bin);
+  // Process in chunks to avoid call stack limits on String.fromCharCode.apply
+  const chunks: string[] = [];
+  for (let i = 0; i < data.length; i += 8192) {
+    chunks.push(String.fromCharCode.apply(null, data.subarray(i, i + 8192) as any));
+  }
+  return btoa(chunks.join(''));
 }
