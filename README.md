@@ -22,7 +22,7 @@ ExcelForge gives you the full power of the OOXML spec — including real DEFLATE
 | **Conditional Formatting** | Cell rules, color scales, data bars, icon sets, top/bottom N, above/below average |
 | **Data Validation** | Dropdowns, whole number, decimal, date, time, text length, custom formula |
 | **Sparklines** | Line, bar, stacked — with high/low/first/last/negative colors |
-| **Page Setup** | Paper size, orientation, margins, headers/footers (odd/even/first), print options |
+| **Page Setup** | Paper size, orientation, margins, headers/footers (odd/even/first), print options, page breaks |
 | **Protection** | Sheet protection with password, cell locking/hiding |
 | **Named Ranges** | Workbook and sheet-scoped |
 | **Pivot Tables** | Row/column/data fields, aggregation functions (sum, count, avg, max, min…), styles |
@@ -513,6 +513,27 @@ ws.headerFooter = {
   oddFooter: '&LExcelForge&RPage &P of &N',
 };
 ```
+
+### Page breaks
+
+```typescript
+// Add manual page breaks for printing
+ws.addRowBreak(20);    // page break after row 20
+ws.addRowBreak(40);    // page break after row 40
+ws.addColBreak(5);     // page break after column E
+
+// Read page breaks from an existing file
+const wb = await Workbook.fromBytes(data);
+const ws = wb.getSheet('Sheet1')!;
+for (const brk of ws.getRowBreaks()) {
+  console.log(`Row break at ${brk.id}, manual: ${brk.manual}`);
+}
+for (const brk of ws.getColBreaks()) {
+  console.log(`Col break at ${brk.id}, manual: ${brk.manual}`);
+}
+```
+
+Page breaks are fully preserved during round-trip editing, even when sheets are modified.
 
 ### Sheet protection
 

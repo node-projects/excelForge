@@ -231,8 +231,10 @@ function parseFont(node: XmlNode): Font {
       case 'charset': f.charset = parseInt(c.attrs['val'] ?? '0', 10); break;
       case 'vertAlign': f.vertAlign = c.attrs['val'] as Font['vertAlign']; break;
       case 'color': {
-        const rgb = c.attrs['rgb'] ?? c.attrs['theme'];
+        const rgb = c.attrs['rgb'];
+        const theme = c.attrs['theme'];
         if (rgb) f.color = rgb;
+        else if (theme) f.color = `theme:${theme}`;
         break;
       }
     }
@@ -248,8 +250,8 @@ function parseFill(node: XmlNode): Fill {
     return {
       type: 'pattern',
       pattern: (pattern.attrs['patternType'] ?? 'none') as any,
-      fgColor: fg?.attrs['rgb'] ?? fg?.attrs['theme'],
-      bgColor: bg?.attrs['rgb'] ?? bg?.attrs['theme'],
+      fgColor: fg?.attrs['rgb'] ?? (fg?.attrs['theme'] ? `theme:${fg.attrs['theme']}` : undefined),
+      bgColor: bg?.attrs['rgb'] ?? (bg?.attrs['theme'] ? `theme:${bg.attrs['theme']}` : undefined),
     } as PatternFill;
   }
   const gradient = child(node, 'gradientFill');
@@ -258,7 +260,7 @@ function parseFill(node: XmlNode): Fill {
       const colorNode = child(s, 'color');
       return {
         position: parseFloat(s.attrs['position'] ?? '0'),
-        color: colorNode?.attrs['rgb'] ?? colorNode?.attrs['theme'] ?? 'FF000000',
+        color: colorNode?.attrs['rgb'] ?? (colorNode?.attrs['theme'] ? `theme:${colorNode.attrs['theme']}` : 'FF000000'),
       };
     });
     return {
@@ -278,7 +280,8 @@ function parseBorder(node: XmlNode): Border {
     const style = n.attrs['style'];
     const color = child(n, 'color');
     if (!style && !color) return undefined;
-    return { style: style as any, color: color?.attrs['rgb'] };
+    const colorVal = color?.attrs['rgb'] ?? (color?.attrs['theme'] ? `theme:${color.attrs['theme']}` : undefined);
+    return { style: style as any, color: colorVal };
   };
   return {
     left:     parseSide('left'),

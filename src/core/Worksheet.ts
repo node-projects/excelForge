@@ -15,6 +15,13 @@ import {
 
 type CellMap = Map<string, Cell>;
 
+/** Emit a <color> element handling theme:X, #hex, and AARRGGBB formats */
+function colorEl(c: string): string {
+  if (c.startsWith('theme:')) return `<color theme="${c.slice(6)}"/>`;
+  const rgb = c.startsWith('#') ? 'FF' + c.slice(1) : c;
+  return `<color rgb="${rgb}"/>`;
+}
+
 // SUBTOTAL function numbers (101–110 ignore hidden rows, matching Excel table behaviour)
 const SUBTOTAL_FN: Record<string, number> = {
   average: 101, count: 102, countNums: 103, max: 104, min: 105,
@@ -496,7 +503,7 @@ ${this.preservedXml.join('\n')}
       if (cf.colorScale?.type === 'colorScale') {
         const cs = cf.colorScale;
         const cfvos = cs.cfvo.map(v => `<cfvo type="${v.type}"${v.val ? ` val="${v.val}"` : ''}/>`).join('');
-        const colors = cs.color.map(c => `<color rgb="${c.startsWith('#') ? 'FF'+c.slice(1) : c}"/>`).join('');
+        const colors = cs.color.map(c => colorEl(c)).join('');
         inner = `<colorScale>${cfvos}${colors}</colorScale>`;
       } else if (cf.dataBar?.type === 'dataBar') {
         const db = cf.dataBar;
@@ -504,8 +511,7 @@ ${this.preservedXml.join('\n')}
         const minCfvo = `<cfvo type="${db.minType ?? 'min'}"${db.minVal != null ? ` val="${db.minVal}"` : ''}/>`;
         const maxCfvo = `<cfvo type="${db.maxType ?? 'max'}"${db.maxVal != null ? ` val="${db.maxVal}"` : ''}/>`;
         const color   = db.color ?? db.minColor ?? 'FF638EC6';
-        const rgb     = color.startsWith('#') ? 'FF'+color.slice(1) : color;
-        inner = `<dataBar${db.showValue === false ? ' showValue="0"' : ''}>${minCfvo}${maxCfvo}<color rgb="${rgb}"/></dataBar>`;
+        inner = `<dataBar${db.showValue === false ? ' showValue="0"' : ''}>${minCfvo}${maxCfvo}${colorEl(color)}</dataBar>`;
       } else if (cf.iconSet?.type === 'iconSet') {
         const is = cf.iconSet;
         const cfvos = is.cfvo.map(v => `<cfvo type="${v.type}"${v.val ? ` val="${v.val}"` : ''}/>`).join('');

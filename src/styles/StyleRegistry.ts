@@ -17,8 +17,17 @@ const BUILTIN_NUMFMT: Record<number, string> = {
 
 function colorXml(color: Color | undefined, prefix = 'rgb'): string {
   if (!color) return '';
+  if (color.startsWith('theme:')) return `<color theme="${color.slice(6)}"/>`;
   if (color.startsWith('#')) color = 'FF' + color.slice(1);
   return `<color ${prefix}="${color}"/>`;
+}
+
+/** Emit a color attribute for inline use (font, fill, border) */
+function colorAttrXml(tag: string, color: Color | undefined): string {
+  if (!color) return '';
+  if (color.startsWith('theme:')) return `<${tag} theme="${color.slice(6)}"/>`;
+  const rgb = color.startsWith('#') ? 'FF' + color.slice(1) : color;
+  return `<${tag} rgb="${rgb}"/>`;
 }
 
 function fontXml(f: Font): string {
@@ -31,7 +40,7 @@ function fontXml(f: Font): string {
   if (f.vertAlign)
     parts.push(`<vertAlign val="${f.vertAlign}"/>`);
   if (f.size)   parts.push(`<sz val="${f.size}"/>`);
-  if (f.color)  parts.push(`<color rgb="${f.color.startsWith('#') ? 'FF'+f.color.slice(1) : f.color}"/>`);
+  if (f.color)  parts.push(colorAttrXml('color', f.color));
   if (f.name)   parts.push(`<name val="${escapeXml(f.name)}"/>`);
   if (f.family) parts.push(`<family val="${f.family}"/>`);
   if (f.scheme) parts.push(`<scheme val="${f.scheme}"/>`);
@@ -42,14 +51,14 @@ function fontXml(f: Font): string {
 function fillXml(fill: Fill): string {
   if (fill.type === 'pattern') {
     const f = fill as PatternFill;
-    const fg = f.fgColor ? `<fgColor rgb="${f.fgColor.startsWith('#') ? 'FF'+f.fgColor.slice(1) : f.fgColor}"/>` : '';
-    const bg = f.bgColor ? `<bgColor rgb="${f.bgColor.startsWith('#') ? 'FF'+f.bgColor.slice(1) : f.bgColor}"/>` : '';
+    const fg = colorAttrXml('fgColor', f.fgColor);
+    const bg = colorAttrXml('bgColor', f.bgColor);
     return `<patternFill patternType="${f.pattern}">${fg}${bg}</patternFill>`;
   }
   // gradient
   const f = fill as GradientFill;
   const stops = f.stops.map(s =>
-    `<stop position="${s.position}"><color rgb="${s.color.startsWith('#') ? 'FF'+s.color.slice(1) : s.color}"/></stop>`
+    `<stop position="${s.position}">${colorAttrXml('color', s.color)}</stop>`
   ).join('');
   const attrs = [
     f.gradientType ? `type="${f.gradientType}"` : '',
@@ -64,7 +73,7 @@ function fillXml(fill: Fill): string {
 
 function borderSideXml(tag: string, s: BorderSide | undefined): string {
   if (!s) return `<${tag}/>`;
-  const color = s.color ? `<color rgb="${s.color.startsWith('#') ? 'FF'+s.color.slice(1) : s.color}"/>` : '';
+  const color = colorAttrXml('color', s.color);
   return s.style
     ? `<${tag} style="${s.style}">${color}</${tag}>`
     : `<${tag}/>`;
@@ -191,14 +200,14 @@ export class StyleRegistry {
    * attributes are written; omitted ones are inherited from the cell.
    */
   registerDxf(style: CellStyle): number {
+    // OOXML CT_Dxf child order: font, numFmt, fill, alignment, border, protection
     const parts: string[] = [];
     if (style.font)   parts.push(`<font>${fontXml(style.font)}</font>`);
-    if (style.fill)   parts.push(`<fill>${fillXml(style.fill)}</fill>`);
-    if (style.border) parts.push(borderXml(style.border));
     if (style.numberFormat) {
       const id = this.internNumFmt(style.numberFormat);
       parts.push(`<numFmt numFmtId="${id}" formatCode="${escapeXml(style.numberFormat.formatCode)}"/>`);
     }
+    if (style.fill)   parts.push(`<fill>${fillXml(style.fill)}</fill>`);
     if (style.alignment) {
       parts.push(`<alignment${
         style.alignment.horizontal   ? ` horizontal="${style.alignment.horizontal}"` : ''}${
@@ -206,6 +215,7 @@ export class StyleRegistry {
         style.alignment.wrapText     ? ' wrapText="1"' : ''}${
         style.alignment.textRotation ? ` textRotation="${style.alignment.textRotation}"` : ''}/>`);
     }
+    if (style.border) parts.push(borderXml(style.border));
     const xml = parts.join('');
     this.dxfs.push(xml);
     return this.dxfs.length - 1;

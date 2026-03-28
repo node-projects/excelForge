@@ -61,7 +61,10 @@ function richFontXml(f: import('../core/types.js').Font): string {
   if (f.strike) parts.push('<strike/>');
   if (f.underline && f.underline !== 'none') parts.push(`<u val="${f.underline}"/>`);
   if (f.size)   parts.push(`<sz val="${f.size}"/>`);
-  if (f.color)  parts.push(`<color rgb="${f.color.startsWith('#') ? 'FF'+f.color.slice(1) : f.color}"/>`);
+  if (f.color) {
+    if (f.color.startsWith('theme:')) parts.push(`<color theme="${f.color.slice(6)}"/>`);
+    else parts.push(`<color rgb="${f.color.startsWith('#') ? 'FF'+f.color.slice(1) : f.color}"/>`);
+  }
   if (f.name)   parts.push(`<name val="${escapeXml(f.name)}"/>`);
   return parts.length ? `<rPr>${parts.join('')}</rPr>` : '';
 }

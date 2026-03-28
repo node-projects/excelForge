@@ -1527,41 +1527,25 @@ async function example_cf_dv_roundtrip() {
   if (ws3.getDataValidations().size !== 2) throw new Error('DVs lost after dirty round-trip');
   console.log('  Dirty round-trip: OK (CF/DV survive re-serialization)');
 
-  // ── Part 3: Round-trip aaa.xlsm and verify CF/DV counts ──
-  try {
-    const aaaData = await fs.readFile('src/test/aaa.xlsm');
-    const wbA = await Workbook.fromBytes(new Uint8Array(aaaData));
-    const cfCounts: Record<string, number> = {};
-    const dvCounts: Record<string, number> = {};
-    for (const name of wbA.getSheetNames()) {
-      const s = wbA.getSheet(name)!;
-      const nCf = s.getConditionalFormats().length;
-      const nDv = s.getDataValidations().size;
-      if (nCf) cfCounts[name] = nCf;
-      if (nDv) dvCounts[name] = nDv;
-    }
+  // ── Part 3: Round-trip Book 2.xlsx (real file with CF + DV) ──
+  const b2Data = await fs.readFile('src/test/Book 2.xlsx');
+  const wbB = await Workbook.fromBytes(new Uint8Array(b2Data));
 
-    // Force dirty and re-build
-    wbA.markDirty(wbA.getSheetNames()[0]);
-    const aaaOut = await wbA.build();
-    const wbA2 = await Workbook.fromBytes(aaaOut);
+  // Capture original counts
+  const origCfs = wbB.getSheet('Entwicklungsbericht')!.getConditionalFormats().length;
+  const origDvs = wbB.getSheet('Entwicklungsbericht')!.getDataValidations().size;
+  if (origCfs !== 9) throw new Error(`Book 2 Entwicklungsbericht CF: expected 9, got ${origCfs}`);
+  if (origDvs !== 30) throw new Error(`Book 2 Entwicklungsbericht DV: expected 30, got ${origDvs}`);
 
-    for (const name of wbA2.getSheetNames()) {
-      const s = wbA2.getSheet(name)!;
-      const nCf = s.getConditionalFormats().length;
-      const nDv = s.getDataValidations().size;
-      if (cfCounts[name] && nCf !== cfCounts[name]) {
-        throw new Error(`aaa.xlsm "${name}" CF: expected ${cfCounts[name]}, got ${nCf}`);
-      }
-      if (dvCounts[name] && nDv !== dvCounts[name]) {
-        throw new Error(`aaa.xlsm "${name}" DV: expected ${dvCounts[name]}, got ${nDv}`);
-      }
-    }
-    console.log(`  aaa.xlsm round-trip: OK (CF/DV counts match across ${Object.keys(cfCounts).length} sheets)`);
-  } catch (e: any) {
-    if (e.code === 'ENOENT') console.log('  aaa.xlsm test skipped (file not found)');
-    else throw e;
-  }
+  // Dirty round-trip
+  wbB.markDirty('Entwicklungsbericht');
+  const b2Out = await wbB.build();
+  const wbB2 = await Workbook.fromBytes(b2Out);
+  const rtCfs = wbB2.getSheet('Entwicklungsbericht')!.getConditionalFormats().length;
+  const rtDvs = wbB2.getSheet('Entwicklungsbericht')!.getDataValidations().size;
+  if (rtCfs !== origCfs) throw new Error(`Book 2 CF lost: ${origCfs} → ${rtCfs}`);
+  if (rtDvs !== origDvs) throw new Error(`Book 2 DV lost: ${origDvs} → ${rtDvs}`);
+  console.log(`  Book 2 round-trip: OK (CF=${rtCfs}, DV=${rtDvs} preserved)`);
 }
 
 // ============================================================
