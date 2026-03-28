@@ -18,11 +18,13 @@ import type {
   AutoFilter, ConditionalFormat, DataValidation, Cell, CellValue,
   RichTextRun, Comment, Hyperlink, Table, TableColumn, ValidationType,
   NamedRange, Connection, PowerQuery, ConnectionType, CommandType,
+  FormControl, FormControlType, FormControlAnchor,
 } from './types.js';
 import { Worksheet } from './Worksheet.js';
 import { SharedStrings } from './SharedStrings.js';
 import { StyleRegistry } from '../styles/StyleRegistry.js';
 import { cellRefToIndices, colLetterToIndex, dateToSerial } from '../utils/helpers.js';
+import { OBJ_TYPE_TO_CTRL, CHECKED_REV } from '../features/FormControlBuilder.js';
 
 // ─── Raw file store (for unknown parts) ───────────────────────────────────────
 
@@ -330,6 +332,10 @@ interface ParsedSheet {
   unknownParts: string[];
   /** Relationship IDs of tables referenced by <tableParts> */
   tableRIds: string[];
+  /** Legacy drawing (VML) relationship ID */
+  legacyDrawingRId: string;
+  /** ctrlProp relationship IDs parsed from <controls> inside mc:AlternateContent */
+  ctrlPropRIds: string[];
 }
 
 function parseWorksheet(
@@ -342,6 +348,8 @@ function parseWorksheet(
   const root = parseXml(xml);
   const unknownParts: string[] = [];
   const tableRIds: string[] = [];
+  let legacyDrawingRId = '';
+  const ctrlPropRIds: string[] = [];
 
   const knownTags = new Set([
     'sheetPr','dimension','sheetViews','sheetFormatPr','cols',
@@ -349,6 +357,7 @@ function parseWorksheet(
     'sheetProtection','printOptions','pageMargins','pageSetup',
     'headerFooter','drawing','tableParts','autoFilter',
     'rowBreaks','colBreaks','picture','oleObjects','ctrlProps',
+    'legacyDrawing','AlternateContent',
   ]);
 
   for (const node of root.children) {
@@ -388,6 +397,39 @@ function parseWorksheet(
           if (id > 0) ws.addColBreak(id, brk.attrs['man'] === '1');
         }
         break;
+      case 'legacyDrawing':
+        legacyDrawingRId = node.attrs['r:id'] ?? '';
+        break;
+      case 'AlternateContent': {
+        // Parse <mc:AlternateContent><mc:Choice Requires="x14"><controls>...
+        const choiceNode = node.children.find((c): c is XmlNode =>
+          typeof c !== 'string' && localName(c.tag) === 'Choice');
+        const controlsNode = choiceNode ? choiceNode.children.find((c): c is XmlNode =>
+          typeof c !== 'string' && localName(c.tag) === 'controls') : undefined;
+        if (controlsNode) {
+          for (const acNode of controlsNode.children) {
+            if (typeof acNode === 'string') continue;
+            // Each control is wrapped: <mc:AlternateContent><mc:Choice><control>...</control></mc:Choice></mc:AlternateContent>
+            let ctrlNode: XmlNode | undefined;
+            if (localName(acNode.tag) === 'control') {
+              ctrlNode = acNode;
+            } else if (localName(acNode.tag) === 'AlternateContent') {
+              const innerChoice = acNode.children.find((c): c is XmlNode =>
+                typeof c !== 'string' && localName(c.tag) === 'Choice');
+              ctrlNode = innerChoice?.children.find((c): c is XmlNode =>
+                typeof c !== 'string' && localName(c.tag) === 'control');
+            }
+            if (!ctrlNode) continue;
+            // r:id on <control> points to ctrlProp (our format & EPPlus);
+            // fallback: older format may have r:id on <controlPr> instead
+            const controlPr = ctrlNode.children.find((c): c is XmlNode =>
+              typeof c !== 'string' && localName(c.tag) === 'controlPr');
+            const ctrlRId = ctrlNode.attrs['r:id'] ?? controlPr?.attrs['r:id'] ?? '';
+            if (ctrlRId) ctrlPropRIds.push(ctrlRId);
+          }
+        }
+        break;
+      }
       default:
         if (!knownTags.has(tag)) {
           unknownParts.push(nodeToXml(node));
@@ -396,7 +438,7 @@ function parseWorksheet(
     }
   }
 
-  return { ws, originalXml: xml, unknownParts, tableRIds };
+  return { ws, originalXml: xml, unknownParts, tableRIds, legacyDrawingRId, ctrlPropRIds };
 }
 
 function parseSheetViews(node: XmlNode, ws: Worksheet): void {
@@ -881,7 +923,7 @@ export async function readWorkbook(data: Uint8Array): Promise<ReadResult> {
     const sheetXml = getText(target) ?? '';
     if (!sheetXml) continue;
 
-    const { ws, originalXml, unknownParts: sheetUnknown, tableRIds } = parseWorksheet(
+    const { ws, originalXml, unknownParts: sheetUnknown, tableRIds, legacyDrawingRId, ctrlPropRIds } = parseWorksheet(
       sheetXml, name, styles, sharedStrings,
     );
     ws.sheetIndex = sheets.length + 1;
@@ -913,6 +955,95 @@ export async function readWorkbook(data: Uint8Array): Promise<ReadResult> {
           }
         }
         ws.tableRIds = tableRIds;
+      }
+    }
+
+    // ── Parse form controls from VML + ctrlProps ──────────────────────────
+    if (legacyDrawingRId && ctrlPropRIds.length) {
+      const sheetFileName = target.split('/').pop() ?? '';
+      const sheetDir = target.substring(0, target.lastIndexOf('/') + 1);
+      const sheetRelsPath = `${sheetDir}_rels/${sheetFileName}.rels`;
+      const sheetRels = allRels.get(sheetRelsPath);
+      if (sheetRels) {
+        // Find VML file via legacyDrawing rel
+        const vmlRel = sheetRels.get(legacyDrawingRId);
+        const vmlPath = vmlRel
+          ? (vmlRel.target.startsWith('/') ? vmlRel.target.slice(1) : resolvePath(sheetDir, vmlRel.target))
+          : '';
+        const vmlXml = vmlPath ? getText(vmlPath) : '';
+
+        // Parse VML shapes that are form controls (ObjectType != "Note")
+        const vmlControls: Array<{ objectType: string; shapeXml: string; clientData: XmlNode; shapeId: number }> = [];
+        if (vmlXml) {
+          const vmlRoot = parseXml(vmlXml);
+          for (const shape of vmlRoot.children) {
+            if (typeof shape === 'string') continue;
+            if (localName(shape.tag) !== 'shape') continue;
+            const cd = shape.children.find((c): c is XmlNode =>
+              typeof c !== 'string' && localName(c.tag) === 'ClientData');
+            if (!cd) continue;
+            const objType = cd.attrs['ObjectType'] ?? '';
+            if (objType === 'Note' || !objType) continue; // Skip comments
+            const idStr = (shape.attrs['id'] ?? '').replace(/\D/g, '');
+            const shapeId = parseInt(idStr, 10) || 0;
+            vmlControls.push({ objectType: objType, shapeXml: nodeToXml(shape), clientData: cd, shapeId });
+          }
+        }
+
+        // Parse ctrlProp files and build FormControl objects
+        for (let ci = 0; ci < ctrlPropRIds.length; ci++) {
+          const cpRel = sheetRels.get(ctrlPropRIds[ci]);
+          if (!cpRel) continue;
+          const cpPath = cpRel.target.startsWith('/') ? cpRel.target.slice(1) : resolvePath(sheetDir, cpRel.target);
+          const cpXml = getText(cpPath) ?? '';
+
+          // Parse the ctrlProp XML to get objectType and properties
+          const cpRoot = cpXml ? parseXml(cpXml) : null;
+          const objType = cpRoot?.attrs['objectType'] ?? '';
+          const typeName = (OBJ_TYPE_TO_CTRL[objType] ?? 'button') as FormControlType;
+
+          // Get anchor from VML ClientData if available
+          const vml = vmlControls[ci];
+          const anchor = parseVmlAnchor(vml?.clientData);
+
+          const ctrl: FormControl = {
+            type: typeName,
+            from: anchor.from,
+            to: anchor.to,
+            _ctrlPropXml: cpXml || undefined,
+            _vmlShapeXml: vml?.shapeXml,
+            _shapeId: vml?.shapeId,
+          };
+
+          // Parse properties from ctrlProp
+          if (cpRoot) {
+            if (cpRoot.attrs['fmlaLink']) ctrl.linkedCell = cpRoot.attrs['fmlaLink'];
+            if (cpRoot.attrs['fmlaRange']) ctrl.inputRange = cpRoot.attrs['fmlaRange'];
+            if (cpRoot.attrs['checked']) ctrl.checked = (CHECKED_REV[cpRoot.attrs['checked']] ?? 'unchecked') as any;
+            if (cpRoot.attrs['dropLines']) ctrl.dropLines = parseInt(cpRoot.attrs['dropLines'], 10);
+            if (cpRoot.attrs['min']) ctrl.min = parseInt(cpRoot.attrs['min'], 10);
+            if (cpRoot.attrs['max']) ctrl.max = parseInt(cpRoot.attrs['max'], 10);
+            if (cpRoot.attrs['inc']) ctrl.inc = parseInt(cpRoot.attrs['inc'], 10);
+            if (cpRoot.attrs['page']) ctrl.page = parseInt(cpRoot.attrs['page'], 10);
+            if (cpRoot.attrs['val']) ctrl.val = parseInt(cpRoot.attrs['val'], 10);
+            if (cpRoot.attrs['selType']) {
+              const selRev: Record<string, string> = { Single: 'single', Multi: 'multi', Extend: 'extend' };
+              ctrl.selType = (selRev[cpRoot.attrs['selType']] ?? 'single') as any;
+            }
+            if (cpRoot.attrs['noThreeD'] === '1') ctrl.noThreeD = true;
+          }
+
+          // Get text and macro from VML ClientData
+          if (vml?.clientData) {
+            const macroNode = vml.clientData.children.find((c): c is XmlNode =>
+              typeof c !== 'string' && localName(c.tag) === 'FmlaMacro');
+            if (macroNode) ctrl.macro = macroNode.text ?? '';
+          }
+
+          ws.addFormControl(ctrl);
+        }
+        ws.legacyDrawingRId = legacyDrawingRId;
+        ws.ctrlPropRIds = ctrlPropRIds;
       }
     }
 
@@ -985,6 +1116,23 @@ export async function readWorkbook(data: Uint8Array): Promise<ReadResult> {
     core, extended, extendedUnknownRaw, custom, hasCustomProps: custom.length > 0,
     namedRanges, connections, connectionsXml, powerQueries,
     unknownParts, allRels,
+  };
+}
+
+// ─── VML anchor parser ────────────────────────────────────────────────────────
+
+function parseVmlAnchor(clientData?: XmlNode): { from: FormControlAnchor; to: FormControlAnchor } {
+  const defaultAnchor = { from: { col: 0, row: 0 }, to: { col: 2, row: 2 } };
+  if (!clientData) return defaultAnchor;
+  const anchorNode = clientData.children.find((c): c is XmlNode =>
+    typeof c !== 'string' && localName(c.tag) === 'Anchor');
+  if (!anchorNode) return defaultAnchor;
+  const text = anchorNode.text ?? '';
+  const parts = text.split(',').map(s => parseInt(s.trim(), 10));
+  if (parts.length < 8 || parts.some(isNaN)) return defaultAnchor;
+  return {
+    from: { col: parts[0], colOff: parts[1], row: parts[2], rowOff: parts[3] },
+    to:   { col: parts[4], colOff: parts[5], row: parts[6], rowOff: parts[7] },
   };
 }
 

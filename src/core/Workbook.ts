@@ -8,6 +8,7 @@ import { SharedStrings } from './SharedStrings.js';
 import { buildChartXml } from '../features/ChartBuilder.js';
 import { buildTableXml } from '../features/TableBuilder.js';
 import { buildPivotTableFiles } from '../features/PivotTableBuilder.js';
+import { buildCtrlPropXml, buildFormControlVmlShape, buildVmlWithControls } from '../features/FormControlBuilder.js';
 import { VbaProject } from '../vba/VbaProject.js';
 import { buildZip, type ZipEntry, type ZipOptions } from '../utils/zip.js';
 import { strToBytes, base64ToBytes, escapeXml, colIndexToLetter } from '../utils/helpers.js';
@@ -403,7 +404,7 @@ export class Workbook {
     const sheetChartRIds  = new Map<Worksheet, string[]>();
     const sheetTableRIds  = new Map<Worksheet, string[]>();
     const sheetPivotRIds  = new Map<Worksheet, string[]>();
-    let imgCtr = 1, chartCtr = 1, tableCtr = 1, vmlCtr = 1, pivotCtr = 1, pivotCacheIdCtr = 0;
+    let imgCtr = 1, chartCtr = 1, tableCtr = 1, vmlCtr = 1, pivotCtr = 1, pivotCacheIdCtr = 0, ctrlPropGlobal = 0;
 
     for (const ws of this.sheets) {
       const imgs = ws.getImages() as Image[];
@@ -412,11 +413,18 @@ export class Workbook {
       const imgRIds: string[] = [], chartRIds: string[] = [], tblRIds: string[] = [];
 
       if (imgs.length || charts.length) ws.drawingRId = `rId${globalRId++}`;
-      if (ws.getComments().length) ws.legacyDrawingRId = `rId${globalRId++}`;
+      const controls = ws.getFormControls();
+      // legacyDrawing needed for comments OR form controls (they share VML)
+      if (ws.getComments().length || controls.length) ws.legacyDrawingRId = `rId${globalRId++}`;
 
       for (const img of imgs)    { const r = `rId${globalRId++}`; imgRIds.push(r);   allImages.push({ ws, img, ext: img.format === 'jpeg' ? 'jpg' : img.format, idx: imgCtr++ }); }
       for (let i=0;i<charts.length;i++) { const r = `rId${globalRId++}`; chartRIds.push(r); allCharts.push({ ws, chartIdx: i, globalIdx: chartCtr++ }); }
       for (let i=0;i<tables.length;i++) { const r = `rId${globalRId++}`; tblRIds.push(r);   allTables.push({ ws, tableIdx: i, globalTableId: tableCtr++ }); }
+
+      // Allocate ctrlProp rIds for each form control
+      const ctrlPropRIds: string[] = [];
+      for (let ci = 0; ci < controls.length; ci++) ctrlPropRIds.push(`rId${globalRId++}`);
+      ws.ctrlPropRIds = ctrlPropRIds;
 
       sheetImageRIds.set(ws, imgRIds);
       sheetChartRIds.set(ws, chartRIds);
@@ -443,11 +451,20 @@ export class Workbook {
       imgCTs.add(`<Default Extension="${ext}" ContentType="${ct}"/>`);
     }
     const sheetsWithComments = this.sheets.filter(ws => ws.getComments().length);
-    const vmlCT  = sheetsWithComments.length ? '<Default Extension="vml" ContentType="application/vnd.openxmlformats-officedocument.vmlDrawing"/>' : '';
+    const sheetsWithVml = this.sheets.filter(ws => ws.getComments().length || ws.getFormControls().length);
+    const vmlCT  = sheetsWithVml.length ? '<Default Extension="vml" ContentType="application/vnd.openxmlformats-officedocument.vmlDrawing"/>' : '';
     let vmlIdx = 0;
     const commentsCTs = sheetsWithComments.map(() =>
       `<Override PartName="/xl/comments${++vmlIdx}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.comments+xml"/>`
     ).join('');
+    // ctrlProp content types
+    let ctrlPropCtr = 0;
+    const ctrlPropCTs: string[] = [];
+    for (const ws of this.sheets) {
+      for (let ci = 0; ci < ws.getFormControls().length; ci++) {
+        ctrlPropCTs.push(`<Override PartName="/xl/ctrlProps/ctrlProp${++ctrlPropCtr}.xml" ContentType="application/vnd.ms-excel.controlproperties+xml"/>`);
+      }
+    }
     entries.push({ name: '[Content_Types].xml', data: strToBytes(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
 <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
@@ -466,6 +483,7 @@ ${allPivotTables.map(p => `<Override PartName="/xl/pivotTables/pivotTable${p.piv
 ${allPivotTables.map(p => `<Override PartName="/xl/pivotCache/pivotCacheDefinition${p.pivotIdx}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.pivotCacheDefinition+xml"/>`).join('\n')}
 ${allPivotTables.map(p => `<Override PartName="/xl/pivotCache/pivotCacheRecords${p.pivotIdx}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.pivotCacheRecords+xml"/>`).join('\n')}
 ${commentsCTs}
+${ctrlPropCTs.join('')}
 <Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>
 <Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>
 ${hasCustom ? '<Override PartName="/docProps/custom.xml" ContentType="application/vnd.openxmlformats-officedocument.custom-properties+xml"/>' : ''}
@@ -543,13 +561,46 @@ ${pivotCachesXml}
         wsRels.push(`<Relationship Id="${ptRIds_[j]}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/pivotTable" Target="../pivotTables/pivotTable${ptEntries[j].pivotIdx}.xml"/>`);
       }
       const sheetComments = ws.getComments();
-      if (sheetComments.length && ws.legacyDrawingRId) {
+      const sheetControls = ws.getFormControls();
+      if ((sheetComments.length || sheetControls.length) && ws.legacyDrawingRId) {
         const vIdx = vmlCtr++;
-        const commRId = `rId${globalRId++}`;
         wsRels.push(`<Relationship Id="${ws.legacyDrawingRId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/vmlDrawing" Target="../drawings/vmlDrawing${vIdx}.vml"/>`);
-        wsRels.push(`<Relationship Id="${commRId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments" Target="../comments${vIdx}.xml"/>`);
-        entries.push({ name: `xl/comments${vIdx}.xml`,             data: strToBytes(this._buildCommentsXml(sheetComments)) });
-        entries.push({ name: `xl/drawings/vmlDrawing${vIdx}.vml`,  data: strToBytes(this._buildVmlXml(sheetComments, i)) });
+
+        if (sheetComments.length) {
+          const commRId = `rId${globalRId++}`;
+          wsRels.push(`<Relationship Id="${commRId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments" Target="../comments${vIdx}.xml"/>`);
+          entries.push({ name: `xl/comments${vIdx}.xml`, data: strToBytes(this._buildCommentsXml(sheetComments)) });
+        }
+
+        // Build comment VML shapes
+        const commentShapes = sheetComments.map(({ row, col }, ci) => {
+          const left  = (col + 1) * 64;
+          const top   = (row - 1) * 20;
+          const sid = 1025 + i * 1000 + ci;
+          return `<v:shape id="_x0000_s${sid}" type="#_x0000_t202" style="position:absolute;margin-left:${left}pt;margin-top:${top}pt;width:108pt;height:59.25pt;z-index:${ci + 1};visibility:hidden" fillcolor="#ffffe1" o:insetmode="auto">
+<v:fill color2="#ffffe1"/>
+<v:shadow color="black" obscured="t"/>
+<v:path o:connecttype="none"/>
+<v:textbox style="mso-direction-alt:auto"><div style="text-align:left"/></v:textbox>
+<x:ClientData ObjectType="Note"><x:MoveWithCells/><x:SizeWithCells/><x:Anchor>${col + 1},15,${row - 1},10,${col + 3},15,${row + 4},4</x:Anchor><x:AutoFill>False</x:AutoFill><x:Row>${row - 1}</x:Row><x:Column>${col - 1}</x:Column></x:ClientData>
+</v:shape>`;
+        });
+
+        // Build form control VML shapes — IDs must match <control shapeId> in Worksheet._formControlsXml()
+        const ctrlBaseId = 1025 + ws.sheetIndex * 1000 + sheetComments.length;
+        const controlShapes = sheetControls.map((ctrl, ci) =>
+          buildFormControlVmlShape(ctrl, ctrlBaseId + ci)
+        );
+
+        entries.push({ name: `xl/drawings/vmlDrawing${vIdx}.vml`, data: strToBytes(buildVmlWithControls(commentShapes, controlShapes)) });
+
+        // ctrlProp rels and files
+        const ctrlRIds = ws.ctrlPropRIds;
+        for (let ci = 0; ci < sheetControls.length; ci++) {
+          const ctrlPropIdx = ++ctrlPropGlobal;
+          wsRels.push(`<Relationship Id="${ctrlRIds[ci]}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/ctrlProp" Target="../ctrlProps/ctrlProp${ctrlPropIdx}.xml"/>`);
+          entries.push({ name: `xl/ctrlProps/ctrlProp${ctrlPropIdx}.xml`, data: strToBytes(buildCtrlPropXml(sheetControls[ci])) });
+        }
       }
       if (wsRels.length) {
         entries.push({ name: `xl/worksheets/_rels/sheet${i+1}.xml.rels`, data: strToBytes(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>

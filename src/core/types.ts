@@ -557,6 +557,70 @@ export interface PivotTable {
   colGrandTotals?: boolean;
 }
 
+// ─── Form Controls ───────────────────────────────────────────────────────────
+
+export type FormControlType =
+  | 'button' | 'checkBox' | 'comboBox' | 'listBox'
+  | 'optionButton' | 'groupBox' | 'label'
+  | 'scrollBar' | 'spinner';
+
+export interface FormControlAnchor {
+  /** 0-based column index */
+  col: number;
+  /** 0-based row index */
+  row: number;
+  /** Offset within cell in EMU (default 0) */
+  colOff?: number;
+  /** Offset within cell in EMU (default 0) */
+  rowOff?: number;
+}
+
+export interface FormControl {
+  /** Control type */
+  type:        FormControlType;
+  /** Top-left anchor */
+  from:        FormControlAnchor;
+  /** Bottom-right anchor */
+  to:          FormControlAnchor;
+
+  /** Display text (button, checkBox, optionButton, groupBox, label) */
+  text?:       string;
+  /** Macro name to assign, e.g. "Sheet1.MyMacro" */
+  macro?:      string;
+  /** Linked cell reference for value binding, e.g. "$A$1" */
+  linkedCell?: string;
+  /** Input range for list-based controls, e.g. "$B$1:$B$10" */
+  inputRange?: string;
+
+  /** Checked state (checkBox, optionButton) */
+  checked?:    'checked' | 'unchecked' | 'mixed';
+  /** Number of visible dropdown lines (comboBox, default 8) */
+  dropLines?:  number;
+
+  /** Minimum value (scrollBar, spinner) */
+  min?:        number;
+  /** Maximum value (scrollBar, spinner) */
+  max?:        number;
+  /** Small increment / step (scrollBar, spinner) */
+  inc?:        number;
+  /** Large increment / page step (scrollBar only) */
+  page?:       number;
+  /** Current value (scrollBar, spinner) */
+  val?:        number;
+
+  /** Selection type (listBox) */
+  selType?:    'single' | 'multi' | 'extend';
+  /** Disable 3D shading effect */
+  noThreeD?:   boolean;
+
+  /** Internal: preserved raw VML shape XML for lossless round-trip */
+  _vmlShapeXml?:  string;
+  /** Internal: preserved raw ctrlProp XML for lossless round-trip */
+  _ctrlPropXml?:  string;
+  /** Internal: shape ID from VML (used for round-trip) */
+  _shapeId?:      number;
+}
+
 // ─── Connections & Power Query ────────────────────────────────────────────────
 
 /** OOXML connection type */

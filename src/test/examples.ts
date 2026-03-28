@@ -4,7 +4,7 @@
  */
 
 import { Workbook, Worksheet, style, Styles, Colors, NumFmt, VbaProject } from '../index.js';
-import type { Chart, ConditionalFormat, Table, Sparkline, DataValidation, Image } from '../index.js';
+import type { Chart, ConditionalFormat, Table, Sparkline, DataValidation, Image, FormControl } from '../index.js';
 //@ts-ignore
 import { deflateSync } from 'zlib';
 
@@ -1683,6 +1683,160 @@ async function example_connections() {
   if (!wb3.getConnection('SalesDB')) throw new Error('SalesDB missing after dirty round-trip');
 }
 
+// ============================================================
+// 27. FORM CONTROLS
+// ============================================================
+async function example_form_controls() {
+  const wb = new Workbook();
+  const ws = wb.addSheet('Controls');
+  ws.setValue(1, 1, 'Form Controls Demo');
+
+  // Button with macro
+  ws.addFormControl({
+    type: 'button',
+    from: { col: 1, row: 2 },
+    to:   { col: 3, row: 4 },
+    text: 'Click Me',
+    macro: 'Sheet1.ButtonClick',
+  });
+
+  // CheckBox linked to a cell
+  ws.addFormControl({
+    type: 'checkBox',
+    from: { col: 1, row: 5 },
+    to:   { col: 3, row: 6 },
+    text: 'Enable Feature',
+    linkedCell: '$B$10',
+    checked: 'checked',
+  });
+
+  // ComboBox (dropdown)
+  ws.addFormControl({
+    type: 'comboBox',
+    from: { col: 1, row: 7 },
+    to:   { col: 3, row: 8 },
+    linkedCell: '$B$11',
+    inputRange: '$D$1:$D$5',
+    dropLines: 5,
+  });
+
+  // ListBox with multi-select
+  ws.addFormControl({
+    type: 'listBox',
+    from: { col: 1, row: 9 },
+    to:   { col: 3, row: 14 },
+    linkedCell: '$B$12',
+    inputRange: '$D$1:$D$10',
+    selType: 'multi',
+  });
+
+  // Option buttons (radio)
+  ws.addFormControl({
+    type: 'optionButton',
+    from: { col: 4, row: 2 },
+    to:   { col: 6, row: 3 },
+    text: 'Option A',
+    linkedCell: '$B$13',
+    checked: 'checked',
+  });
+  ws.addFormControl({
+    type: 'optionButton',
+    from: { col: 4, row: 4 },
+    to:   { col: 6, row: 5 },
+    text: 'Option B',
+    linkedCell: '$B$13',
+    checked: 'unchecked',
+  });
+
+  // ScrollBar
+  ws.addFormControl({
+    type: 'scrollBar',
+    from: { col: 4, row: 6 },
+    to:   { col: 6, row: 7 },
+    linkedCell: '$B$14',
+    min: 0,
+    max: 100,
+    inc: 1,
+    page: 10,
+    val: 50,
+  });
+
+  // Spinner
+  ws.addFormControl({
+    type: 'spinner',
+    from: { col: 4, row: 8 },
+    to:   { col: 5, row: 10 },
+    linkedCell: '$B$15',
+    min: 1,
+    max: 50,
+    inc: 1,
+    val: 10,
+  });
+
+  // GroupBox
+  ws.addFormControl({
+    type: 'groupBox',
+    from: { col: 4, row: 1 },
+    to:   { col: 7, row: 11 },
+    text: 'Options Group',
+  });
+
+  // Label
+  ws.addFormControl({
+    type: 'label',
+    from: { col: 7, row: 2 },
+    to:   { col: 9, row: 3 },
+    text: 'Status Label',
+  });
+
+  // Populate input range data
+  for (let i = 1; i <= 10; i++) ws.setValue(i, 4, `Item ${i}`);
+
+  await wb.writeFile('./output/27_form_controls.xlsx');
+
+  // Verify controls count
+  const controls = ws.getFormControls();
+  if (controls.length !== 10) throw new Error(`Expected 10 controls, got ${controls.length}`);
+
+  // Round-trip: read back and verify
+  const wb2 = await Workbook.fromFile('./output/27_form_controls.xlsx');
+  const ws2 = wb2.getSheet('Controls')!;
+  const controls2 = ws2.getFormControls();
+  if (controls2.length !== 10) throw new Error(`Round-trip: expected 10 controls, got ${controls2.length}`);
+
+  // Verify specific control properties
+  const btn = controls2.find(c => c.type === 'button');
+  if (!btn) throw new Error('Button not found after round-trip');
+  if (btn.macro !== 'Sheet1.ButtonClick') throw new Error(`Button macro: ${btn.macro}`);
+
+  const cb = controls2.find(c => c.type === 'checkBox');
+  if (!cb) throw new Error('CheckBox not found');
+  if (cb.linkedCell !== '$B$10') throw new Error(`CheckBox linkedCell: ${cb.linkedCell}`);
+  if (cb.checked !== 'checked') throw new Error(`CheckBox checked: ${cb.checked}`);
+
+  const combo = controls2.find(c => c.type === 'comboBox');
+  if (!combo) throw new Error('ComboBox not found');
+  if (combo.inputRange !== '$D$1:$D$5') throw new Error(`ComboBox inputRange: ${combo.inputRange}`);
+  if (combo.dropLines !== 5) throw new Error(`ComboBox dropLines: ${combo.dropLines}`);
+
+  const list = controls2.find(c => c.type === 'listBox');
+  if (!list) throw new Error('ListBox not found');
+  if (list.selType !== 'multi') throw new Error(`ListBox selType: ${list.selType}`);
+
+  const scroll = controls2.find(c => c.type === 'scrollBar');
+  if (!scroll) throw new Error('ScrollBar not found');
+  if (scroll.min !== 0 || scroll.max !== 100 || scroll.val !== 50) throw new Error(`ScrollBar: ${JSON.stringify(scroll)}`);
+
+  const spinner = controls2.find(c => c.type === 'spinner');
+  if (!spinner) throw new Error('Spinner not found');
+  if (spinner.min !== 1 || spinner.max !== 50) throw new Error(`Spinner: ${JSON.stringify(spinner)}`);
+
+  // Test modifying controls after round-trip
+  const cbMod = ws2.getFormControls().find(c => c.type === 'checkBox');
+  if (cbMod) cbMod.checked = 'unchecked';
+  await wb2.writeFile('./output/27_form_controls_modified.xlsx');
+}
+
 // Run all examples
 async function runAll() {
   // @ts-ignore
@@ -1716,6 +1870,7 @@ async function runAll() {
     ['CF/DV Round-trip',       example_cf_dv_roundtrip],
     ['Page Breaks',            example_page_breaks],
     ['Connections',            example_connections],
+    ['Form Controls',          example_form_controls],
   ] as const;
 
   for (const [name, fn] of examples) {

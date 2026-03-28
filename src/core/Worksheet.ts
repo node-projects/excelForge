@@ -3,7 +3,7 @@ import type {
   ConditionalFormat, Table, AutoFilter, FreezePane, SplitPane,
   SheetProtection, PageSetup, PageMargins, HeaderFooter, PrintOptions,
   SheetView, ColumnDef, RowDef, Sparkline, DataValidation,
-  WorksheetOptions, PivotTable, PageBreak,
+  WorksheetOptions, PivotTable, PageBreak, FormControl,
 } from '../core/types.js';
 import type { SharedStrings } from '../core/SharedStrings.js';
 import type { StyleRegistry } from '../styles/StyleRegistry.js';
@@ -38,6 +38,7 @@ export class Worksheet {
   private tables: Table[] = [];
   private pivotTables: PivotTable[] = [];
   private sparklines: Sparkline[] = [];
+  private formControls: FormControl[] = [];
   private colDefs: Map<number, ColumnDef> = new Map();
   private rowDefs: Map<number, RowDef>    = new Map();
   private dataValidations: Map<string, DataValidation> = new Map();
@@ -63,6 +64,7 @@ export class Worksheet {
   drawingRId = '';
   legacyDrawingRId = '';
   tableRIds: string[] = [];
+  ctrlPropRIds: string[] = [];
 
   constructor(name: string, options: WorksheetOptions = {}) {
     this.name = name;
@@ -283,6 +285,15 @@ export class Worksheet {
   getRowBreaks(): readonly PageBreak[] { return this.rowBreaks; }
   getColBreaks(): readonly PageBreak[] { return this.colBreaks; }
 
+  // ─── Form Controls ─────────────────────────────────────────────────────────
+
+  addFormControl(ctrl: FormControl): this {
+    this.formControls.push(ctrl);
+    return this;
+  }
+
+  getFormControls(): FormControl[] { return this.formControls; }
+
   // ─── Preserved XML (round-trip) ─────────────────────────────────────────────
 
   addPreservedXml(xml: string): this {
@@ -324,6 +335,7 @@ export class Worksheet {
     const legacyDrawingXml = this.legacyDrawingRId
       ? `<legacyDrawing r:id="${this.legacyDrawingRId}"/>`
       : '';
+    const controlsXml = this._formControlsXml();
     const sparklineXml = this._sparklineXml();
     const protectionXml = this._protectionXml();
     const pageSetupXml  = this._pageSetupXml();
@@ -337,7 +349,9 @@ export class Worksheet {
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
   xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
   xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main"
-  xmlns:xr="http://schemas.microsoft.com/office/spreadsheetml/2014/revision">
+  xmlns:xr="http://schemas.microsoft.com/office/spreadsheetml/2014/revision"
+  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+  xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing">
 ${sheetPrXml}
 ${sheetViewXml}
 ${colsXml}
@@ -355,6 +369,7 @@ ${rowBreaksXml}
 ${colBreaksXml}
 ${drawingXml}
 ${legacyDrawingXml}
+${controlsXml}
 ${sparklineXml}
 ${tablePartsXml}
 ${this.preservedXml.join('\n')}
@@ -644,6 +659,21 @@ ${this.preservedXml.join('\n')}
       `<brk id="${b.id}" max="${maxVal}"${b.manual !== false ? ' man="1"' : ''}/>`
     ).join('');
     return `<${tag} count="${breaks.length}" manualBreakCount="${manualCount}">${brks}</${tag}>`;
+  }
+
+  private _formControlsXml(): string {
+    if (!this.formControls.length || !this.ctrlPropRIds.length) return '';
+    const baseShapeId = 1025 + this.sheetIndex * 1000;
+    // Count comments to offset shape IDs
+    const commentCount = [...this.cells.values()].filter(c => c.comment).length;
+    const controls = this.formControls.map((ctrl, i) => {
+      const shapeId = ctrl._shapeId ?? (baseShapeId + commentCount + i);
+      const ctrlPropRId = this.ctrlPropRIds[i];
+      if (!ctrlPropRId) return '';
+      const name = ctrl.text ?? `${ctrl.type} ${i + 1}`;
+      return `<mc:AlternateContent><mc:Choice Requires="x14"><control shapeId="${shapeId}" r:id="${ctrlPropRId}" name="${escapeXml(name)}"><controlPr defaultSize="0" print="0" autoFill="0" autoPict="0"${ctrl.macro ? ` macro="${escapeXml(ctrl.macro)}"` : ''}><anchor moveWithCells="1"><from><xdr:col>${ctrl.from.col}</xdr:col><xdr:colOff>${ctrl.from.colOff ?? 0}</xdr:colOff><xdr:row>${ctrl.from.row}</xdr:row><xdr:rowOff>${ctrl.from.rowOff ?? 0}</xdr:rowOff></from><to><xdr:col>${ctrl.to.col}</xdr:col><xdr:colOff>${ctrl.to.colOff ?? 0}</xdr:colOff><xdr:row>${ctrl.to.row}</xdr:row><xdr:rowOff>${ctrl.to.rowOff ?? 0}</xdr:rowOff></to></anchor></controlPr></control></mc:Choice></mc:AlternateContent>`;
+    }).join('');
+    return `<mc:AlternateContent><mc:Choice Requires="x14"><controls>${controls}</controls></mc:Choice></mc:AlternateContent>`;
   }
 
   private _sparklineXml(): string {

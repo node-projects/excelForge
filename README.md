@@ -34,6 +34,7 @@ ExcelForge gives you the full power of the OOXML spec — including real DEFLATE
 | **VBA Macros** | Create/read `.xlsm` with standard modules, class modules, document modules; full round-trip |
 | **Auto Filter** | Dropdown filters on column headers |
 | **Hyperlinks** | External URLs, mailto, internal navigation |
+| **Form Controls** | Button, checkbox, combobox, listbox, radio, groupbox, label, scrollbar, spinner — with macro assignment |
 | **Comments** | Cell comments with author |
 | **Multiple Sheets** | Any number, hidden/veryHidden, tab colors |
 | **Core Properties** | Title, author, subject, keywords, description, language, revision, category… |
@@ -594,6 +595,57 @@ console.log(q?.formula);                       // Power Query M code
 ```
 
 Connections are fully preserved during round-trip editing. Power Query formulas (M code) stored in DataMashup binary blobs are automatically extracted for read access. Power Query/Power Pivot data models created in Excel are preserved verbatim during round-trip — you can safely open, modify cells, and save without losing any Power Query or Power Pivot features.
+
+### Form Controls
+
+```typescript
+// Add a button with a macro
+ws.addFormControl({
+  type: 'button',
+  from: { col: 1, row: 2 },
+  to:   { col: 3, row: 4 },
+  text: 'Run Report',
+  macro: 'Sheet1.RunReport',
+});
+
+// CheckBox linked to a cell
+ws.addFormControl({
+  type: 'checkBox',
+  from: { col: 1, row: 5 },
+  to:   { col: 3, row: 6 },
+  text: 'Enable Feature',
+  linkedCell: '$B$10',
+  checked: 'checked',   // 'checked' | 'unchecked' | 'mixed'
+});
+
+// ComboBox (dropdown) with input range
+ws.addFormControl({
+  type: 'comboBox',
+  from: { col: 1, row: 7 },
+  to:   { col: 3, row: 8 },
+  linkedCell: '$B$11',
+  inputRange: '$D$1:$D$5',
+  dropLines: 5,
+});
+
+// ListBox, OptionButton, GroupBox, Label, ScrollBar, Spinner
+ws.addFormControl({
+  type: 'scrollBar',
+  from: { col: 4, row: 6 },
+  to:   { col: 6, row: 7 },
+  linkedCell: '$B$14',
+  min: 0, max: 100, inc: 1, page: 10, val: 50,
+});
+
+// Read form controls from an existing file
+const wb2 = await Workbook.fromBytes(data);
+const controls = ws.getFormControls();
+for (const ctrl of controls) {
+  console.log(ctrl.type, ctrl.linkedCell, ctrl.macro);
+}
+```
+
+Supported control types: `button`, `checkBox`, `comboBox`, `listBox`, `optionButton`, `groupBox`, `label`, `scrollBar`, `spinner`. All control types support `macro` assignment and are fully preserved during round-trip editing.
 
 ### Sheet protection
 
