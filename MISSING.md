@@ -61,11 +61,6 @@ EPPlus Features Missing in ExcelForge
   ├─────┼────────────────────────┼────────────────────────────────────────────┼─────────────────────────────────────┤
   │ 17  │ Threaded Comments      │ Mentions, thread resolution                │ Basic comments only                 │
   ├─────┼────────────────────────┼────────────────────────────────────────────┼─────────────────────────────────────┤
-  │ 18  │ In-Cell Pictures       │ PNG, JPG, GIF, BMP, WebP, ICO with alt     │ Two-cell/one-cell anchor images     │
-  │     │                        │ text                                       │ only                                │
-  ├─────┼────────────────────────┼────────────────────────────────────────────┼─────────────────────────────────────┤
-  │ 19  │ SVG/ICO/WebP images    │ Full format support                        │ PNG, JPEG, GIF, EMF, WMF, TIFF only │
-  ├─────┼────────────────────────┼────────────────────────────────────────────┼─────────────────────────────────────┤
   │ 20  │ OLE Objects            │ Add, remove, read, link, embed             │ Not supported                       │
   ├─────┼────────────────────────┼────────────────────────────────────────────┼─────────────────────────────────────┤
   │ 21  │ VBA Code Signing       │ Certificate-based signing                  │ VBA creation/editing, no signing    │

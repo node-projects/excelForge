@@ -60,6 +60,7 @@ export type {
   // Sheet features
   MergeRange,
   Image,
+  CellImage,
   ImageFormat,
   ImagePosition,
   Chart,

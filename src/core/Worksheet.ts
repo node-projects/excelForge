@@ -1,5 +1,5 @@
 import type {
-  Cell, CellValue, CellStyle, MergeRange, Image, Chart,
+  Cell, CellValue, CellStyle, MergeRange, Image, CellImage, Chart,
   ConditionalFormat, Table, AutoFilter, FreezePane, SplitPane,
   SheetProtection, PageSetup, PageMargins, HeaderFooter, PrintOptions,
   SheetView, ColumnDef, RowDef, Sparkline, DataValidation,
@@ -33,6 +33,7 @@ export class Worksheet {
   private cells: CellMap = new Map();
   private merges: MergeRange[] = [];
   private images: Image[] = [];
+  private cellImages: CellImage[] = [];
   private charts: Chart[] = [];
   private conditionalFormats: ConditionalFormat[] = [];
   private tables: Table[] = [];
@@ -174,6 +175,21 @@ export class Worksheet {
 
   getImages(): readonly Image[] { return this.images; }
 
+  // ─── Cell Images (In-Cell Pictures) ───────────────────────────────────────
+
+  addCellImage(img: CellImage): this {
+    this.cellImages.push(img);
+    return this;
+  }
+
+  getCellImages(): readonly CellImage[] { return this.cellImages; }
+
+  /**
+   * Map of cell ref → vm index (1-based) for cell images.
+   * Set externally by Workbook during build to inject vm attributes into cell XML.
+   */
+  _cellImageVm: Map<string, number> = new Map();
+
   /** Return all cells that have a comment, keyed by "col,row" */
   getComments(): Array<{ row: number; col: number; comment: import('../core/types.js').Comment }> {
     const out: Array<{ row: number; col: number; comment: import('../core/types.js').Comment }> = [];
@@ -288,6 +304,19 @@ export class Worksheet {
   // ─── Form Controls ─────────────────────────────────────────────────────────
 
   addFormControl(ctrl: FormControl): this {
+    // Resolve 'to' from width/height if omitted (approx 64px/col, 20px/row)
+    if (!ctrl.to && (ctrl.width || ctrl.height)) {
+      const COL_PX = 64, ROW_PX = 20;
+      const w = ctrl.width ?? 100, h = ctrl.height ?? 30;
+      const endColFrac = ctrl.from.col + w / COL_PX;
+      const endRowFrac = ctrl.from.row + h / ROW_PX;
+      ctrl = { ...ctrl, to: {
+        col: Math.floor(endColFrac),
+        row: Math.floor(endRowFrac),
+        colOff: Math.round((endColFrac % 1) * COL_PX),
+        rowOff: Math.round((endRowFrac % 1) * ROW_PX),
+      }};
+    }
     this.formControls.push(ctrl);
     return this;
   }
@@ -459,45 +488,49 @@ ${this.preservedXml.join('\n')}
     const ref = `${colIndexToLetter(col)}${row}`;
     const styleIdx = cell.style ? styles.register(cell.style) : 0;
     const sAttr = styleIdx ? ` s="${styleIdx}"` : '';
+    const vmIdx = this._cellImageVm.get(ref);
+    const vmAttr = vmIdx !== undefined ? ` vm="${vmIdx}"` : '';
 
     // Array formula
     if (cell.arrayFormula) {
       const fml = `<f t="array" ref="${ref}">${escapeXml(cell.arrayFormula)}</f>`;
-      return `<c r="${ref}"${sAttr}>${fml}<v>0</v></c>`;
+      return `<c r="${ref}"${sAttr}${vmAttr}>${fml}<v>0</v></c>`;
     }
 
     // Formula
     if (cell.formula) {
       const fml = `<f>${escapeXml(cell.formula)}</f>`;
-      return `<c r="${ref}"${sAttr}>${fml}</c>`;
+      return `<c r="${ref}"${sAttr}${vmAttr}>${fml}</c>`;
     }
 
     // Rich text
     if (cell.richText) {
       const si = shared.internRichText(cell.richText);
-      return `<c r="${ref}" t="s"${sAttr}><v>${si}</v></c>`;
+      return `<c r="${ref}" t="s"${sAttr}${vmAttr}><v>${si}</v></c>`;
     }
 
     const v = cell.value;
     if (v === null || v === undefined) {
+      // Cell image with no value — emit empty cell with vm attribute
+      if (vmAttr) return `<c r="${ref}"${sAttr}${vmAttr}/>`;
       return styleIdx ? `<c r="${ref}"${sAttr}/>` : '';
     }
 
     if (typeof v === 'boolean') {
-      return `<c r="${ref}" t="b"${sAttr}><v>${v ? 1 : 0}</v></c>`;
+      return `<c r="${ref}" t="b"${sAttr}${vmAttr}><v>${v ? 1 : 0}</v></c>`;
     }
 
     if (v instanceof Date) {
       const serial = dateToSerial(v);
-      return `<c r="${ref}"${sAttr}><v>${serial}</v></c>`;
+      return `<c r="${ref}"${sAttr}${vmAttr}><v>${serial}</v></c>`;
     }
 
     if (typeof v === 'number') {
-      return `<c r="${ref}"${sAttr}><v>${v}</v></c>`;
+      return `<c r="${ref}"${sAttr}${vmAttr}><v>${v}</v></c>`;
     }
 
     const si = shared.intern(v as string);
-    return `<c r="${ref}" t="s"${sAttr}><v>${si}</v></c>`;
+    return `<c r="${ref}" t="s"${sAttr}${vmAttr}><v>${si}</v></c>`;
   }
 
   private _mergesXml(): string {
@@ -723,18 +756,27 @@ ${this.preservedXml.join('\n')}
 
     this.images.forEach((img, i) => {
       const rId = imageRIds[i];
-      const from = img.from;
-      const to   = img.to;
-      const fromXml = `<xdr:from><xdr:col>${from.col}</xdr:col><xdr:colOff>${from.colOff ?? 0}</xdr:colOff><xdr:row>${from.row}</xdr:row><xdr:rowOff>${from.rowOff ?? 0}</xdr:rowOff></xdr:from>`;
+      const w = EMU(img.width ?? 100);
+      const h = EMU(img.height ?? 100);
 
       let anchor: string;
-      if (to) {
-        const toXml = `<xdr:to><xdr:col>${to.col}</xdr:col><xdr:colOff>${to.colOff ?? 0}</xdr:colOff><xdr:row>${to.row}</xdr:row><xdr:rowOff>${to.rowOff ?? 0}</xdr:rowOff></xdr:to>`;
-        anchor = `<xdr:twoCellAnchor editAs="oneCell">${fromXml}${toXml}`;
+      let closeTag: string;
+      if (img.position) {
+        // Absolute positioning — no cell reference
+        anchor = `<xdr:absoluteAnchor><xdr:pos x="${EMU(img.position.x)}" y="${EMU(img.position.y)}"/><xdr:ext cx="${w}" cy="${h}"/>`;
+        closeTag = `</xdr:absoluteAnchor>`;
       } else {
-        const w = EMU(img.width ?? 100);
-        const h = EMU(img.height ?? 100);
-        anchor = `<xdr:oneCellAnchor>${fromXml}<xdr:ext cx="${w}" cy="${h}"/>`;
+        const from = img.from!;
+        const to   = img.to;
+        const fromXml = `<xdr:from><xdr:col>${from.col}</xdr:col><xdr:colOff>${from.colOff ?? 0}</xdr:colOff><xdr:row>${from.row}</xdr:row><xdr:rowOff>${from.rowOff ?? 0}</xdr:rowOff></xdr:from>`;
+        if (to) {
+          const toXml = `<xdr:to><xdr:col>${to.col}</xdr:col><xdr:colOff>${to.colOff ?? 0}</xdr:colOff><xdr:row>${to.row}</xdr:row><xdr:rowOff>${to.rowOff ?? 0}</xdr:rowOff></xdr:to>`;
+          anchor = `<xdr:twoCellAnchor editAs="oneCell">${fromXml}${toXml}`;
+          closeTag = `</xdr:twoCellAnchor>`;
+        } else {
+          anchor = `<xdr:oneCellAnchor>${fromXml}<xdr:ext cx="${w}" cy="${h}"/>`;
+          closeTag = `</xdr:oneCellAnchor>`;
+        }
       }
 
       const picXml = `<xdr:pic>
@@ -748,13 +790,12 @@ ${this.preservedXml.join('\n')}
   </xdr:blipFill>
   <xdr:spPr>
     <a:xfrm xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
-      <a:off x="0" y="0"/><a:ext cx="${EMU(img.width ?? 100)}" cy="${EMU(img.height ?? 100)}"/>
+      <a:off x="0" y="0"/><a:ext cx="${w}" cy="${h}"/>
     </a:xfrm>
     <a:prstGeom xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" prst="rect"><a:avLst/></a:prstGeom>
   </xdr:spPr>
 </xdr:pic>`;
 
-      const closeTag = to ? `</xdr:twoCellAnchor>` : `</xdr:oneCellAnchor>`;
       parts.push(`${anchor}${picXml}<xdr:clientData/>${closeTag}`);
     });
 

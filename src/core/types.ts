@@ -181,7 +181,7 @@ export interface MergeRange {
 
 // ─── Image ────────────────────────────────────────────────────────────────────
 
-export type ImageFormat = 'png' | 'jpeg' | 'gif' | 'emf' | 'wmf' | 'tiff';
+export type ImageFormat = 'png' | 'jpeg' | 'gif' | 'emf' | 'wmf' | 'tiff' | 'svg' | 'ico' | 'webp' | 'bmp';
 
 export interface ImagePosition {
   col:      number;
@@ -193,11 +193,27 @@ export interface ImagePosition {
 export interface Image {
   data:      Uint8Array | string;  // raw bytes or base64
   format:    ImageFormat;
-  from:      ImagePosition;
+  /** Cell-anchored position (required unless position is given) */
+  from?:     ImagePosition;
   to?:       ImagePosition;
-  /** Absolute size in pixels (used when 'to' is omitted) */
+  /** Absolute position in pixels — produces xdr:absoluteAnchor (no cell reference) */
+  position?: { x: number; y: number };
+  /** Size in pixels (used with oneCellAnchor or absoluteAnchor) */
   width?:    number;
   height?:   number;
+  altText?:  string;
+}
+
+// ─── Cell Image (In-Cell Picture) ─────────────────────────────────────────────
+
+export interface CellImage {
+  /** Raw image bytes or base64 string */
+  data:      Uint8Array | string;
+  /** Image format */
+  format:    ImageFormat;
+  /** Cell reference, e.g. "B2" */
+  cell:      string;
+  /** Alt text for accessibility */
   altText?:  string;
 }
 
@@ -580,8 +596,12 @@ export interface FormControl {
   type:        FormControlType;
   /** Top-left anchor */
   from:        FormControlAnchor;
-  /** Bottom-right anchor */
-  to:          FormControlAnchor;
+  /** Bottom-right anchor (computed from width/height if omitted) */
+  to?:         FormControlAnchor;
+  /** Width in pixels (used when 'to' is omitted) */
+  width?:      number;
+  /** Height in pixels (used when 'to' is omitted) */
+  height?:     number;
 
   /** Display text (button, checkBox, optionButton, groupBox, label) */
   text?:       string;

@@ -4,7 +4,7 @@
  */
 
 import { Workbook, Worksheet, style, Styles, Colors, NumFmt, VbaProject } from '../index.js';
-import type { Chart, ConditionalFormat, Table, Sparkline, DataValidation, Image, FormControl } from '../index.js';
+import type { Chart, ConditionalFormat, Table, Sparkline, DataValidation, Image, CellImage, FormControl } from '../index.js';
 //@ts-ignore
 import { deflateSync } from 'zlib';
 
@@ -1893,6 +1893,212 @@ async function example_huge_file() {
   if (lastCell.value !== (ROWS + 1) * 1) throw new Error(`Last-row value mismatch`);
 }
 
+// ============================================================
+// IN-CELL PICTURES & NEW IMAGE FORMATS (SVG, WebP, ICO, BMP)
+// ============================================================
+
+/** Helper: create a minimal valid PNG from scratch */
+function makeTestPng(w: number, h: number, r: number, g: number, b: number): Uint8Array {
+  const crcTable = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = (c & 1) ? 0xEDB88320 ^ (c >>> 1) : c >>> 1;
+    crcTable[n] = c;
+  }
+  const crc32 = (buf: Uint8Array, seed = 0xFFFFFFFF): number => {
+    let c = seed;
+    for (const byte of buf) c = crcTable[(c ^ byte) & 0xFF] ^ (c >>> 8);
+    return (c ^ 0xFFFFFFFF) >>> 0;
+  };
+  const u32be = (n: number) => new Uint8Array([n>>>24, (n>>>16)&0xFF, (n>>>8)&0xFF, n&0xFF]);
+  const chunk = (type: string, data: Uint8Array): Uint8Array => {
+    const typeBytes = new TextEncoder().encode(type);
+    const crcBuf = new Uint8Array(4 + data.length);
+    crcBuf.set(typeBytes); crcBuf.set(data, 4);
+    const crc = u32be(crc32(crcBuf));
+    const out = new Uint8Array(4 + 4 + data.length + 4);
+    out.set(u32be(data.length));
+    out.set(typeBytes, 4);
+    out.set(data, 8);
+    out.set(crc, 8 + data.length);
+    return out;
+  };
+  const raw = new Uint8Array((1 + w * 3) * h);
+  let pos = 0;
+  for (let y = 0; y < h; y++) {
+    raw[pos++] = 0;
+    for (let x = 0; x < w; x++) { raw[pos++] = r; raw[pos++] = g; raw[pos++] = b; }
+  }
+  const idat = deflateSync(raw);
+  const ihdrData = new Uint8Array(13);
+  new DataView(ihdrData.buffer).setUint32(0, w);
+  new DataView(ihdrData.buffer).setUint32(4, h);
+  ihdrData[8] = 8; ihdrData[9] = 2;
+  const sig = new Uint8Array([0x89,0x50,0x4E,0x47,0x0D,0x0A,0x1A,0x0A]);
+  const parts = [sig, chunk('IHDR', ihdrData), chunk('IDAT', idat), chunk('IEND', new Uint8Array(0))];
+  const total = parts.reduce((s, p) => s + p.length, 0);
+  const png = new Uint8Array(total);
+  let off = 0;
+  for (const p of parts) { png.set(p, off); off += p.length; }
+  return png;
+}
+
+/** Helper: minimal BMP (24-bit, 4x4 solid color) */
+function makeTestBmp(r: number, g: number, b: number): Uint8Array {
+  const w = 4, h = 4;
+  const rowBytes = w * 3;
+  const padding = (4 - (rowBytes % 4)) % 4;
+  const stride = rowBytes + padding;
+  const pixelSize = stride * h;
+  const fileSize = 54 + pixelSize;
+  const buf = new Uint8Array(fileSize);
+  const dv = new DataView(buf.buffer);
+  buf[0] = 0x42; buf[1] = 0x4D;  // BM
+  dv.setUint32(2, fileSize, true);
+  dv.setUint32(10, 54, true);     // pixel data offset
+  dv.setUint32(14, 40, true);     // DIB header size
+  dv.setInt32(18, w, true);
+  dv.setInt32(22, h, true);
+  dv.setUint16(26, 1, true);      // planes
+  dv.setUint16(28, 24, true);     // bpp
+  dv.setUint32(34, pixelSize, true);
+  let off = 54;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) { buf[off++] = b; buf[off++] = g; buf[off++] = r; }
+    off += padding;
+  }
+  return buf;
+}
+
+async function example_cell_images() {
+  const wb = new Workbook();
+  const ws = wb.addSheet('CellImages');
+
+  ws.setValue(1, 1, 'In-cell pictures demo');
+  ws.setStyle(1, 1, style().bold().build());
+
+  // Create distinct colored PNGs for in-cell images
+  const redPng   = makeTestPng(40, 40, 0xFF, 0x00, 0x00);
+  const greenPng = makeTestPng(40, 40, 0x00, 0xAA, 0x00);
+  const bluePng  = makeTestPng(40, 40, 0x00, 0x00, 0xFF);
+
+  // Add in-cell pictures at specific cells
+  ws.addCellImage({ data: redPng,   format: 'png', cell: 'B2', altText: 'Red square' });
+  ws.addCellImage({ data: greenPng, format: 'png', cell: 'C3', altText: 'Green square' });
+  ws.addCellImage({ data: bluePng,  format: 'png', cell: 'D4', altText: 'Blue square' });
+
+  // Add labels
+  ws.setValue(2, 1, 'Red:');
+  ws.setValue(3, 1, 'Green:');
+  ws.setValue(4, 1, 'Blue:');
+
+  // Make rows taller so images are visible
+  ws.setRowHeight(2, 40);
+  ws.setRowHeight(3, 40);
+  ws.setRowHeight(4, 40);
+  ws.setColumnWidth(2, 12);
+  ws.setColumnWidth(3, 12);
+  ws.setColumnWidth(4, 12);
+
+  await wb.writeFile('./output/29_cell_images.xlsx');
+
+  // Verify round-trip: richData files should be preserved in unknownParts
+  const wb2 = await Workbook.fromFile('./output/29_cell_images.xlsx');
+  const ws2 = wb2.getSheet('CellImages')!;
+  if (!ws2) throw new Error('Sheet not found after round-trip');
+  await wb2.writeFile('./output/29_cell_images_rt.xlsx');
+}
+
+async function example_new_image_formats() {
+  const wb = new Workbook();
+  const ws = wb.addSheet('ImageFormats');
+
+  ws.setValue(1, 1, 'New image format support');
+  ws.setStyle(1, 1, style().bold().build());
+
+  // BMP image (real valid file)
+  const bmpBytes = makeTestBmp(0x44, 0x72, 0xC4);
+  const bmpImg: Image = {
+    data: bmpBytes,
+    format: 'bmp',
+    from: { col: 1, row: 2 },
+    width: 80, height: 80,
+    altText: 'BMP test image',
+  };
+  ws.addImage(bmpImg);
+  ws.setValue(2, 1, 'BMP →');
+
+  // SVG image (valid SVG XML)
+  const svgStr = `<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80"><rect width="80" height="80" fill="#ED7D31"/><circle cx="40" cy="40" r="30" fill="#FFC000"/></svg>`;
+  const svgBytes = new TextEncoder().encode(svgStr);
+  const svgImg: Image = {
+    data: svgBytes,
+    format: 'svg',
+    from: { col: 3, row: 2 },
+    width: 80, height: 80,
+    altText: 'SVG test image',
+  };
+  ws.addImage(svgImg);
+  ws.setValue(2, 3, 'SVG →');
+
+  // WebP — use a minimal valid 1x1 WebP (RIFF/WEBP VP8 container)
+  const webpBytes = new Uint8Array([
+    0x52,0x49,0x46,0x46, 0x24,0x00,0x00,0x00,  // RIFF + size
+    0x57,0x45,0x42,0x50, 0x56,0x50,0x38,0x20,  // WEBP VP8
+    0x18,0x00,0x00,0x00, 0x30,0x01,0x00,0x9D,  // chunk header
+    0x01,0x2A,0x01,0x00, 0x01,0x00,0x01,0x40,  // 1x1 px
+    0x25,0xA4,0x00,0x03, 0x70,0x00,0xFE,0xFB,
+    0x94,0x00,0x00,
+  ]);
+  const webpImg: Image = {
+    data: webpBytes,
+    format: 'webp',
+    from: { col: 5, row: 2 },
+    width: 80, height: 80,
+    altText: 'WebP test image',
+  };
+  ws.addImage(webpImg);
+  ws.setValue(2, 5, 'WebP →');
+
+  // ICO — minimal 1x1 ICO file
+  const icoBytes = new Uint8Array([
+    0x00,0x00, 0x01,0x00, 0x01,0x00,              // ICO header: 1 image
+    0x01, 0x01, 0x00, 0x00, 0x01,0x00, 0x18,0x00, // 1x1, 24bpp
+    0x30,0x00,0x00,0x00, 0x16,0x00,0x00,0x00,     // size + offset
+    // BMP info header (40 bytes)
+    0x28,0x00,0x00,0x00, 0x01,0x00,0x00,0x00,
+    0x02,0x00,0x00,0x00, 0x01,0x00, 0x18,0x00,
+    0x00,0x00,0x00,0x00, 0x08,0x00,0x00,0x00,
+    0x00,0x00,0x00,0x00, 0x00,0x00,0x00,0x00,
+    0x00,0x00,0x00,0x00, 0x00,0x00,0x00,0x00,
+    // pixel data (1 BGR pixel + padding + AND mask row)
+    0xC4,0x72,0x44, 0x00,   // BGR + pad
+    0x00,0x00,0x00, 0x00,   // AND mask
+  ]);
+  const icoImg: Image = {
+    data: icoBytes,
+    format: 'ico',
+    from: { col: 7, row: 2 },
+    width: 80, height: 80,
+    altText: 'ICO test image',
+  };
+  ws.addImage(icoImg);
+  ws.setValue(2, 7, 'ICO →');
+
+  // Also test in-cell BMP
+  ws.addCellImage({ data: bmpBytes, format: 'bmp', cell: 'B6', altText: 'In-cell BMP' });
+  ws.setValue(6, 1, 'In-cell BMP:');
+  ws.setRowHeight(6, 40);
+
+  await wb.writeFile('./output/30_new_image_formats.xlsx');
+
+  // Verify the file can be read back
+  const wb2 = await Workbook.fromFile('./output/30_new_image_formats.xlsx');
+  const ws2 = wb2.getSheet('ImageFormats')!;
+  if (!ws2) throw new Error('Sheet not found after round-trip');
+  await wb2.writeFile('./output/30_new_image_formats_rt.xlsx');
+}
+
 // Run all examples
 async function runAll() {
   // @ts-ignore
@@ -1928,6 +2134,8 @@ async function runAll() {
     ['Connections',            example_connections],
     ['Form Controls',          example_form_controls],
     ['Huge File (200×100k)',   example_huge_file],
+    ['Cell Images',            example_cell_images],
+    ['New Image Formats',      example_new_image_formats],
   ] as const;
 
   for (const [name, fn] of examples) {

@@ -20,7 +20,8 @@ ExcelForge gives you the full power of the OOXML spec — including real DEFLATE
 | **Styles** | Fonts, solid/pattern/gradient fills, all border styles, alignment, 30+ number format presets |
 | **Layout** | Merge cells, freeze/split panes, column widths, row heights, hide rows/cols, outline grouping |
 | **Charts** | Bar, column (stacked/100%), line, area, pie, doughnut, scatter, radar, bubble |
-| **Images** | PNG, JPEG, GIF — two-cell or one-cell anchors |
+| **Images** | PNG, JPEG, GIF, BMP, SVG, WebP, ICO, EMF, WMF, TIFF — two-cell, one-cell, or absolute anchors |
+| **In-Cell Pictures** | Embed images directly inside cells via richData/metadata (Excel 365+) |
 | **Tables** | Styled Excel tables with totals row, filter buttons, column definitions |
 | **Conditional Formatting** | Cell rules, color scales, data bars, icon sets, top/bottom N, above/below average |
 | **Data Validation** | Dropdowns, whole number, decimal, date, time, text length, custom formula |
@@ -393,15 +394,52 @@ Supported chart types: `bar`, `col`, `colStacked`, `col100`, `barStacked`, `bar1
 
 ### Images
 
+Supported formats: `png`, `jpeg`, `gif`, `bmp`, `svg`, `webp`, `ico`, `emf`, `wmf`, `tiff`.
+
 ```typescript
 import { readFileSync } from 'fs';
 const imgData = readFileSync('./logo.png');
 
+// Floating image (two-cell anchor)
 ws.addImage({
   data:   imgData,          // Buffer, Uint8Array, or base64 string
   format: 'png',
   from:   { row: 1, col: 1 },
   to:     { row: 8, col: 4 },
+});
+
+// One-cell anchor with explicit pixel size
+ws.addImage({
+  data:   readFileSync('./icon.svg'),
+  format: 'svg',
+  from:   { row: 1, col: 6 },
+  width:  80,
+  height: 80,
+  altText: 'Company icon',
+});
+
+// Absolute positioning (not tied to any cell)
+ws.addImage({
+  data:   imgData,
+  format: 'png',
+  position: { x: 200, y: 100 },   // pixels from top-left of sheet
+  width:  120,
+  height: 80,
+});
+```
+
+### In-Cell Pictures
+
+Embed images directly inside cells (Excel 365+ feature). Uses richData/metadata internally.
+
+```typescript
+import type { CellImage } from '@node-projects/excelforge';
+
+ws.addCellImage({
+  data:    readFileSync('./photo.png'),
+  format:  'png',
+  cell:    'B2',          // cell reference
+  altText: 'Product photo',
 });
 ```
 
@@ -608,11 +646,19 @@ ws.addFormControl({
   macro: 'Sheet1.RunReport',
 });
 
+// Button sized by width/height (no 'to' anchor needed)
+ws.addFormControl({
+  type: 'button',
+  from: { col: 1, row: 5 },
+  width: 120, height: 30,    // pixels
+  text: 'Compact Button',
+});
+
 // CheckBox linked to a cell
 ws.addFormControl({
   type: 'checkBox',
-  from: { col: 1, row: 5 },
-  to:   { col: 3, row: 6 },
+  from: { col: 1, row: 7 },
+  to:   { col: 3, row: 8 },
   text: 'Enable Feature',
   linkedCell: '$B$10',
   checked: 'checked',   // 'checked' | 'unchecked' | 'mixed'
@@ -784,6 +830,9 @@ document.getElementById('file').addEventListener('change', async (e) => {
 ---
 
 ## Changelog
+
+### v3.0 — More
+- **Form Controls** - create Form Controls
 
 ### v2.4 — Pivot Tables & VBA Macros
 

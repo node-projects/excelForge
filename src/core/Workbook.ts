@@ -1,5 +1,5 @@
 import type {
-  WorkbookProperties, NamedRange, WorksheetOptions, Image, Comment, PivotTable,
+  WorkbookProperties, NamedRange, WorksheetOptions, Image, CellImage, Comment, PivotTable,
   Connection, PowerQuery, ConnectionType,
 } from '../core/types.js';
 import { Worksheet } from './Worksheet.js';
@@ -417,7 +417,7 @@ export class Workbook {
       // legacyDrawing needed for comments OR form controls (they share VML)
       if (ws.getComments().length || controls.length) ws.legacyDrawingRId = `rId${globalRId++}`;
 
-      for (const img of imgs)    { const r = `rId${globalRId++}`; imgRIds.push(r);   allImages.push({ ws, img, ext: img.format === 'jpeg' ? 'jpg' : img.format, idx: imgCtr++ }); }
+      for (const img of imgs)    { const r = `rId${globalRId++}`; imgRIds.push(r);   allImages.push({ ws, img, ext: imageExt(img.format), idx: imgCtr++ }); }
       for (let i=0;i<charts.length;i++) { const r = `rId${globalRId++}`; chartRIds.push(r); allCharts.push({ ws, chartIdx: i, globalIdx: chartCtr++ }); }
       for (let i=0;i<tables.length;i++) { const r = `rId${globalRId++}`; tblRIds.push(r);   allTables.push({ ws, tableIdx: i, globalTableId: tableCtr++ }); }
 
@@ -441,13 +441,29 @@ export class Workbook {
       sheetPivotRIds.set(ws, ptRIds);
     }
 
+    // ── Cell images (in-cell pictures via richData) ──────────────────────
+    const allCellImages: Array<{ img: CellImage; ext: string; idx: number }> = [];
+    let cellImgCtr = imgCtr;   // continue numbering from floating images
+    let vmCounter = 1;         // 1-based vm index for metadata
+    for (const ws of this.sheets) {
+      ws._cellImageVm = new Map();
+      for (const ci of ws.getCellImages()) {
+        const ext = imageExt(ci.format);
+        allCellImages.push({ img: ci, ext, idx: cellImgCtr++ });
+        ws._cellImageVm.set(ci.cell, vmCounter++);
+        // Ensure the cell exists in the cells map so it gets emitted with vm attr
+        ws.getCellByRef(ci.cell);
+      }
+    }
+    const hasCellImages = allCellImages.length > 0;
+
     const hasCustom = this.customProperties.length > 0;
     const hasVba    = !!this.vbaProject;
 
     // Content types
     const imgCTs = new Set<string>();
-    for (const { ext } of allImages) {
-      const ct = ext === 'jpg' ? 'image/jpeg' : ext === 'png' ? 'image/png' : `image/${ext}`;
+    for (const { ext } of [...allImages, ...allCellImages]) {
+      const ct = imageContentType(ext);
       imgCTs.add(`<Default Extension="${ext}" ContentType="${ct}"/>`);
     }
     const sheetsWithComments = this.sheets.filter(ws => ws.getComments().length);
@@ -488,6 +504,11 @@ ${ctrlPropCTs.join('')}
 <Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>
 ${hasCustom ? '<Override PartName="/docProps/custom.xml" ContentType="application/vnd.openxmlformats-officedocument.custom-properties+xml"/>' : ''}
 ${this.connections.length ? '<Override PartName="/xl/connections.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.connections+xml"/>' : ''}
+${hasCellImages ? `<Override PartName="/xl/metadata.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheetMetadata+xml"/>
+<Override PartName="/xl/richData/rdrichvalue.xml" ContentType="application/vnd.ms-excel.rdrichvalue+xml"/>
+<Override PartName="/xl/richData/rdRichValueStructure.xml" ContentType="application/vnd.ms-excel.rdrichvaluestructure+xml"/>
+<Override PartName="/xl/richData/richValueRel.xml" ContentType="application/vnd.ms-excel.richValueRel+xml"/>
+<Override PartName="/xl/richData/rdRichValueTypes.xml" ContentType="application/vnd.ms-excel.rdrichvaluetypes+xml"/>` : ''}
 </Types>`) });
 
     entries.push({ name: '_rels/.rels', data: strToBytes(this._buildRootRels(hasCustom)) });
@@ -500,6 +521,11 @@ ${this.sheets.map((ws,i) => `<Relationship Id="${ws.rId}" Type="http://schemas.o
 ${allPivotTables.map(p => `<Relationship Id="${p.cacheRId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/pivotCacheDefinition" Target="pivotCache/pivotCacheDefinition${p.pivotIdx}.xml"/>`).join('\n')}
 ${hasVba ? '<Relationship Id="rIdVBA" Type="http://schemas.microsoft.com/office/2006/relationships/vbaProject" Target="vbaProject.bin"/>' : ''}
 ${this.connections.length ? '<Relationship Id="rIdConns" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/connections" Target="connections.xml"/>' : ''}
+${hasCellImages ? '<Relationship Id="rIdMeta" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sheetMetadata" Target="metadata.xml"/>' : ''}
+${hasCellImages ? '<Relationship Id="rIdRichValueRel" Type="http://schemas.microsoft.com/office/2022/10/relationships/richValueRel" Target="richData/richValueRel.xml"/>' : ''}
+${hasCellImages ? '<Relationship Id="rIdRichValue" Type="http://schemas.microsoft.com/office/2017/06/relationships/rdRichValue" Target="richData/rdrichvalue.xml"/>' : ''}
+${hasCellImages ? '<Relationship Id="rIdRichValueStruct" Type="http://schemas.microsoft.com/office/2017/06/relationships/rdRichValueStructure" Target="richData/rdRichValueStructure.xml"/>' : ''}
+${hasCellImages ? '<Relationship Id="rIdRichValueTypes" Type="http://schemas.microsoft.com/office/2017/06/relationships/rdRichValueTypes" Target="richData/rdRichValueTypes.xml"/>' : ''}
 </Relationships>`) });
 
     // ── VBA project binary ──────────────────────────────────────────────
@@ -632,6 +658,29 @@ ${dRels.join('\n')}
 
     for (const { img, ext, idx } of allImages) {
       entries.push({ name: `xl/media/image${idx}.${ext}`, data: typeof img.data === 'string' ? base64ToBytes(img.data) : img.data });
+    }
+
+    // ── Cell image media + richData files ────────────────────────────────
+    if (hasCellImages) {
+      const cellImgRIds: string[] = [];
+      const cellImgRels: string[] = [];
+      for (let ci = 0; ci < allCellImages.length; ci++) {
+        const { img, ext, idx } = allCellImages[ci];
+        const rId = `rId${ci + 1}`;
+        cellImgRIds.push(rId);
+        cellImgRels.push(`<Relationship Id="${rId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image${idx}.${ext}"/>`);
+        entries.push({ name: `xl/media/image${idx}.${ext}`, data: typeof img.data === 'string' ? base64ToBytes(img.data) : img.data });
+      }
+
+      entries.push({ name: 'xl/metadata.xml',                        data: strToBytes(buildMetadataXml(allCellImages.length)) });
+      entries.push({ name: 'xl/richData/rdrichvalue.xml',             data: strToBytes(buildRichValueXml(allCellImages.length)) });
+      entries.push({ name: 'xl/richData/richValueRel.xml',            data: strToBytes(buildRichValueRelXml(cellImgRIds)) });
+      entries.push({ name: 'xl/richData/rdRichValueStructure.xml',    data: strToBytes(buildRichValueStructureXml()) });
+      entries.push({ name: 'xl/richData/rdRichValueTypes.xml',        data: strToBytes(buildRichValueTypesXml()) });
+      entries.push({ name: 'xl/richData/_rels/richValueRel.xml.rels', data: strToBytes(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+${cellImgRels.join('\n')}
+</Relationships>`) });
     }
     for (const { ws, chartIdx, globalIdx } of allCharts) {
       entries.push({ name: `xl/charts/chart${globalIdx}.xml`, data: strToBytes(buildChartXml(ws.getCharts()[chartIdx])) });
@@ -893,4 +942,84 @@ ${shapes}
     a.href = url; a.download = filename; a.click();
     URL.revokeObjectURL(url);
   }
+}
+
+/** Map image file extension to MIME content type */
+function imageContentType(ext: string): string {
+  switch (ext) {
+    case 'jpg':  return 'image/jpeg';
+    case 'png':  return 'image/png';
+    case 'gif':  return 'image/gif';
+    case 'bmp':  return 'image/bmp';
+    case 'tiff': return 'image/tiff';
+    case 'emf':  return 'image/x-emf';
+    case 'wmf':  return 'image/x-wmf';
+    case 'svg':  return 'image/svg+xml';
+    case 'ico':  return 'image/x-icon';
+    case 'webp': return 'image/webp';
+    default:     return `image/${ext}`;
+  }
+}
+
+/** Map ImageFormat to file extension used in the ZIP */
+function imageExt(format: string): string {
+  return format === 'jpeg' ? 'jpg' : format;
+}
+
+// ─── Cell Image (richData) XML builders ─────────────────────────────────────
+
+function buildMetadataXml(count: number): string {
+  const bks = Array.from({ length: count }, (_, i) =>
+    `<bk><extLst><ext uri="{3e2802c4-a4d2-4d8b-9148-e3be6c30e623}"><xlrd:rvb i="${i}"/></ext></extLst></bk>`
+  ).join('');
+  const cellBks = Array.from({ length: count }, (_, i) =>
+    `<bk><rc t="1" v="${i}"/></bk>`
+  ).join('');
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<metadata xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"` +
+    ` xmlns:xlrd="http://schemas.microsoft.com/office/spreadsheetml/2017/richdata">` +
+    `<metadataTypes count="1">` +
+    `<metadataType name="XLRICHVALUE" minSupportedVersion="120000" copy="1" pasteAll="1" pasteValues="1" merge="1" splitFirst="1" rowColShift="1" clearFormats="1" clearComments="1" assign="1" coerce="1" cellMeta="1"/>` +
+    `</metadataTypes>` +
+    `<futureMetadata name="XLRICHVALUE" count="${count}">${bks}</futureMetadata>` +
+    `<valueMetadata count="${count}">${cellBks}</valueMetadata>` +
+    `</metadata>`;
+}
+
+function buildRichValueXml(count: number): string {
+  const rvs = Array.from({ length: count }, (_, i) =>
+    `<rv s="0"><v>${i}</v><v>5</v><v></v></rv>`
+  ).join('');
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<rvData xmlns="http://schemas.microsoft.com/office/spreadsheetml/2017/richdata" count="${count}">${rvs}</rvData>`;
+}
+
+function buildRichValueRelXml(rIds: string[]): string {
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<richValueRels xmlns="http://schemas.microsoft.com/office/spreadsheetml/2022/richvaluerel"` +
+    ` xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">` +
+    rIds.map(id => `<rel r:id="${id}"/>`).join('') +
+    `</richValueRels>`;
+}
+
+function buildRichValueStructureXml(): string {
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<rvStructures xmlns="http://schemas.microsoft.com/office/spreadsheetml/2017/richdata2" count="1">` +
+    `<s t="_localImage"><k n="_rvRel:LocalImageIdentifier" t="i"/><k n="CalcOrigin" t="i"/><k n="Text" t="s"/></s>` +
+    `</rvStructures>`;
+}
+
+function buildRichValueTypesXml(): string {
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<rvTypesInfo xmlns="http://schemas.microsoft.com/office/spreadsheetml/2017/richdata2"` +
+    ` xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"` +
+    ` mc:Ignorable="x"` +
+    ` xmlns:x="http://schemas.openxmlformats.org/spreadsheetml/2006/main">` +
+    `<global><keyFlags>` +
+    `<key name="_rvRel:LocalImageIdentifier">` +
+    `<flag name="ExcludeFromFile" value="1"/>` +
+    `<flag name="ExcludeFromCalcComparison" value="1"/>` +
+    `</key>` +
+    `</keyFlags></global>` +
+    `</rvTypesInfo>`;
 }
