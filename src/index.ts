@@ -88,6 +88,10 @@ export type {
   Comment,
   Hyperlink,
   NamedRange,
+  Connection,
+  ConnectionType,
+  CommandType,
+  PowerQuery,
 
   // Sheet layout
   ColumnDef,

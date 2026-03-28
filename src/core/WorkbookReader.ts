@@ -17,7 +17,7 @@ import type {
   PageSetup, PageMargins, HeaderFooter, PrintOptions, SheetProtection,
   AutoFilter, ConditionalFormat, DataValidation, Cell, CellValue,
   RichTextRun, Comment, Hyperlink, Table, TableColumn, ValidationType,
-  NamedRange,
+  NamedRange, Connection, PowerQuery, ConnectionType, CommandType,
 } from './types.js';
 import { Worksheet } from './Worksheet.js';
 import { SharedStrings } from './SharedStrings.js';
@@ -775,6 +775,12 @@ export interface ReadResult {
   hasCustomProps: boolean;
   /** Named ranges parsed from workbook.xml <definedNames> */
   namedRanges:    NamedRange[];
+  /** Data connections parsed from xl/connections.xml */
+  connections:    Connection[];
+  /** Original connections.xml for patching */
+  connectionsXml: string;
+  /** Power Query formulas extracted from DataMashup in customXml */
+  powerQueries:   PowerQuery[];
   /** All files from the ZIP that we don't otherwise handle — preserved verbatim */
   unknownParts:   Map<string, Uint8Array>;
   /** All relationship files (we need them to route images/charts/etc) */
@@ -913,11 +919,54 @@ export async function readWorkbook(data: Uint8Array): Promise<ReadResult> {
     sheets.push({ ws, sheetId, rId, originalXml, unknownParts: sheetUnknown, tablePaths, tableXmls });
   }
 
+  // ── Parse connections.xml ──────────────────────────────────────────────────
+  const connectionsXml = getText('xl/connections.xml') ?? '';
+  const connections: Connection[] = [];
+  if (connectionsXml) {
+    const connRoot = parseXml(connectionsXml);
+    for (const cn of children(connRoot, 'connection')) {
+      const id = parseInt(cn.attrs['id'] ?? '0', 10);
+      const name = cn.attrs['name'] ?? '';
+      const typeNum = parseInt(cn.attrs['type'] ?? '0', 10);
+      const type = connTypeFromNum(typeNum);
+      if (!name || !type) continue;
+      const conn: Connection = { id, name, type };
+      if (cn.attrs['description']) conn.description = cn.attrs['description'];
+      if (cn.attrs['refreshOnLoad'] === '1') conn.refreshOnLoad = true;
+      if (cn.attrs['background'] === '1') conn.background = true;
+      if (cn.attrs['saveData'] === '1') conn.saveData = true;
+      if (cn.attrs['keepAlive'] === '1') conn.keepAlive = true;
+      if (cn.attrs['interval']) conn.interval = parseInt(cn.attrs['interval'], 10);
+      const dbPr = child(cn, 'dbPr');
+      if (dbPr) {
+        if (dbPr.attrs['connection']) conn.connectionString = dbPr.attrs['connection'];
+        if (dbPr.attrs['command']) conn.command = dbPr.attrs['command'];
+        if (dbPr.attrs['commandType']) conn.commandType = cmdTypeFromNum(parseInt(dbPr.attrs['commandType'], 10));
+      }
+      // Preserve raw XML for lossless round-trip
+      conn._rawXml = nodeToXml(cn);
+      connections.push(conn);
+    }
+  }
+
+  // ── Extract Power Query M formulas from DataMashup ────────────────────────
+  const powerQueries: PowerQuery[] = [];
+  for (const [path, entry] of zip) {
+    if (!path.startsWith('customXml/item') || path.includes('Props') || path.includes('_rels')) continue;
+    try {
+      const pqs = await parseDataMashup(entry.data);
+      if (pqs.length) {
+        powerQueries.push(...pqs);
+        break;  // Only one DataMashup per workbook
+      }
+    } catch { /* not a DataMashup — skip */ }
+  }
+
   // Collect truly unknown parts (not sheets, styles, strings, rels, content-types, props)
   const handledPrefixes = new Set([
     'xl/workbook.xml', 'xl/styles.xml', 'xl/sharedStrings.xml',
     'xl/worksheets/', 'docProps/', '[Content_Types].xml',
-    '_rels/', 'xl/_rels/',
+    '_rels/', 'xl/_rels/', 'xl/connections.xml',
   ]);
 
   const unknownParts = new Map<string, Uint8Array>();
@@ -934,7 +983,103 @@ export async function readWorkbook(data: Uint8Array): Promise<ReadResult> {
     workbookXml: wbXml, workbookRels,
     contentTypes, contentTypesXml: ctXml,
     core, extended, extendedUnknownRaw, custom, hasCustomProps: custom.length > 0,
-    namedRanges, unknownParts, allRels,
+    namedRanges, connections, connectionsXml, powerQueries,
+    unknownParts, allRels,
   };
+}
+
+// ── Connection/command type mappings ──────────────────────────────────────────
+
+const CONN_TYPE_MAP: Record<number, ConnectionType> = {
+  1: 'odbc', 2: 'dao', 3: 'file', 4: 'web', 5: 'oledb', 6: 'text', 7: 'dsp',
+};
+const CONN_TYPE_REV: Record<string, number> = Object.fromEntries(
+  Object.entries(CONN_TYPE_MAP).map(([k, v]) => [v, Number(k)])
+);
+function connTypeFromNum(n: number): ConnectionType | undefined { return CONN_TYPE_MAP[n]; }
+export function connTypeToNum(t: ConnectionType): number { return CONN_TYPE_REV[t]; }
+
+const CMD_TYPE_MAP: Record<number, CommandType> = {
+  1: 'sql', 2: 'table', 3: 'default', 4: 'web', 5: 'oledb',
+};
+const CMD_TYPE_REV: Record<string, number> = Object.fromEntries(
+  Object.entries(CMD_TYPE_MAP).map(([k, v]) => [v, Number(k)])
+);
+function cmdTypeFromNum(n: number): CommandType | undefined { return CMD_TYPE_MAP[n]; }
+export function cmdTypeToNum(t: CommandType): number { return CMD_TYPE_REV[t]; }
+
+// ── DataMashup parser (Power Query M formulas) ────────────────────────────────
+
+/**
+ * Parse a DataMashup binary blob from customXml to extract Power Query M formulas.
+ *
+ * DataMashup binary format:
+ *   [0..3]  version (uint32 LE)
+ *   [4..7]  package length (uint32 LE)
+ *   [8..8+len) embedded OPC (ZIP) package containing M formula files
+ *   [8+len..) permissions blob
+ *
+ * Inside the embedded ZIP, formulas are at paths like:
+ *   Formulas/Section1.m/Item/Formula/Section1.m
+ */
+async function parseDataMashup(data: Uint8Array): Promise<PowerQuery[]> {
+  if (data.length < 12) return [];
+
+  // Check for DataMashup: version 0, then a uint32 length, then PK signature
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  const version = view.getUint32(0, true);
+  if (version !== 0) return [];
+
+  const pkgLen = view.getUint32(4, true);
+  if (pkgLen < 4 || 8 + pkgLen > data.length) return [];
+
+  const pkgBytes = data.subarray(8, 8 + pkgLen);
+  // Verify PK signature
+  if (pkgBytes[0] !== 0x50 || pkgBytes[1] !== 0x4B) return [];
+
+  const innerZip = await readZip(pkgBytes);
+  const queries: PowerQuery[] = [];
+
+  for (const [path, entry] of innerZip) {
+    // Formula files: Formulas/Section1.m/Item/Formula/Section1.m
+    // The path contains "Formula" and ends with .m
+    if (!path.includes('/Formula/') || !path.endsWith('.m')) continue;
+    const formula = entryText(entry);
+    if (!formula) continue;
+
+    // Extract query name from the formula: shared <Name> = ...
+    // Or from the path: Formulas/<Name>/Item/Formula/<Name>.m
+    const pathMatch = path.match(/Formulas\/([^/]+)\//);
+    const nameFromPath = pathMatch ? pathMatch[1] : undefined;
+
+    // Parse "shared" queries from section files — each "shared <Name> = <expr>;" line
+    const sharedRe = /shared\s+(?:#"([^"]+)"|(\w+))\s*=/g;
+    let m: RegExpExecArray | null;
+    const foundNames = new Set<string>();
+    while ((m = sharedRe.exec(formula)) !== null) {
+      const qName = m[1] ?? m[2];
+      foundNames.add(qName);
+    }
+
+    if (foundNames.size > 0) {
+      // Parse individual query expressions from the section
+      const sectionRe = /shared\s+(?:#"([^"]+)"|(\w+))\s*=\s*([\s\S]*?)(?=,\s*shared\s|\]\s*$)/g;
+      let sm: RegExpExecArray | null;
+      while ((sm = sectionRe.exec(formula)) !== null) {
+        const qName = sm[1] ?? sm[2];
+        const qFormula = sm[3].replace(/,\s*$/, '').trim();
+        queries.push({ name: qName, formula: qFormula });
+      }
+      // If regex didn't capture individual formulas, store the whole section
+      if (queries.length === 0) {
+        queries.push({ name: nameFromPath ?? 'Section1', formula });
+      }
+    } else if (nameFromPath) {
+      // Simple formula file
+      queries.push({ name: nameFromPath, formula });
+    }
+  }
+
+  return queries;
 }
 

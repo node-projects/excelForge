@@ -1620,6 +1620,68 @@ async function example_page_breaks() {
 
 }
 
+// ============================================================
+// CONNECTIONS & POWER QUERY
+// ============================================================
+async function example_connections() {
+  // Create a workbook with an ODBC connection
+  const wb = new Workbook();
+  const ws = wb.addSheet('Data');
+  ws.setValue(1, 1, 'Connected data goes here');
+
+  wb.addConnection({
+    id: 1,
+    name: 'SalesDB',
+    type: 'oledb',
+    connectionString: 'Provider=SQLOLEDB;Data Source=server;Initial Catalog=Sales;',
+    command: 'SELECT * FROM Orders',
+    commandType: 'sql',
+    description: 'Sales database connection',
+    background: true,
+    saveData: true,
+  });
+
+  wb.addConnection({
+    id: 2,
+    name: 'WarehouseDB',
+    type: 'odbc',
+    connectionString: 'DSN=Warehouse;',
+    command: 'Inventory',
+    commandType: 'table',
+    description: 'Warehouse inventory',
+    saveData: true,
+  });
+
+  await wb.writeFile('./output/26_connections.xlsx');
+
+  // Round-trip: read back and verify connections are preserved
+  const wb2 = await Workbook.fromFile('./output/26_connections.xlsx');
+  const conns = wb2.getConnections();
+  if (conns.length !== 2) throw new Error(`Expected 2 connections, got ${conns.length}`);
+
+  const salesConn = wb2.getConnection('SalesDB');
+  if (!salesConn) throw new Error('SalesDB connection missing');
+  if (salesConn.type !== 'oledb') throw new Error(`SalesDB type: ${salesConn.type}`);
+  if (salesConn.command !== 'SELECT * FROM Orders') throw new Error(`SalesDB command: ${salesConn.command}`);
+  if (salesConn.commandType !== 'sql') throw new Error(`SalesDB commandType: ${salesConn.commandType}`);
+  if (!salesConn.saveData) throw new Error('SalesDB saveData not preserved');
+
+  const whConn = wb2.getConnection('WarehouseDB');
+  if (!whConn || whConn.type !== 'odbc') throw new Error(`WarehouseDB: ${JSON.stringify(whConn)}`);
+
+  // Remove a connection
+  wb2.removeConnection('WarehouseDB');
+  if (wb2.getConnections().length !== 1) throw new Error('removeConnection failed');
+
+  // Dirty round-trip
+  wb2.markDirty('Data');
+  wb2.getSheet('Data')!.setValue(2, 1, 'Updated');
+  const dirtyBytes = await wb2.build();
+  const wb3 = await Workbook.fromBytes(dirtyBytes);
+  if (wb3.getConnections().length !== 1) throw new Error(`Dirty: expected 1 connection, got ${wb3.getConnections().length}`);
+  if (!wb3.getConnection('SalesDB')) throw new Error('SalesDB missing after dirty round-trip');
+}
+
 // Run all examples
 async function runAll() {
   // @ts-ignore
@@ -1652,6 +1714,7 @@ async function runAll() {
     ['VBA Complex',            example_vba_complex],
     ['CF/DV Round-trip',       example_cf_dv_roundtrip],
     ['Page Breaks',            example_page_breaks],
+    ['Connections',            example_connections],
   ] as const;
 
   for (const [name, fn] of examples) {

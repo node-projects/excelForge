@@ -1,5 +1,6 @@
 import type {
-  WorkbookProperties, NamedRange, WorksheetOptions, Image, Comment, PivotTable
+  WorkbookProperties, NamedRange, WorksheetOptions, Image, Comment, PivotTable,
+  Connection, PowerQuery, ConnectionType,
 } from '../core/types.js';
 import { Worksheet } from './Worksheet.js';
 import { StyleRegistry } from '../styles/StyleRegistry.js';
@@ -10,7 +11,7 @@ import { buildPivotTableFiles } from '../features/PivotTableBuilder.js';
 import { VbaProject } from '../vba/VbaProject.js';
 import { buildZip, type ZipEntry, type ZipOptions } from '../utils/zip.js';
 import { strToBytes, base64ToBytes, escapeXml, colIndexToLetter } from '../utils/helpers.js';
-import { readWorkbook, type ReadResult } from './WorkbookReader.js';
+import { readWorkbook, connTypeToNum, cmdTypeToNum, type ReadResult } from './WorkbookReader.js';
 import {
   buildCoreXml, buildAppXml, buildCustomXml,
   type CoreProperties, type ExtendedProperties, type CustomProperty,
@@ -19,6 +20,8 @@ import {
 export class Workbook {
   private sheets: Worksheet[] = [];
   private namedRanges: NamedRange[] = [];
+  private connections: Connection[] = [];
+  private powerQueries: PowerQuery[] = [];
   properties: WorkbookProperties = {};
 
   /**
@@ -89,6 +92,8 @@ export class Workbook {
 
     wb.sheets = result.sheets.map(s => s.ws);
     wb.namedRanges = result.namedRanges;
+    wb.connections = result.connections;
+    wb.powerQueries = result.powerQueries;
 
     // Parse VBA project if present
     const vbaData = result.unknownParts.get('xl/vbaProject.bin');
@@ -162,6 +167,36 @@ export class Workbook {
   removeNamedRange(name: string): this {
     this.namedRanges = this.namedRanges.filter(nr => nr.name !== name);
     return this;
+  }
+
+  // ─── Connections ──────────────────────────────────────────────────────────
+
+  addConnection(conn: Connection): this {
+    this.connections.push(conn);
+    return this;
+  }
+
+  getConnections(): readonly Connection[] {
+    return this.connections;
+  }
+
+  getConnection(name: string): Connection | undefined {
+    return this.connections.find(c => c.name === name);
+  }
+
+  removeConnection(name: string): this {
+    this.connections = this.connections.filter(c => c.name !== name);
+    return this;
+  }
+
+  // ─── Power Query ────────────────────────────────────────────────────────
+
+  getPowerQueries(): readonly PowerQuery[] {
+    return this.powerQueries;
+  }
+
+  getPowerQuery(name: string): PowerQuery | undefined {
+    return this.powerQueries.find(q => q.name === name);
   }
 
   // ─── Custom property helpers ───────────────────────────────────────────────
@@ -255,6 +290,12 @@ export class Workbook {
 
     // ── Workbook XML (patch sheet names) ───────────────────────────────────
     entries.push({ name: 'xl/workbook.xml', data: strToBytes(this._patchWorkbookXml(rr.workbookXml)) });
+
+    // ── Connections ─────────────────────────────────────────────────────────
+    const connectionsXml = this._connectionsXml(rr.connectionsXml);
+    if (connectionsXml) {
+      entries.push({ name: 'xl/connections.xml', data: strToBytes(connectionsXml) });
+    }
 
     // ── Styles & shared strings ────────────────────────────────────────────
     if (hasDirty) {
@@ -428,6 +469,7 @@ ${commentsCTs}
 <Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>
 <Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>
 ${hasCustom ? '<Override PartName="/docProps/custom.xml" ContentType="application/vnd.openxmlformats-officedocument.custom-properties+xml"/>' : ''}
+${this.connections.length ? '<Override PartName="/xl/connections.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.connections+xml"/>' : ''}
 </Types>`) });
 
     entries.push({ name: '_rels/.rels', data: strToBytes(this._buildRootRels(hasCustom)) });
@@ -439,6 +481,7 @@ ${this.sheets.map((ws,i) => `<Relationship Id="${ws.rId}" Type="http://schemas.o
 <Relationship Id="rIdShared" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/>
 ${allPivotTables.map(p => `<Relationship Id="${p.cacheRId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/pivotCacheDefinition" Target="pivotCache/pivotCacheDefinition${p.pivotIdx}.xml"/>`).join('\n')}
 ${hasVba ? '<Relationship Id="rIdVBA" Type="http://schemas.microsoft.com/office/2006/relationships/vbaProject" Target="vbaProject.bin"/>' : ''}
+${this.connections.length ? '<Relationship Id="rIdConns" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/connections" Target="connections.xml"/>' : ''}
 </Relationships>`) });
 
     // ── VBA project binary ──────────────────────────────────────────────
@@ -466,6 +509,11 @@ ${namedRangesXml}
 <calcPr calcId="191028"/>
 ${pivotCachesXml}
 </workbook>`) });
+
+    // ── Connections ─────────────────────────────────────────────────────────
+    if (this.connections.length) {
+      entries.push({ name: 'xl/connections.xml', data: strToBytes(this._connectionsXml()) });
+    }
 
     // Per-sheet
     for (let i = 0; i < this.sheets.length; i++) {
@@ -647,6 +695,32 @@ ${dRels.join('\n')}
     }).join('')}</definedNames>`;
   }
 
+  /**
+   * Build or patch connections.xml.
+   * If originalXml is provided and no new connections were added, preserve original.
+   * Otherwise generate fresh XML from connections array.
+   */
+  private _connectionsXml(originalXml?: string): string {
+    if (!this.connections.length) return '';
+    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<connections xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">${this.connections.map(c => {
+      // Use preserved raw XML for round-tripped connections
+      if (c._rawXml) return c._rawXml;
+      // Generate fresh XML for new connections
+      let attrs = ` id="${c.id}" name="${escapeXml(c.name)}" type="${connTypeToNum(c.type)}" refreshedVersion="6"`;
+      if (c.description) attrs += ` description="${escapeXml(c.description)}"`;
+      if (c.refreshOnLoad) attrs += ' refreshOnLoad="1"';
+      if (c.background) attrs += ' background="1"';
+      if (c.saveData) attrs += ' saveData="1"';
+      if (c.keepAlive) attrs += ' keepAlive="1"';
+      if (c.interval) attrs += ` interval="${c.interval}"`;
+      const dbPr = c.connectionString || c.command
+        ? `<dbPr${c.connectionString ? ` connection="${escapeXml(c.connectionString)}"` : ''}${c.command ? ` command="${escapeXml(c.command)}"` : ''}${c.commandType ? ` commandType="${cmdTypeToNum(c.commandType)}"` : ''}/>`
+        : '';
+      return `<connection${attrs}>${dbPr}</connection>`;
+    }).join('')}</connections>`;
+  }
+
   private _buildWorkbookRels(rr: ReadResult, dropCalcChain = false): string {
     const rels = [...rr.workbookRels.entries()]
       .filter(([_, rel]) => !(dropCalcChain && rel.type.includes('/calcChain')))
@@ -659,6 +733,8 @@ ${dRels.join('\n')}
       rels.push(`<Relationship Id="rIdShared" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/>`);
     if (this.vbaProject && ![...rr.workbookRels.values()].some(r => r.type.includes('vbaProject')))
       rels.push(`<Relationship Id="rIdVBA" Type="http://schemas.microsoft.com/office/2006/relationships/vbaProject" Target="vbaProject.bin"/>`);
+    if (this.connections.length && ![...rr.workbookRels.values()].some(r => r.type.includes('/connections')))
+      rels.push(`<Relationship Id="rIdConns" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/connections" Target="connections.xml"/>`);
     return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
 ${rels.join('\n')}
@@ -700,6 +776,8 @@ ${hasCustom ? `<Relationship Id="rId4" Type="http://schemas.openxmlformats.org/o
         'application/vnd.ms-excel.sheet.macroEnabled.main+xml'
       );
     }
+    if (this.connections.length && !xml.includes('connections.xml'))
+      xml = xml.replace('</Types>', `<Override PartName="/xl/connections.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.connections+xml"/>\n</Types>`);
     return xml;
   }
 

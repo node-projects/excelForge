@@ -25,6 +25,8 @@ ExcelForge gives you the full power of the OOXML spec — including real DEFLATE
 | **Page Setup** | Paper size, orientation, margins, headers/footers (odd/even/first), print options, page breaks |
 | **Protection** | Sheet protection with password, cell locking/hiding |
 | **Named Ranges** | Workbook and sheet-scoped |
+| **Connections** | OLEDB, ODBC, text/CSV, web — create, read, round-trip |
+| **Power Query** | Read M formulas from DataMashup; full round-trip preservation |
 | **Pivot Tables** | Row/column/data fields, aggregation functions (sum, count, avg, max, min…), styles |
 | **VBA Macros** | Create/read `.xlsm` with standard modules, class modules, document modules; full round-trip |
 | **Auto Filter** | Dropdown filters on column headers |
@@ -559,6 +561,36 @@ wb2.removeNamedRange('SalesData');
 ```
 
 Named ranges (including scope and comments) are fully preserved during round-trip editing.
+
+### Connections & Power Query
+
+```typescript
+// Add a data connection (OLEDB, ODBC, text/CSV, web, etc.)
+wb.addConnection({
+  id: 1,
+  name: 'SalesDB',
+  type: 'oledb',  // 'odbc' | 'dao' | 'file' | 'web' | 'oledb' | 'text' | 'dsp'
+  connectionString: 'Provider=SQLOLEDB;Data Source=server;Initial Catalog=Sales;',
+  command: 'SELECT * FROM Orders',
+  commandType: 'sql',  // 'sql' | 'table' | 'default' | 'web' | 'oledb'
+  description: 'Sales database connection',
+  background: true,
+  saveData: true,
+});
+
+// Read connections from an existing file
+const wb2 = await Workbook.fromBytes(data);
+const conns = wb2.getConnections();           // all connections
+const sales = wb2.getConnection('SalesDB');   // find by name
+wb2.removeConnection('SalesDB');              // remove by name
+
+// Read Power Query M formulas (extracted from DataMashup)
+const queries = wb2.getPowerQueries();        // all queries
+const q = wb2.getPowerQuery('MyQuery');       // find by name
+console.log(q?.formula);                       // Power Query M code
+```
+
+Connections are fully preserved during round-trip editing. Power Query formulas (M code) stored in DataMashup binary blobs are automatically extracted for read access. Power Query/Power Pivot data models created in Excel are preserved verbatim during round-trip — you can safely open, modify cells, and save without losing any Power Query or Power Pivot features.
 
 ### Sheet protection
 

@@ -557,6 +557,50 @@ export interface PivotTable {
   colGrandTotals?: boolean;
 }
 
+// ─── Connections & Power Query ────────────────────────────────────────────────
+
+/** OOXML connection type */
+export type ConnectionType = 'odbc' | 'dao' | 'file' | 'web' | 'oledb' | 'text' | 'dsp';
+
+/** OOXML command type for database connections */
+export type CommandType = 'sql' | 'table' | 'default' | 'web' | 'oledb';
+
+export interface Connection {
+  /** Unique connection ID */
+  id:            number;
+  /** Display name */
+  name:          string;
+  /** Connection type */
+  type:          ConnectionType;
+  /** Connection string (for OLEDB/ODBC) */
+  connectionString?: string;
+  /** SQL command text */
+  command?:      string;
+  /** Command type (default 'table') */
+  commandType?:  CommandType;
+  /** Description */
+  description?:  string;
+  /** Refresh on open? */
+  refreshOnLoad?: boolean;
+  /** Background refresh? */
+  background?:   boolean;
+  /** Save cached data with the workbook? */
+  saveData?:     boolean;
+  /** Keep connection alive between refreshes? */
+  keepAlive?:    boolean;
+  /** Interval between auto-refreshes in minutes (0 = no auto-refresh) */
+  interval?:     number;
+  /** Raw XML string for preserving unrecognized attributes during round-trip */
+  _rawXml?:      string;
+}
+
+export interface PowerQuery {
+  /** Query name (appears in Excel's Queries pane) */
+  name: string;
+  /** Power Query M formula code */
+  formula: string;
+}
+
 // ─── Workbook Options ─────────────────────────────────────────────────────────
 
 export interface WorkbookProperties {
