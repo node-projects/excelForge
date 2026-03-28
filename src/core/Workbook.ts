@@ -251,12 +251,8 @@ export class Workbook {
       if (hasDirty) {
         entries.push({ name: path, data: strToBytes(sheetXmls.get(i) ?? '') });
       } else {
-        // Preserve original sheet — inject any unknown parts back in
-        const orig    = rr.sheets[i]?.originalXml ?? '';
-        const unknown = rr.sheets[i]?.unknownParts.join('\n') ?? '';
-        entries.push({ name: path, data: strToBytes(
-          unknown ? orig.replace('</worksheet>', `${unknown}</worksheet>`) : orig
-        )});
+        // Preserve original sheet verbatim (unknownParts are already in originalXml)
+        entries.push({ name: path, data: strToBytes(rr.sheets[i]?.originalXml ?? '') });
       }
     }
 
@@ -618,10 +614,10 @@ ${rels.join('\n')}
 </Relationships>`;
   }
 
-  private _relsToXml(relMap: Map<string, { type: string; target: string }>): string {
+  private _relsToXml(relMap: Map<string, { type: string; target: string; targetMode?: string }>): string {
     return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-${[...relMap.entries()].map(([id,r]) => `<Relationship Id="${escapeXml(id)}" Type="${escapeXml(r.type)}" Target="${escapeXml(r.target)}"/>`).join('\n')}
+${[...relMap.entries()].map(([id,r]) => `<Relationship Id="${escapeXml(id)}" Type="${escapeXml(r.type)}" Target="${escapeXml(r.target)}"${r.targetMode ? ` TargetMode="${escapeXml(r.targetMode)}"` : ''}/>`).join('\n')}
 </Relationships>`;
   }
 

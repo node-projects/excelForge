@@ -33,7 +33,8 @@ export interface RawPart {
 
 // ─── Relationship map ─────────────────────────────────────────────────────────
 
-type RelMap = Map<string, { type: string; target: string }>;
+type RelEntry = { type: string; target: string; targetMode?: string };
+type RelMap = Map<string, RelEntry>;
 
 function parseRels(xml: string): RelMap {
   const map: RelMap = new Map();
@@ -41,10 +42,12 @@ function parseRels(xml: string): RelMap {
     const root = parseXml(xml);
     for (const c of root.children) {
       if (localName(c.tag) === 'Relationship') {
-        map.set(c.attrs['Id'] ?? '', {
+        const entry: RelEntry = {
           type:   c.attrs['Type'] ?? '',
           target: c.attrs['Target'] ?? '',
-        });
+        };
+        if (c.attrs['TargetMode']) entry.targetMode = c.attrs['TargetMode'];
+        map.set(c.attrs['Id'] ?? '', entry);
       }
     }
   } catch {}
