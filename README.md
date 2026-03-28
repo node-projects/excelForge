@@ -1,5 +1,8 @@
 # ExcelForge 📊
 
+[![npm version](https://badge.fury.io/js/%40node-projects%2Fexcelforge.svg)](https://badge.fury.io/js/%40node-projects%2Fexcelforge)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 A **complete TypeScript library** for reading and writing Excel `.xlsx` and `.xlsm` (macro-enabled) files with **zero external dependencies**. Works in browsers, Node.js, Deno, Bun, and edge runtimes.
 
 ExcelForge gives you the full power of the OOXML spec — including real DEFLATE compression, round-trip editing of existing files, and rich property support.
