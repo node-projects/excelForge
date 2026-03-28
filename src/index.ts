@@ -108,6 +108,10 @@ export type {
   WorksheetOptions,
 } from './core/types.js';
 
+// ── VBA ──────────────────────────────────────────────────────────────────────
+export { VbaProject } from './vba/VbaProject.js';
+export type { VbaModule, VbaModuleType } from './vba/VbaProject.js';
+
 // ── Utility functions (re-exported for advanced users) ──────────────────────
 export {
   colIndexToLetter,

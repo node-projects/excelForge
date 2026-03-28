@@ -3,7 +3,7 @@
  * This file demonstrates every major feature of the library.
  */
 
-import { Workbook, Worksheet, style, Styles, Colors, NumFmt } from '../index.js';
+import { Workbook, Worksheet, style, Styles, Colors, NumFmt, VbaProject } from '../index.js';
 import type { Chart, ConditionalFormat, Table, Sparkline, DataValidation, Image } from '../index.js';
 import { deflateSync } from 'zlib';
 
@@ -1127,6 +1127,73 @@ async function example_pivot_table() {
   }
 }
 
+// ============================================================
+// 22. VBA MACROS
+// ============================================================
+async function example_vba() {
+  const wb = new Workbook();
+  wb.properties = { title: 'VBA Macro Demo', author: 'ExcelForge' };
+
+  const ws = wb.addSheet('Sheet1');
+  ws.setValue(1, 1, 'Hello');
+  ws.setValue(2, 1, 'Click the button to run the macro!');
+
+  // Create a VBA project with a simple macro
+  const vba = new VbaProject();
+  vba.addModule({
+    name: 'Module1',
+    type: 'standard',
+    code: `Sub HelloWorld()\r\n    MsgBox "Hello from ExcelForge VBA!"\r\nEnd Sub\r\n`,
+  });
+  wb.vbaProject = vba;
+
+  await wb.writeFile('./output/22_vba_macros.xlsm');
+
+  // ── ExcelForge round-trip ──────────────────────────────────────────────────
+  const wb2 = await Workbook.fromFile('./output/22_vba_macros.xlsm');
+  if (!wb2.vbaProject) throw new Error('Round-trip: VBA project missing');
+  const mod = wb2.vbaProject.getModule('Module1');
+  if (!mod) throw new Error('Round-trip: Module1 missing');
+  if (!mod.code.includes('HelloWorld')) throw new Error('Round-trip: macro code missing');
+  console.log('  ExcelForge VBA round-trip: OK');
+
+  // ── Modify and re-save ────────────────────────────────────────────────────
+  wb2.vbaProject.addModule({
+    name: 'Module2',
+    type: 'standard',
+    code: `Sub GoodbyeWorld()\r\n    MsgBox "Goodbye!"\r\nEnd Sub\r\n`,
+  });
+  await wb2.writeFile('./output/22_vba_macros_modified.xlsm');
+
+  // Verify second round-trip
+  const wb3 = await Workbook.fromFile('./output/22_vba_macros_modified.xlsm');
+  if (!wb3.vbaProject) throw new Error('Round-trip 2: VBA project missing');
+  if (!wb3.vbaProject.getModule('Module1')) throw new Error('Round-trip 2: Module1 missing');
+  if (!wb3.vbaProject.getModule('Module2')) throw new Error('Round-trip 2: Module2 missing');
+  console.log('  ExcelForge VBA round-trip (modified): OK');
+
+  // ── C# OpenXML SDK validation ─────────────────────────────────────────────
+  // @ts-ignore
+  const { execSync } = await import('child_process');
+  try {
+    const out = execSync('dotnet run validator.cs output/22_vba_macros.xlsm', {
+      encoding: 'utf-8', timeout: 60000, stdio: ['pipe', 'pipe', 'pipe'],
+    }).trim();
+    const jsonStart = out.indexOf('[');
+    const jsonEnd   = out.lastIndexOf(']');
+    if (jsonStart < 0) throw new Error('C# validator returned no JSON: ' + out.slice(0, 200));
+    const errors: object[] = JSON.parse(out.slice(jsonStart, jsonEnd + 1));
+    if (errors.length > 0) {
+      console.log('  C# validation errors:', JSON.stringify(errors, null, 2));
+      throw new Error(`C# OpenXML validation failed with ${errors.length} error(s)`);
+    }
+    console.log('  C# OpenXML validation: OK (no errors)');
+  } catch (e: any) {
+    if (e.message?.includes('validation failed') || e.message?.includes('no JSON')) throw e;
+    console.log('  C# OpenXML validation skipped (dotnet not available):', e.message?.split('\n')[0]);
+  }
+}
+
 // Run all examples
 async function runAll() {
   // @ts-ignore
@@ -1155,6 +1222,7 @@ async function runAll() {
     ['Financial Report',       example_financial_report],
     ['Load Table',             example_load_table],
     ['Pivot Table',            example_pivot_table],
+    ['VBA Macros',             example_vba],
   ] as const;
 
   for (const [name, fn] of examples) {

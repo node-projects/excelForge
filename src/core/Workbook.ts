@@ -7,6 +7,7 @@ import { SharedStrings } from './SharedStrings.js';
 import { buildChartXml } from '../features/ChartBuilder.js';
 import { buildTableXml } from '../features/TableBuilder.js';
 import { buildPivotTableFiles } from '../features/PivotTableBuilder.js';
+import { VbaProject } from '../vba/VbaProject.js';
 import { buildZip, type ZipEntry, type ZipOptions } from '../utils/zip.js';
 import { strToBytes, base64ToBytes, escapeXml, colIndexToLetter } from '../utils/helpers.js';
 import { readWorkbook, type ReadResult } from './WorkbookReader.js';
@@ -40,6 +41,9 @@ export class Workbook {
 
   /** Custom document properties (docProps/custom.xml) */
   customProperties: CustomProperty[] = [];
+
+  /** VBA macro project (set to enable .xlsm output) */
+  vbaProject?: VbaProject;
 
   // ─── Internal state for round-trip patching ────────────────────────────────
 
@@ -84,6 +88,13 @@ export class Workbook {
     };
 
     wb.sheets = result.sheets.map(s => s.ws);
+
+    // Parse VBA project if present
+    const vbaData = result.unknownParts.get('xl/vbaProject.bin');
+    if (vbaData) {
+      try { wb.vbaProject = VbaProject.fromBytes(vbaData); } catch { /* not fatal */ }
+    }
+
     return wb;
   }
 
@@ -259,9 +270,16 @@ export class Workbook {
       }
     }
     for (const [path, data] of rr.unknownParts) {
-      if (!dirtyTablePaths.has(path)) {
-        entries.push({ name: path, data });
-      }
+      if (dirtyTablePaths.has(path)) continue;
+      // Skip vbaProject.bin if we're managing VBA ourselves
+      if (path === 'xl/vbaProject.bin' && this.vbaProject) continue;
+      entries.push({ name: path, data });
+    }
+
+    // ── VBA project ─────────────────────────────────────────────────────
+    if (this.vbaProject) {
+      this._ensureVbaSheetModules();
+      entries.push({ name: 'xl/vbaProject.bin', data: this.vbaProject.build() });
     }
 
     // ── Regenerate table XMLs when sheets are dirty ───────────────────────
@@ -348,6 +366,7 @@ export class Workbook {
     }
 
     const hasCustom = this.customProperties.length > 0;
+    const hasVba    = !!this.vbaProject;
 
     // Content types
     const imgCTs = new Set<string>();
@@ -367,7 +386,8 @@ export class Workbook {
 <Default Extension="xml" ContentType="application/xml"/>
 ${vmlCT}
 ${[...imgCTs].join('')}
-<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+<Override PartName="/xl/workbook.xml" ContentType="${hasVba ? 'application/vnd.ms-excel.sheet.macroEnabled.main+xml' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml'}"/>
+${hasVba ? '<Override PartName="/xl/vbaProject.bin" ContentType="application/vnd.ms-office.vbaProject"/>' : ''}
 <Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
 <Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/>
 ${this.sheets.map((_,i) => `<Override PartName="/xl/worksheets/sheet${i+1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join('')}
@@ -391,9 +411,20 @@ ${this.sheets.map((ws,i) => `<Relationship Id="${ws.rId}" Type="http://schemas.o
 <Relationship Id="rIdStyles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
 <Relationship Id="rIdShared" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/>
 ${allPivotTables.map(p => `<Relationship Id="${p.cacheRId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/pivotCacheDefinition" Target="pivotCache/pivotCacheDefinition${p.pivotIdx}.xml"/>`).join('\n')}
+${hasVba ? '<Relationship Id="rIdVBA" Type="http://schemas.microsoft.com/office/2006/relationships/vbaProject" Target="vbaProject.bin"/>' : ''}
 </Relationships>`) });
 
-    const date1904 = this.properties.date1904 ? `<workbookPr date1904="1"/>` : '<workbookPr/>';
+    // ── VBA project binary ──────────────────────────────────────────────
+    if (hasVba) {
+      this._ensureVbaSheetModules();
+      entries.push({ name: 'xl/vbaProject.bin', data: this.vbaProject!.build() });
+    }
+
+    const wbPrAttrs = [
+      this.properties.date1904 ? 'date1904="1"' : '',
+      hasVba ? 'codeName="ThisWorkbook"' : '',
+    ].filter(Boolean).join(' ');
+    const date1904 = `<workbookPr${wbPrAttrs ? ' ' + wbPrAttrs : ''}/>`;
     const namedRangesXml = this.namedRanges.length
       ? `<definedNames>${this.namedRanges.map(nr => `<definedName name="${escapeXml(nr.name)}"${nr.scope ? ` localSheetId="${this.sheets.findIndex(s=>s.name===nr.scope)}"` : ''}>${escapeXml(nr.ref)}</definedName>`).join('')}</definedNames>` : '';
     const pivotCachesXml = allPivotTables.length
@@ -534,6 +565,17 @@ ${dRels.join('\n')}
     if (p.status)         this.coreProperties.contentStatus  ??= p.status;
   }
 
+  /** Ensure the VBA project has a document module for each worksheet. */
+  private _ensureVbaSheetModules(): void {
+    if (!this.vbaProject) return;
+    for (const ws of this.sheets) {
+      const sheetCodeName = ws.name.replace(/[^A-Za-z0-9_]/g, '_');
+      if (!this.vbaProject.getModule(sheetCodeName)) {
+        this.vbaProject.addModule({ name: sheetCodeName, type: 'document', code: '' });
+      }
+    }
+  }
+
   private _patchWorkbookXml(originalXml: string): string {
     let xml = originalXml;
     for (let i = 0; i < this.sheets.length; i++) {
@@ -541,6 +583,14 @@ ${dRels.join('\n')}
         new RegExp(`(<sheet[^>]+sheetId="${i+1}"[^>]+)name="[^"]*"`),
         `$1name="${escapeXml(this.sheets[i].name)}"`
       );
+    }
+    // Ensure codeName on workbookPr when VBA is present
+    if (this.vbaProject && !xml.includes('codeName=')) {
+      xml = xml.replace('<workbookPr', '<workbookPr codeName="ThisWorkbook"');
+      // If there's no workbookPr at all, add one before bookViews
+      if (!xml.includes('<workbookPr')) {
+        xml = xml.replace('<bookViews', '<workbookPr codeName="ThisWorkbook"/><bookViews');
+      }
     }
     return xml;
   }
@@ -553,6 +603,8 @@ ${dRels.join('\n')}
       rels.push(`<Relationship Id="rIdStyles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>`);
     if (![...rr.workbookRels.values()].some(r => r.type.includes('/sharedStrings')))
       rels.push(`<Relationship Id="rIdShared" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/>`);
+    if (this.vbaProject && ![...rr.workbookRels.values()].some(r => r.type.includes('vbaProject')))
+      rels.push(`<Relationship Id="rIdVBA" Type="http://schemas.microsoft.com/office/2006/relationships/vbaProject" Target="vbaProject.bin"/>`);
     return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
 ${rels.join('\n')}
@@ -582,6 +634,16 @@ ${hasCustom ? `<Relationship Id="rId4" Type="http://schemas.openxmlformats.org/o
       xml = xml.replace('</Types>', `<Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/>\n</Types>`);
     if (addCustom && !xml.includes('custom-properties'))
       xml = xml.replace('</Types>', `<Override PartName="/docProps/custom.xml" ContentType="application/vnd.openxmlformats-officedocument.custom-properties+xml"/>\n</Types>`);
+    if (this.vbaProject) {
+      // Add vbaProject.bin content type override if missing
+      if (!xml.includes('vbaProject.bin'))
+        xml = xml.replace('</Types>', `<Override PartName="/xl/vbaProject.bin" ContentType="application/vnd.ms-office.vbaProject"/>\n</Types>`);
+      // Switch workbook content type to macro-enabled
+      xml = xml.replace(
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml',
+        'application/vnd.ms-excel.sheet.macroEnabled.main+xml'
+      );
+    }
     return xml;
   }
 

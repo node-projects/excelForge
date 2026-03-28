@@ -99,16 +99,25 @@ function buildCodeLengths(freq: Uint32Array, maxBits: number): Uint8Array {
   };
   setDepth(heap[0], 0);
 
-  // If any length exceeds maxBits, clamp and redistribute (simple approach)
-  let excess = 0;
-  for (let i = 0; i < n; i++) {
-    if (lengths[i] > maxBits) { excess += (1 << (lengths[i] - maxBits)) - 1; lengths[i] = maxBits; }
-  }
-  // Redistribute excess by incrementing shortest codes (rare edge case)
-  if (excess > 0) {
-    for (let bl = maxBits - 1; bl >= 1 && excess > 0; bl--) {
-      for (let i = 0; i < n && excess > 0; i++) {
-        if (lengths[i] === bl) { lengths[i]++; excess--; }
+  // Verify Kraft inequality: sum of 2^(maxBits - len_i) must equal 2^maxBits.
+  // setDepth already clamps to maxBits, but clamping can over-allocate code space.
+  {
+    const blCount = new Int32Array(maxBits + 1);
+    for (let i = 0; i < n; i++) if (lengths[i] > 0) blCount[lengths[i]]++;
+    let kraft = 0;
+    for (let bl = 1; bl <= maxBits; bl++) kraft += blCount[bl] * (1 << (maxBits - bl));
+    const overflow = kraft - (1 << maxBits);
+    if (overflow > 0) {
+      // Push symbols at shorter lengths to longer ones until Kraft is satisfied
+      let toFix = overflow;
+      for (let bl = maxBits - 1; bl >= 1 && toFix > 0; bl--) {
+        const freed = 1 << (maxBits - bl - 1); // net slots freed by moving one symbol from bl to bl+1
+        for (let i = 0; i < n && toFix > 0; i++) {
+          if (lengths[i] === bl) {
+            lengths[i] = bl + 1;
+            toFix -= freed;
+          }
+        }
       }
     }
   }
