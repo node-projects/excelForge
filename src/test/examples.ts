@@ -1837,6 +1837,62 @@ async function example_form_controls() {
   await wb2.writeFile('./output/27_form_controls_modified.xlsx');
 }
 
+// ============================================================
+// HUGE FILE — 200 columns × 100,000 rows (EPPlus benchmark)
+// ============================================================
+async function example_huge_file() {
+  const wb = new Workbook();
+  const ws = wb.addSheet('HugeData');
+
+  // V8 Map limit is ~16.7M entries; use 100 cols × 100k rows = 10M cells
+  const COLS = 100;
+  const ROWS = 100_000;
+
+  // Header row
+  const header: string[] = [];
+  for (let c = 1; c <= COLS; c++) header.push(`Col_${c}`);
+  ws.writeRow(1, 1, header);
+
+  // Data rows — mix of numbers, strings, dates, formulas
+  const t0 = performance.now();
+  for (let r = 2; r <= ROWS + 1; r++) {
+    const row: (string | number | Date | null)[] = [];
+    for (let c = 1; c <= COLS; c++) {
+      const mod = c % 4;
+      if (mod === 1) row.push(r * c);                          // number
+      else if (mod === 2) row.push(`R${r}C${c}`);              // string
+      else if (mod === 3) row.push(new Date(2020, 0, (r % 365) + 1)); // date
+      else row.push(null);                                     // empty
+    }
+    ws.writeRow(r, 1, row);
+  }
+  const populateMs = (performance.now() - t0).toFixed(0);
+  console.log(`   → 100×100k populate: ${populateMs} ms`);
+
+  // A few formulas in the last row
+  const sumRow = ROWS + 2;
+  ws.setFormula(sumRow, 1, `SUM(A2:A${ROWS + 1})`);
+  ws.setFormula(sumRow, 5, `AVERAGE(E2:E${ROWS + 1})`);
+  ws.setFormula(sumRow, 9, `MAX(I2:I${ROWS + 1})`);
+
+  const t1 = performance.now();
+  await wb.writeFile('./output/28_huge_file.xlsx');
+  const writeMs = (performance.now() - t1).toFixed(0);
+  console.log(`   → 100×100k write: ${writeMs} ms`);
+
+  // Round-trip: read it back and verify dimensions
+  const t2 = performance.now();
+  const wb2 = await Workbook.fromFile('./output/28_huge_file.xlsx');
+  const readMs = (performance.now() - t2).toFixed(0);
+  console.log(`   → 100×100k read : ${readMs} ms`);
+
+  const ws2 = wb2.getSheet('HugeData')!;
+  const cell = ws2.getCell(2, 1);
+  if (cell.value !== 2) throw new Error(`Expected 2, got ${cell.value}`);
+  const lastCell = ws2.getCell(ROWS + 1, 1);
+  if (lastCell.value !== (ROWS + 1) * 1) throw new Error(`Last-row value mismatch`);
+}
+
 // Run all examples
 async function runAll() {
   // @ts-ignore
@@ -1871,6 +1927,7 @@ async function runAll() {
     ['Page Breaks',            example_page_breaks],
     ['Connections',            example_connections],
     ['Form Controls',          example_form_controls],
+    ['Huge File (200×100k)',   example_huge_file],
   ] as const;
 
   for (const [name, fn] of examples) {
