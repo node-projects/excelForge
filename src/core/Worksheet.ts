@@ -13,7 +13,9 @@ import {
   pxToEmu, colWidthToEmu, rowHeightToEmu, base64ToBytes,
 } from '../utils/helpers.js';
 
-type CellMap = Map<string, Cell>;
+/** Two-level map: row → col → Cell.  Avoids V8's single-Map size limit (~16.7 M entries)
+ *  and eliminates string key allocation/parsing overhead. */
+type CellMap = Map<number, Map<number, Cell>>;
 
 /** Emit a <color> element handling theme:X, #hex, and AARRGGBB formats */
 function colorEl(c: string): string {
@@ -74,12 +76,12 @@ export class Worksheet {
 
   // ─── Cell Access ─────────────────────────────────────────────────────────────
 
-  private key(row: number, col: number): string { return `${row},${col}`; }
-
   getCell(row: number, col: number): Cell {
-    const k = this.key(row, col);
-    if (!this.cells.has(k)) this.cells.set(k, {});
-    return this.cells.get(k)!;
+    let rowMap = this.cells.get(row);
+    if (!rowMap) { rowMap = new Map(); this.cells.set(row, rowMap); }
+    let cell = rowMap.get(col);
+    if (!cell) { cell = {}; rowMap.set(col, cell); }
+    return cell;
   }
 
   getCellByRef(ref: string): Cell {
@@ -88,7 +90,9 @@ export class Worksheet {
   }
 
   setCell(row: number, col: number, cell: Cell): this {
-    this.cells.set(this.key(row, col), cell);
+    let rowMap = this.cells.get(row);
+    if (!rowMap) { rowMap = new Map(); this.cells.set(row, rowMap); }
+    rowMap.set(col, cell);
     return this;
   }
 
@@ -193,10 +197,11 @@ export class Worksheet {
   /** Return all cells that have a comment, keyed by "col,row" */
   getComments(): Array<{ row: number; col: number; comment: import('../core/types.js').Comment }> {
     const out: Array<{ row: number; col: number; comment: import('../core/types.js').Comment }> = [];
-    for (const [key, cell] of this.cells) {
-      if (cell.comment) {
-        const [r, c] = key.split(',').map(Number);
-        out.push({ row: r, col: c, comment: cell.comment });
+    for (const [r, rowMap] of this.cells) {
+      for (const [c, cell] of rowMap) {
+        if (cell.comment) {
+          out.push({ row: r, col: c, comment: cell.comment });
+        }
       }
     }
     return out;
@@ -263,8 +268,9 @@ export class Worksheet {
     const result: CellValue[][] = [];
     for (let r = startRow; r <= endRow; r++) {
       const row: CellValue[] = [];
+      const rowMap = this.cells.get(r);
       for (let c = startCol; c <= endCol; c++) {
-        const cell = this.cells.get(this.key(r, c));
+        const cell = rowMap?.get(c);
         row.push(cell?.value ?? null);
       }
       result.push(row);
@@ -450,16 +456,9 @@ ${this.preservedXml.join('\n')}
   }
 
   private _sheetDataXml(styles: StyleRegistry, shared: SharedStrings): string {
-    // Group cells by row
-    const rows = new Map<number, Array<[number, Cell]>>();
-    for (const [key, cell] of this.cells) {
-      const [r, c] = key.split(',').map(Number);
-      if (!rows.has(r)) rows.set(r, []);
-      rows.get(r)!.push([c, cell]);
-    }
-
-    const sortedRows = [...rows.entries()].sort((a, b) => a[0] - b[0]);
-    const rowsXml = sortedRows.map(([rowIdx, cells]) => {
+    const sortedRows = [...this.cells.entries()].sort((a, b) => a[0] - b[0]);
+    const rowsXml = sortedRows.map(([rowIdx, colMap]) => {
+      const cells = [...colMap.entries()] as Array<[number, Cell]>;
       const rowDef = this.rowDefs.get(rowIdx);
       const rowStyleIdx = rowDef?.style ? styles.register(rowDef.style) : 0;
       const rowAttrs = [
@@ -698,7 +697,8 @@ ${this.preservedXml.join('\n')}
     if (!this.formControls.length || !this.ctrlPropRIds.length) return '';
     const baseShapeId = 1025 + this.sheetIndex * 1000;
     // Count comments to offset shape IDs
-    const commentCount = [...this.cells.values()].filter(c => c.comment).length;
+    let commentCount = 0;
+    for (const rowMap of this.cells.values()) for (const c of rowMap.values()) if (c.comment) commentCount++;
     const controls = this.formControls.map((ctrl, i) => {
       const shapeId = ctrl._shapeId ?? (baseShapeId + commentCount + i);
       const ctrlPropRId = this.ctrlPropRIds[i];
