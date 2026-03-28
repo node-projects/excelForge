@@ -756,6 +756,8 @@ export interface ReadResult {
     unknownParts: string[];
     /** Resolved paths of table XML files belonging to this sheet */
     tablePaths: string[];
+    /** Original table XML strings (parallel to tablePaths) for verbatim round-trip */
+    tableXmls: string[];
   }>;
   styles:         ParsedStyles;
   stylesXml:      string;       // original — for patching
@@ -859,6 +861,7 @@ export async function readWorkbook(data: Uint8Array): Promise<ReadResult> {
 
     // Resolve table references and parse table XML files
     const tablePaths: string[] = [];
+    const tableXmls: string[] = [];
     if (tableRIds.length) {
       // Sheet rels file path: xl/worksheets/_rels/sheet<N>.xml.rels
       const sheetFileName = target.split('/').pop() ?? '';
@@ -878,13 +881,14 @@ export async function readWorkbook(data: Uint8Array): Promise<ReadResult> {
             const table = parseTableXml(tblXml);
             if (table) ws.addTable(table);
             tablePaths.push(tblTarget);
+            tableXmls.push(tblXml);
           }
         }
         ws.tableRIds = tableRIds;
       }
     }
 
-    sheets.push({ ws, sheetId, rId, originalXml, unknownParts: sheetUnknown, tablePaths });
+    sheets.push({ ws, sheetId, rId, originalXml, unknownParts: sheetUnknown, tablePaths, tableXmls });
   }
 
   // Collect truly unknown parts (not sheets, styles, strings, rels, content-types, props)

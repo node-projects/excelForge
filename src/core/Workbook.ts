@@ -200,6 +200,14 @@ export class Workbook {
     // When nothing is dirty we preserve the original styles & shared strings.
     const sheetXmls = new Map<number, string>();
     if (hasDirty) {
+      // Preserve original dxf entries so table dataDxfId references remain valid.
+      // Extract raw <dxf>...</dxf> inner content from the original styles XML.
+      const dxfRe = /<dxf>([\s\S]*?)<\/dxf>|<dxf\/>/g;
+      const rawDxfs: string[] = [];
+      let m: RegExpExecArray | null;
+      while ((m = dxfRe.exec(rr.stylesXml)) !== null) rawDxfs.push(m[1] ?? '');
+      if (rawDxfs.length) styles.prependRawDxfs(rawDxfs);
+
       for (let i = 0; i < this.sheets.length; i++) {
         sheetXmls.set(i, this.sheets[i].toXml(styles, shared));
       }
@@ -256,21 +264,45 @@ export class Workbook {
       }
     }
 
-    // ── Unknown parts — verbatim (skip table files that belong to dirty sheets) ──
-    const dirtyTablePaths = new Set<string>();
-    if (hasDirty) {
-      for (let i = 0; i < this.sheets.length; i++) {
-        if (rr.sheets[i]?.tablePaths) {
-          for (const tp of rr.sheets[i].tablePaths) dirtyTablePaths.add(tp);
+    // ── Table XMLs — preserve originals verbatim, only regenerate truly new tables ──
+    const allTablePaths = new Set<string>();
+    for (let i = 0; i < this.sheets.length; i++) {
+      const ws = this.sheets[i];
+      const tables = ws.getTables();
+      const paths = rr.sheets[i]?.tablePaths ?? [];
+      const xmls = rr.sheets[i]?.tableXmls ?? [];
+      for (let j = 0; j < tables.length; j++) {
+        const tblPath = paths[j];
+        if (tblPath) {
+          allTablePaths.add(tblPath);
+          if (j < xmls.length) {
+            // Preserve original table XML — update only the ref attribute if it changed
+            let xml = xmls[j];
+            const origRefMatch = xml.match(/\bref="([^"]+)"/);
+            if (origRefMatch && origRefMatch[1] !== tables[j].ref) {
+              xml = xml.replace(`ref="${origRefMatch[1]}"`, `ref="${tables[j].ref}"`);
+            }
+            entries.push({ name: tblPath, data: strToBytes(xml) });
+          } else {
+            // New table without original XML — generate from scratch
+            const idMatch = tblPath.match(/table(\d+)\.xml$/);
+            const tableId = idMatch ? parseInt(idMatch[1], 10) : j + 1;
+            entries.push({ name: tblPath, data: strToBytes(buildTableXml(tables[j], tableId)) });
+          }
         }
       }
     }
+
+    // ── Unknown parts — verbatim ──────────────────────────────────────────
     for (const [path, data] of rr.unknownParts) {
-      if (dirtyTablePaths.has(path)) continue;
+      // Skip table files already emitted above
+      if (allTablePaths.has(path)) continue;
       // Skip vbaProject.bin if we're managing VBA ourselves
       if (path === 'xl/vbaProject.bin' && this.vbaProject) continue;
       // Skip rels files already emitted from allRels
       if (rr.allRels.has(path)) continue;
+      // Drop calcChain.xml when sheets are dirty (Excel rebuilds it)
+      if (hasDirty && path === 'xl/calcChain.xml') continue;
       entries.push({ name: path, data });
     }
 
@@ -280,26 +312,9 @@ export class Workbook {
       entries.push({ name: 'xl/vbaProject.bin', data: this.vbaProject.build() });
     }
 
-    // ── Regenerate table XMLs when sheets are dirty ───────────────────────
-    if (hasDirty) {
-      for (let i = 0; i < this.sheets.length; i++) {
-        const ws = this.sheets[i];
-        const tables = ws.getTables();
-        const paths = rr.sheets[i]?.tablePaths ?? [];
-        for (let j = 0; j < tables.length; j++) {
-          const tblPath = paths[j];
-          if (tblPath) {
-            const idMatch = tblPath.match(/table(\d+)\.xml$/);
-            const tableId = idMatch ? parseInt(idMatch[1], 10) : j + 1;
-            entries.push({ name: tblPath, data: strToBytes(buildTableXml(tables[j], tableId)) });
-          }
-        }
-      }
-    }
-
     // ── Rels ──────────────────────────────────────────────────────────────
     entries.push({ name: '_rels/.rels',                data: strToBytes(this._buildRootRels(customProps != null && customProps.length > 0)) });
-    entries.push({ name: 'xl/_rels/workbook.xml.rels', data: strToBytes(this._buildWorkbookRels(rr)) });
+    entries.push({ name: 'xl/_rels/workbook.xml.rels', data: strToBytes(this._buildWorkbookRels(rr, hasDirty)) });
 
     for (const [relPath, relMap] of rr.allRels) {
       if (relPath === 'xl/_rels/workbook.xml.rels' || relPath === '_rels/.rels') continue;
@@ -309,7 +324,7 @@ export class Workbook {
     // ── Content types ──────────────────────────────────────────────────────
     entries.push({
       name: '[Content_Types].xml',
-      data: strToBytes(this._patchContentTypes(rr.contentTypesXml, customProps != null && customProps.length > 0)),
+      data: strToBytes(this._patchContentTypes(rr.contentTypesXml, customProps != null && customProps.length > 0, hasDirty)),
     });
 
     return buildZip(entries, { level: this.compressionLevel });
@@ -598,8 +613,10 @@ ${dRels.join('\n')}
     return xml;
   }
 
-  private _buildWorkbookRels(rr: ReadResult): string {
-    const rels = [...rr.workbookRels.entries()].map(([id, rel]) =>
+  private _buildWorkbookRels(rr: ReadResult, dropCalcChain = false): string {
+    const rels = [...rr.workbookRels.entries()]
+      .filter(([_, rel]) => !(dropCalcChain && rel.type.includes('/calcChain')))
+      .map(([id, rel]) =>
       `<Relationship Id="${id}" Type="${rel.type}" Target="${rel.target}"/>`
     );
     if (![...rr.workbookRels.values()].some(r => r.type.includes('/styles')))
@@ -631,8 +648,10 @@ ${hasCustom ? `<Relationship Id="rId4" Type="http://schemas.openxmlformats.org/o
 </Relationships>`;
   }
 
-  private _patchContentTypes(originalXml: string, addCustom: boolean): string {
+  private _patchContentTypes(originalXml: string, addCustom: boolean, dropCalcChain = false): string {
     let xml = originalXml;
+    if (dropCalcChain)
+      xml = xml.replace(/<Override[^>]*calcChain[^>]*\/>/g, '');
     if (!xml.includes('sharedStrings'))
       xml = xml.replace('</Types>', `<Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/>\n</Types>`);
     if (addCustom && !xml.includes('custom-properties'))

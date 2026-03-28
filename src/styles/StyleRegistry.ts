@@ -221,6 +221,15 @@ export class StyleRegistry {
     return this.dxfs.length - 1;
   }
 
+  /**
+   * Prepend raw dxf XML strings (already wrapped as inner content of <dxf>).
+   * Used to preserve original dxf entries (e.g. table dataDxfId references)
+   * before new dxfs are registered during re-serialisation.
+   */
+  prependRawDxfs(rawInners: string[]): void {
+    this.dxfs.unshift(...rawInners);
+  }
+
   /** Produce styles.xml content */
   toXml(): string {
     const numFmtXml = this.numFmts.size
