@@ -273,6 +273,8 @@ export class Workbook {
       if (dirtyTablePaths.has(path)) continue;
       // Skip vbaProject.bin if we're managing VBA ourselves
       if (path === 'xl/vbaProject.bin' && this.vbaProject) continue;
+      // Skip rels files already emitted from allRels
+      if (rr.allRels.has(path)) continue;
       entries.push({ name: path, data });
     }
 
@@ -568,6 +570,11 @@ ${dRels.join('\n')}
   /** Ensure the VBA project has a document module for each worksheet. */
   private _ensureVbaSheetModules(): void {
     if (!this.vbaProject) return;
+    // If the VBA project already has enough document modules (from an existing file),
+    // don't add more — the existing code names may differ from display names.
+    const existingDocModules = this.vbaProject.modules.filter(
+      m => m.type === 'document' && m.name !== 'ThisWorkbook');
+    if (existingDocModules.length >= this.sheets.length) return;
     for (const ws of this.sheets) {
       const sheetCodeName = ws.name.replace(/[^A-Za-z0-9_]/g, '_');
       if (!this.vbaProject.getModule(sheetCodeName)) {
@@ -614,7 +621,7 @@ ${rels.join('\n')}
   private _relsToXml(relMap: Map<string, { type: string; target: string }>): string {
     return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-${[...relMap.entries()].map(([id,r]) => `<Relationship Id="${id}" Type="${r.type}" Target="${r.target}"/>`).join('\n')}
+${[...relMap.entries()].map(([id,r]) => `<Relationship Id="${escapeXml(id)}" Type="${escapeXml(r.type)}" Target="${escapeXml(r.target)}"/>`).join('\n')}
 </Relationships>`;
   }
 

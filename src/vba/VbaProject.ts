@@ -308,12 +308,12 @@ export class VbaProject {
 
       let code = '';
       try {
-        const decompressed = decompressOvba(streamData);
-        // skip p-code bytes up to offset
-        const sourceBytes = decompressed.subarray(info.offset);
-        code = dec.decode(sourceBytes);
+        // Compressed source starts at offset (bytes before are p-code)
+        const compressedSource = streamData.subarray(info.offset);
+        const decompressed = decompressOvba(compressedSource);
+        code = dec.decode(decompressed);
       } catch {
-        // if decompression fails, try raw
+        // if decompression fails, try raw from offset
         code = dec.decode(streamData.subarray(info.offset));
       }
 
