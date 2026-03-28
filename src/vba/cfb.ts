@@ -48,6 +48,7 @@ function setU32(buf: Uint8Array, off: number, v: number): void {
 
 /** UTF-16LE encode a name (null-terminated) into 64-byte buffer, return byte size including null. */
 function encodeName(name: string): { bytes: Uint8Array; size: number } {
+  if (name.length > 31) throw new Error(`CFB entry name too long (${name.length} chars, max 31): "${name}"`);
   const bytes = new Uint8Array(64);
   let i = 0;
   for (const ch of name) {
@@ -96,7 +97,6 @@ export function readCfb(data: Uint8Array): CfbStream[] {
   const fatSectors = u32(data, 44);
   const dirStart   = u32(data, 48);
   const miniFatStart = u32(data, 60);
-  const miniFatCount = u32(data, 64);
 
   const sectorOff = (sid: number) => 512 + sid * sectorSize;
 

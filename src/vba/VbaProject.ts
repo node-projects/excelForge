@@ -342,6 +342,7 @@ function parseDirStream(data: Uint8Array): ModuleInfo[] {
     // PROJECTVERSION (0x0009) is special: Reserved=4, then MajorVersion(4)+MinorVersion(2)
     if (id === 0x0009) { pos += 6; continue; }
 
+    if (pos + size > data.length) break; // malformed record
     const body = data.subarray(pos, pos + size);
     pos += size;
 
@@ -380,7 +381,7 @@ function parseDirStream(data: Uint8Array): ModuleInfo[] {
 function stripAttributes(code: string): string {
   const lines = code.split(/\r?\n/);
   const start = lines.findIndex(l => !l.startsWith('Attribute '));
-  if (start <= 0) return code;
+  if (start < 0) return code;
   const trimmed = lines.slice(start).join('\n');
   return trimmed;
 }
