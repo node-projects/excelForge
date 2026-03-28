@@ -1,6 +1,6 @@
 # ExcelForge 📊
 
-A **complete TypeScript library** for reading and writing Excel `.xlsx` files with **zero external dependencies**. Works in browsers, Node.js, Deno, Bun, and edge runtimes.
+A **complete TypeScript library** for reading and writing Excel `.xlsx` and `.xlsm` (macro-enabled) files with **zero external dependencies**. Works in browsers, Node.js, Deno, Bun, and edge runtimes.
 
 ExcelForge gives you the full power of the OOXML spec — including real DEFLATE compression, round-trip editing of existing files, and rich property support.
 
@@ -25,6 +25,8 @@ ExcelForge gives you the full power of the OOXML spec — including real DEFLATE
 | **Page Setup** | Paper size, orientation, margins, headers/footers (odd/even/first), print options |
 | **Protection** | Sheet protection with password, cell locking/hiding |
 | **Named Ranges** | Workbook and sheet-scoped |
+| **Pivot Tables** | Row/column/data fields, aggregation functions (sum, count, avg, max, min…), styles |
+| **VBA Macros** | Create/read `.xlsm` with standard modules, class modules, document modules; full round-trip |
 | **Auto Filter** | Dropdown filters on column headers |
 | **Hyperlinks** | External URLs, mailto, internal navigation |
 | **Comments** | Cell comments with author |
@@ -397,6 +399,98 @@ ws.addImage({
 });
 ```
 
+### Pivot tables
+
+```typescript
+const wb = new Workbook();
+
+// Source data sheet
+const wsData = wb.addSheet('Data');
+wsData.writeRow(1, 1, ['Region', 'Product', 'Sales', 'Units']);
+wsData.writeArray(2, 1, [
+  ['North', 'Widget', 12000, 150],
+  ['South', 'Widget', 9500,  120],
+  ['North', 'Gadget', 8700,  90],
+  ['South', 'Gadget', 11200, 140],
+]);
+
+// Pivot table on a separate sheet
+const wsPivot = wb.addSheet('Summary');
+wsPivot.addPivotTable({
+  name:        'SalesBreakdown',
+  sourceSheet: 'Data',
+  sourceRef:   'A1:D5',
+  targetCell:  'A1',
+  rowFields:   ['Region'],
+  colFields:   ['Product'],
+  dataFields:  [{ field: 'Sales', name: 'Sum of Sales', func: 'sum' }],
+  style:       'PivotStyleMedium9',
+  rowGrandTotals: true,
+  colGrandTotals: true,
+});
+
+await wb.writeFile('./pivot_report.xlsx');
+```
+
+Available aggregation functions: `sum`, `count`, `average`, `max`, `min`, `product`, `countNums`, `stdDev`, `stdDevp`, `var`, `varp`.
+
+### VBA macros
+
+ExcelForge can create, read, and round-trip `.xlsm` files with VBA macros. All module types are supported: standard modules, class modules, and document modules (auto-created for `ThisWorkbook` and each worksheet).
+
+```typescript
+import { Workbook, VbaProject } from './src/index.js';
+
+const wb = new Workbook();
+const ws = wb.addSheet('Sheet1');
+ws.setValue(1, 1, 'Hello');
+
+const vba = new VbaProject();
+
+// Standard module
+vba.addModule({
+  name: 'Module1',
+  type: 'standard',
+  code: 'Sub HelloWorld()\r\n    MsgBox "Hello from VBA!"\r\nEnd Sub\r\n',
+});
+
+// Class module
+vba.addModule({
+  name: 'MyClass',
+  type: 'class',
+  code: [
+    'Private pValue As String',
+    'Public Property Get Value() As String',
+    '    Value = pValue',
+    'End Property',
+    'Public Property Let Value(v As String)',
+    '    pValue = v',
+    'End Property',
+  ].join('\r\n') + '\r\n',
+});
+
+wb.vbaProject = vba;
+await wb.writeFile('./macros.xlsm');  // must use .xlsm extension
+```
+
+Reading VBA from existing files:
+
+```typescript
+const wb = await Workbook.fromFile('./macros.xlsm');
+if (wb.vbaProject) {
+  for (const mod of wb.vbaProject.modules) {
+    console.log(`${mod.name} (${mod.type}): ${mod.code.length} chars`);
+  }
+}
+
+// Modify and re-save — existing modules are preserved
+wb.vbaProject.addModule({ name: 'Module2', type: 'standard', code: '...' });
+wb.vbaProject.removeModule('OldModule');
+await wb.writeFile('./macros_updated.xlsm');
+```
+
+> **Note:** Document modules for `ThisWorkbook` and each worksheet are automatically created if not explicitly provided. VBA code uses `\r\n` line endings.
+
 ### Page setup
 
 ```typescript
@@ -499,7 +593,12 @@ ExcelForge
 │   └── builders.ts         — fluent style() builder, Colors/NumFmt/Styles presets
 ├── features/
 │   ├── ChartBuilder.ts     — DrawingML chart XML for 15+ chart types
-│   └── TableBuilder.ts     — Excel table XML
+│   ├── TableBuilder.ts     — Excel table XML
+│   └── PivotTableBuilder.ts — pivot table + cache XML
+├── vba/
+│   ├── VbaProject.ts       — VBA project build/parse, module management
+│   ├── cfb.ts              — Compound Binary File (OLE2) reader & writer
+│   └── ovba.ts             — MS-OVBA compression/decompression
 └── utils/
     ├── zip.ts              — ZIP writer with full LZ77+Huffman DEFLATE
     ├── zipReader.ts        — ZIP reader (STORE + DEFLATE via DecompressionStream)
@@ -552,6 +651,13 @@ document.getElementById('file').addEventListener('change', async (e) => {
 ---
 
 ## Changelog
+
+### v2.4 — Pivot Tables & VBA Macros
+
+- **Pivot tables** — create pivot tables with row/column/data fields, 11 aggregation functions, customisable styles
+- **VBA macros** — create, read, and round-trip `.xlsm` files with standard, class, and document modules
+- **CFB (OLE2) support** — MS-CFB reader/writer for vbaProject.bin, with MS-OVBA compression
+- **Automatic sheet modules** — document modules for ThisWorkbook and each worksheet are auto-generated
 
 ### v2.0 — Read, Modify, Compress
 

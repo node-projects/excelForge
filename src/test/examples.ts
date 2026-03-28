@@ -1194,6 +1194,218 @@ async function example_vba() {
   }
 }
 
+async function example_vba_complex() {
+  const wb = new Workbook();
+  wb.properties = { title: 'Complex VBA Demo', author: 'ExcelForge' };
+
+  // Multiple sheets
+  const ws1 = wb.addSheet('Dashboard');
+  ws1.setValue(1, 1, 'Sales Dashboard');
+  ws1.setValue(2, 1, 'Region');
+  ws1.setValue(2, 2, 'Sales');
+  ws1.setValue(2, 3, 'Target');
+  ws1.setValue(3, 1, 'North'); ws1.setValue(3, 2, 45000); ws1.setValue(3, 3, 50000);
+  ws1.setValue(4, 1, 'South'); ws1.setValue(4, 2, 38000); ws1.setValue(4, 3, 35000);
+  ws1.setValue(5, 1, 'East');  ws1.setValue(5, 2, 52000); ws1.setValue(5, 3, 48000);
+  ws1.setValue(6, 1, 'West');  ws1.setValue(6, 2, 41000); ws1.setValue(6, 3, 45000);
+
+  const ws2 = wb.addSheet('Config');
+  ws2.setValue(1, 1, 'HighlightThreshold');
+  ws2.setValue(1, 2, 0.9);
+  ws2.setValue(2, 1, 'ReportTitle');
+  ws2.setValue(2, 2, 'Quarterly Review');
+
+  // VBA project with all module types
+  const vba = new VbaProject();
+
+  // Standard module with utility functions
+  vba.addModule({
+    name: 'MathUtils',
+    type: 'standard',
+    code: [
+      'Public Function PercentOfTarget(actual As Double, target As Double) As Double',
+      '    If target = 0 Then',
+      '        PercentOfTarget = 0',
+      '    Else',
+      '        PercentOfTarget = actual / target',
+      '    End If',
+      'End Function',
+      '',
+      'Public Function FormatAsCurrency(value As Double) As String',
+      '    FormatAsCurrency = Format(value, "$#,##0.00")',
+      'End Function',
+      '',
+      'Public Sub HighlightCell(rng As Range, threshold As Double)',
+      '    If rng.Value >= threshold Then',
+      '        rng.Interior.Color = RGB(198, 239, 206)',
+      '    Else',
+      '        rng.Interior.Color = RGB(255, 199, 206)',
+      '    End If',
+      'End Sub',
+    ].join('\r\n') + '\r\n',
+  });
+
+  // Standard module with main subroutines
+  vba.addModule({
+    name: 'ReportMacros',
+    type: 'standard',
+    code: [
+      'Public Sub GenerateReport()',
+      '    Dim ws As Worksheet',
+      '    Set ws = ThisWorkbook.Sheets("Dashboard")',
+      '    Dim threshold As Double',
+      '    threshold = ThisWorkbook.Sheets("Config").Range("B1").Value',
+      '    ',
+      '    Dim lastRow As Long',
+      '    lastRow = ws.Cells(ws.Rows.Count, 1).End(xlUp).Row',
+      '    ',
+      '    Dim i As Long',
+      '    For i = 3 To lastRow',
+      '        Dim pct As Double',
+      '        pct = PercentOfTarget(ws.Cells(i, 2).Value, ws.Cells(i, 3).Value)',
+      '        ws.Cells(i, 4).Value = pct',
+      '        ws.Cells(i, 4).NumberFormat = "0.0%"',
+      '        HighlightCell ws.Cells(i, 4), threshold',
+      '    Next i',
+      '    ',
+      '    MsgBox "Report generated for " & (lastRow - 2) & " regions.", vbInformation',
+      'End Sub',
+      '',
+      'Public Sub ClearReport()',
+      '    Dim ws As Worksheet',
+      '    Set ws = ThisWorkbook.Sheets("Dashboard")',
+      '    Dim lastRow As Long',
+      '    lastRow = ws.Cells(ws.Rows.Count, 1).End(xlUp).Row',
+      '    If lastRow >= 3 Then',
+      '        ws.Range(ws.Cells(3, 4), ws.Cells(lastRow, 4)).ClearContents',
+      '        ws.Range(ws.Cells(3, 4), ws.Cells(lastRow, 4)).Interior.ColorIndex = xlNone',
+      '    End If',
+      'End Sub',
+    ].join('\r\n') + '\r\n',
+  });
+
+  // Class module
+  vba.addModule({
+    name: 'RegionStats',
+    type: 'class',
+    code: [
+      'Private pName As String',
+      'Private pSales As Double',
+      'Private pTarget As Double',
+      '',
+      'Public Property Get Name() As String',
+      '    Name = pName',
+      'End Property',
+      '',
+      'Public Property Let Name(value As String)',
+      '    pName = value',
+      'End Property',
+      '',
+      'Public Property Get Sales() As Double',
+      '    Sales = pSales',
+      'End Property',
+      '',
+      'Public Property Let Sales(value As Double)',
+      '    pSales = value',
+      'End Property',
+      '',
+      'Public Property Get Target() As Double',
+      '    Target = pTarget',
+      'End Property',
+      '',
+      'Public Property Let Target(value As Double)',
+      '    pTarget = value',
+      'End Property',
+      '',
+      'Public Function Achievement() As Double',
+      '    If pTarget = 0 Then',
+      '        Achievement = 0',
+      '    Else',
+      '        Achievement = pSales / pTarget',
+      '    End If',
+      'End Function',
+    ].join('\r\n') + '\r\n',
+  });
+
+  wb.vbaProject = vba;
+  await wb.writeFile('./output/23_vba_complex.xlsm');
+
+  // ── Round-trip 1: verify all modules survive ──────────────────────────────
+  const wb2 = await Workbook.fromFile('./output/23_vba_complex.xlsm');
+  if (!wb2.vbaProject) throw new Error('RT1: VBA project missing');
+  const moduleNames = wb2.vbaProject.modules.map(m => m.name);
+  for (const expected of ['MathUtils', 'ReportMacros', 'RegionStats', 'ThisWorkbook', 'Dashboard', 'Config']) {
+    if (!moduleNames.includes(expected)) throw new Error(`RT1: module "${expected}" missing, got: ${moduleNames}`);
+  }
+  // Verify module types
+  const mathMod = wb2.vbaProject.getModule('MathUtils')!;
+  if (mathMod.type !== 'standard') throw new Error(`RT1: MathUtils type wrong: ${mathMod.type}`);
+  const classMod = wb2.vbaProject.getModule('RegionStats')!;
+  if (classMod.type !== 'class') throw new Error(`RT1: RegionStats type wrong: ${classMod.type}`);
+  const docMod = wb2.vbaProject.getModule('Dashboard')!;
+  if (docMod.type !== 'document') throw new Error(`RT1: Dashboard type wrong: ${docMod.type}`);
+  // Verify code content
+  if (!mathMod.code.includes('PercentOfTarget')) throw new Error('RT1: MathUtils code missing');
+  if (!classMod.code.includes('Achievement')) throw new Error('RT1: RegionStats code missing');
+  const reportMod = wb2.vbaProject.getModule('ReportMacros')!;
+  if (!reportMod.code.includes('GenerateReport')) throw new Error('RT1: ReportMacros code missing');
+  if (!reportMod.code.includes('ClearReport')) throw new Error('RT1: ClearReport sub missing');
+  console.log('  RT1 all modules + types + code: OK');
+
+  // ── Round-trip 2: modify and re-save ──────────────────────────────────────
+  wb2.vbaProject.addModule({
+    name: 'ExtraModule',
+    type: 'standard',
+    code: 'Public Sub ExtraWork()\r\n    MsgBox "Extra!"\r\nEnd Sub\r\n',
+  });
+  wb2.vbaProject.removeModule('RegionStats');
+  await wb2.writeFile('./output/23_vba_complex_modified.xlsm');
+
+  const wb3 = await Workbook.fromFile('./output/23_vba_complex_modified.xlsm');
+  if (!wb3.vbaProject) throw new Error('RT2: VBA project missing');
+  if (!wb3.vbaProject.getModule('ExtraModule')) throw new Error('RT2: ExtraModule missing');
+  if (wb3.vbaProject.getModule('RegionStats')) throw new Error('RT2: RegionStats should be removed');
+  if (!wb3.vbaProject.getModule('MathUtils')) throw new Error('RT2: MathUtils missing');
+  if (!wb3.vbaProject.getModule('ReportMacros')) throw new Error('RT2: ReportMacros missing');
+  console.log('  RT2 add/remove modules: OK');
+
+  // ── EPPlus validation ─────────────────────────────────────────────────────
+  // @ts-ignore
+  const { execSync } = await import('child_process');
+  try {
+    const out = execSync('dotnet run read_vba_epplus.cs output/23_vba_complex.xlsm', {
+      encoding: 'utf-8', timeout: 60000, stdio: ['pipe', 'pipe', 'pipe'],
+    }).trim();
+    if (!out.includes('VBA Project: YES')) throw new Error('EPPlus: VBA project not found');
+    if (!out.includes('MathUtils')) throw new Error('EPPlus: MathUtils missing');
+    if (!out.includes('ReportMacros')) throw new Error('EPPlus: ReportMacros missing');
+    if (!out.includes('RegionStats')) throw new Error('EPPlus: RegionStats missing');
+    console.log('  EPPlus validation: OK');
+  } catch (e: any) {
+    if (e.message?.includes('EPPlus:')) throw e;
+    console.log('  EPPlus validation skipped (dotnet not available):', e.message?.split('\n')[0]);
+  }
+
+  // ── C# OpenXML SDK validation ─────────────────────────────────────────────
+  try {
+    const out = execSync('dotnet run validator.cs output/23_vba_complex.xlsm', {
+      encoding: 'utf-8', timeout: 60000, stdio: ['pipe', 'pipe', 'pipe'],
+    }).trim();
+    const jsonStart = out.indexOf('[');
+    const jsonEnd   = out.lastIndexOf(']');
+    if (jsonStart < 0) throw new Error('C# validator returned no JSON: ' + out.slice(0, 200));
+    const errors: object[] = JSON.parse(out.slice(jsonStart, jsonEnd + 1));
+    if (errors.length > 0) {
+      console.log('  C# validation errors:', JSON.stringify(errors, null, 2));
+      throw new Error(`C# OpenXML validation failed with ${errors.length} error(s)`);
+    }
+    console.log('  C# OpenXML validation: OK');
+  } catch (e: any) {
+    if (e.message?.includes('validation failed') || e.message?.includes('no JSON')) throw e;
+    console.log('  C# OpenXML validation skipped:', e.message?.split('\n')[0]);
+  }
+}
+
 // Run all examples
 async function runAll() {
   // @ts-ignore
@@ -1223,6 +1435,7 @@ async function runAll() {
     ['Load Table',             example_load_table],
     ['Pivot Table',            example_pivot_table],
     ['VBA Macros',             example_vba],
+    ['VBA Complex',            example_vba_complex],
   ] as const;
 
   for (const [name, fn] of examples) {

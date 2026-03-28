@@ -287,6 +287,17 @@ export class VbaProject {
     let dirData: Uint8Array;
     try { dirData = decompressOvba(dirCompressed); } catch { return vba; }
 
+    // parse PROJECT stream to detect class modules (dir stream doesn't distinguish)
+    const classNames = new Set<string>();
+    const projectData = streamMap.get('PROJECT');
+    if (projectData) {
+      const projectText = dec.decode(projectData);
+      for (const line of projectText.split(/\r?\n/)) {
+        const m = line.match(/^Class=(.+)$/);
+        if (m) classNames.add(m[1]);
+      }
+    }
+
     // parse module info from dir
     const moduleInfos = parseDirStream(dirData);
 
@@ -309,9 +320,10 @@ export class VbaProject {
       // Strip attribute lines — expose only the user's code
       const stripped = stripAttributes(code);
 
+      const type = classNames.has(info.name) ? 'class' : info.type;
       vba.modules.push({
         name: info.name,
-        type: info.type,
+        type,
         code: stripped,
       });
     }
