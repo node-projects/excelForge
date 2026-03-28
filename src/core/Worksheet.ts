@@ -511,8 +511,8 @@ ${this.preservedXml.join('\n')}
 
     const v = cell.value;
     if (v === null || v === undefined) {
-      // Cell image with no value — emit empty cell with vm attribute
-      if (vmAttr) return `<c r="${ref}"${sAttr}${vmAttr}/>`;
+      // Cell image with no value — emit as error cell (Excel expects t="e" + #VALUE! for cell pictures)
+      if (vmAttr) return `<c r="${ref}"${sAttr} t="e"${vmAttr}><v>#VALUE!</v></c>`;
       return styleIdx ? `<c r="${ref}"${sAttr}/>` : '';
     }
 

@@ -507,8 +507,9 @@ ${this.connections.length ? '<Override PartName="/xl/connections.xml" ContentTyp
 ${hasCellImages ? `<Override PartName="/xl/metadata.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheetMetadata+xml"/>
 <Override PartName="/xl/richData/rdrichvalue.xml" ContentType="application/vnd.ms-excel.rdrichvalue+xml"/>
 <Override PartName="/xl/richData/rdRichValueStructure.xml" ContentType="application/vnd.ms-excel.rdrichvaluestructure+xml"/>
-<Override PartName="/xl/richData/richValueRel.xml" ContentType="application/vnd.ms-excel.richValueRel+xml"/>
-<Override PartName="/xl/richData/rdRichValueTypes.xml" ContentType="application/vnd.ms-excel.rdrichvaluetypes+xml"/>` : ''}
+<Override PartName="/xl/richData/richValueRel.xml" ContentType="application/vnd.ms-excel.richvaluerel+xml"/>
+<Override PartName="/xl/richData/rdRichValueTypes.xml" ContentType="application/vnd.ms-excel.rdrichvaluetypes+xml"/>
+<Override PartName="/xl/richData/rdarray.xml" ContentType="application/vnd.ms-excel.rdarray+xml"/>` : ''}
 </Types>`) });
 
     entries.push({ name: '_rels/.rels', data: strToBytes(this._buildRootRels(hasCustom)) });
@@ -526,6 +527,7 @@ ${hasCellImages ? '<Relationship Id="rIdRichValueRel" Type="http://schemas.micro
 ${hasCellImages ? '<Relationship Id="rIdRichValue" Type="http://schemas.microsoft.com/office/2017/06/relationships/rdRichValue" Target="richData/rdrichvalue.xml"/>' : ''}
 ${hasCellImages ? '<Relationship Id="rIdRichValueStruct" Type="http://schemas.microsoft.com/office/2017/06/relationships/rdRichValueStructure" Target="richData/rdRichValueStructure.xml"/>' : ''}
 ${hasCellImages ? '<Relationship Id="rIdRichValueTypes" Type="http://schemas.microsoft.com/office/2017/06/relationships/rdRichValueTypes" Target="richData/rdRichValueTypes.xml"/>' : ''}
+${hasCellImages ? '<Relationship Id="rIdRdArray" Type="http://schemas.microsoft.com/office/2017/06/relationships/rdArray" Target="richData/rdarray.xml"/>' : ''}
 </Relationships>`) });
 
     // ── VBA project binary ──────────────────────────────────────────────
@@ -668,7 +670,7 @@ ${dRels.join('\n')}
         const { img, ext, idx } = allCellImages[ci];
         const rId = `rId${ci + 1}`;
         cellImgRIds.push(rId);
-        cellImgRels.push(`<Relationship Id="${rId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image${idx}.${ext}"/>`);
+        cellImgRels.push(`<Relationship Id="${rId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="/xl/media/image${idx}.${ext}"/>`);
         entries.push({ name: `xl/media/image${idx}.${ext}`, data: typeof img.data === 'string' ? base64ToBytes(img.data) : img.data });
       }
 
@@ -677,6 +679,7 @@ ${dRels.join('\n')}
       entries.push({ name: 'xl/richData/richValueRel.xml',            data: strToBytes(buildRichValueRelXml(cellImgRIds)) });
       entries.push({ name: 'xl/richData/rdRichValueStructure.xml',    data: strToBytes(buildRichValueStructureXml()) });
       entries.push({ name: 'xl/richData/rdRichValueTypes.xml',        data: strToBytes(buildRichValueTypesXml()) });
+      entries.push({ name: 'xl/richData/rdarray.xml',                data: strToBytes(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><arrayData xmlns="http://schemas.microsoft.com/office/spreadsheetml/2017/richdata2" count="0"></arrayData>`) });
       entries.push({ name: 'xl/richData/_rels/richValueRel.xml.rels', data: strToBytes(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
 ${cellImgRels.join('\n')}
@@ -979,7 +982,7 @@ function buildMetadataXml(count: number): string {
     `<metadata xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"` +
     ` xmlns:xlrd="http://schemas.microsoft.com/office/spreadsheetml/2017/richdata">` +
     `<metadataTypes count="1">` +
-    `<metadataType name="XLRICHVALUE" minSupportedVersion="120000" copy="1" pasteAll="1" pasteValues="1" merge="1" splitFirst="1" rowColShift="1" clearFormats="1" clearComments="1" assign="1" coerce="1" cellMeta="1"/>` +
+    `<metadataType name="XLRICHVALUE" minSupportedVersion="120000" copy="1" pasteAll="1" pasteValues="1" merge="1" splitFirst="1" rowColShift="1" clearFormats="1" clearComments="1" assign="1" coerce="1"/>` +
     `</metadataTypes>` +
     `<futureMetadata name="XLRICHVALUE" count="${count}">${bks}</futureMetadata>` +
     `<valueMetadata count="${count}">${cellBks}</valueMetadata>` +
@@ -1004,7 +1007,7 @@ function buildRichValueRelXml(rIds: string[]): string {
 
 function buildRichValueStructureXml(): string {
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
-    `<rvStructures xmlns="http://schemas.microsoft.com/office/spreadsheetml/2017/richdata2" count="1">` +
+    `<rvStructures xmlns="http://schemas.microsoft.com/office/spreadsheetml/2017/richdata" count="1">` +
     `<s t="_localImage"><k n="_rvRel:LocalImageIdentifier" t="i"/><k n="CalcOrigin" t="i"/><k n="Text" t="s"/></s>` +
     `</rvStructures>`;
 }
@@ -1016,10 +1019,17 @@ function buildRichValueTypesXml(): string {
     ` mc:Ignorable="x"` +
     ` xmlns:x="http://schemas.openxmlformats.org/spreadsheetml/2006/main">` +
     `<global><keyFlags>` +
-    `<key name="_rvRel:LocalImageIdentifier">` +
-    `<flag name="ExcludeFromFile" value="1"/>` +
-    `<flag name="ExcludeFromCalcComparison" value="1"/>` +
-    `</key>` +
+    `<key name="_Self"><flag name="ExcludeFromFile" value="1"/><flag name="ExcludeFromCalcComparison" value="1"/></key>` +
+    `<key name="_DisplayString"><flag name="ExcludeFromCalcComparison" value="1"/></key>` +
+    `<key name="_Flags"><flag name="ExcludeFromCalcComparison" value="1"/></key>` +
+    `<key name="_Format"><flag name="ExcludeFromCalcComparison" value="1"/></key>` +
+    `<key name="_SubLabel"><flag name="ExcludeFromCalcComparison" value="1"/></key>` +
+    `<key name="_Attribution"><flag name="ExcludeFromCalcComparison" value="1"/></key>` +
+    `<key name="_Icon"><flag name="ExcludeFromCalcComparison" value="1"/></key>` +
+    `<key name="_Display"><flag name="ExcludeFromCalcComparison" value="1"/></key>` +
+    `<key name="_CanonicalPropertyNames"><flag name="ExcludeFromCalcComparison" value="1"/></key>` +
+    `<key name="_ClassificationId"><flag name="ExcludeFromCalcComparison" value="1"/></key>` +
     `</keyFlags></global>` +
+    `<types></types>` +
     `</rvTypesInfo>`;
 }
