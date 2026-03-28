@@ -710,6 +710,7 @@ async function example_named_ranges() {
   wsData.writeColumn(1, 1, [100, 200, 300, 400, 500]);
   wsData.writeColumn(1, 2, ['Alpha', 'Beta', 'Gamma', 'Delta', 'Epsilon']);
 
+  // Workbook-scoped named ranges
   wb.addNamedRange({
     name: 'SalesData',
     ref: 'Data!$A$1:$A$5',
@@ -718,6 +719,14 @@ async function example_named_ranges() {
   wb.addNamedRange({
     name: 'ProductNames',
     ref: 'Data!$B$1:$B$5',
+    comment: 'Product name list',
+  });
+
+  // Sheet-scoped named range
+  wb.addNamedRange({
+    name: 'LocalTotal',
+    ref: 'Data!$A$6',
+    scope: 'Data',
   });
 
   const wsSummary = wb.addSheet('Summary');
@@ -731,6 +740,30 @@ async function example_named_ranges() {
   wsConfig.setValue(1, 1, 'This sheet is hidden');
 
   await wb.writeFile('./output/15_named_ranges.xlsx');
+
+  // Round-trip: read back and verify named ranges are preserved
+  const wb2 = await Workbook.fromFile('./output/15_named_ranges.xlsx');
+  const ranges = wb2.getNamedRanges();
+  if (ranges.length !== 3) throw new Error(`Expected 3 named ranges, got ${ranges.length}`);
+  const sales = wb2.getNamedRange('SalesData');
+  if (!sales || sales.ref !== 'Data!$A$1:$A$5') throw new Error(`SalesData: ${JSON.stringify(sales)}`);
+  const products = wb2.getNamedRange('ProductNames');
+  if (!products || products.comment !== 'Product name list') throw new Error(`ProductNames comment: ${JSON.stringify(products)}`);
+  const local = wb2.getNamedRange('LocalTotal');
+  if (!local || local.scope !== 'Data') throw new Error(`LocalTotal scope: ${JSON.stringify(local)}`);
+
+  // Dirty round-trip: modify + re-save + read back
+  wb2.markDirty('Data');
+  wb2.getSheet('Data')!.setValue(6, 1, 1500);
+  wb2.addNamedRange({ name: 'NewRange', ref: 'Summary!$A$1:$A$3' });
+  const dirtyBytes = await wb2.build();
+  const wb3 = await Workbook.fromBytes(dirtyBytes);
+  if (wb3.getNamedRanges().length !== 4) throw new Error(`Dirty: expected 4 ranges, got ${wb3.getNamedRanges().length}`);
+  if (!wb3.getNamedRange('NewRange')) throw new Error('NewRange missing after dirty round-trip');
+
+  // Remove a named range
+  wb3.removeNamedRange('NewRange');
+  if (wb3.getNamedRanges().length !== 3) throw new Error('removeNamedRange failed');
 }
 
 // ============================================================

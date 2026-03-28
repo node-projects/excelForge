@@ -17,6 +17,7 @@ import type {
   PageSetup, PageMargins, HeaderFooter, PrintOptions, SheetProtection,
   AutoFilter, ConditionalFormat, DataValidation, Cell, CellValue,
   RichTextRun, Comment, Hyperlink, Table, TableColumn, ValidationType,
+  NamedRange,
 } from './types.js';
 import { Worksheet } from './Worksheet.js';
 import { SharedStrings } from './SharedStrings.js';
@@ -772,6 +773,8 @@ export interface ReadResult {
   extendedUnknownRaw: string;
   custom:         CustomProperty[];
   hasCustomProps: boolean;
+  /** Named ranges parsed from workbook.xml <definedNames> */
+  namedRanges:    NamedRange[];
   /** All files from the ZIP that we don't otherwise handle — preserved verbatim */
   unknownParts:   Map<string, Uint8Array>;
   /** All relationship files (we need them to route images/charts/etc) */
@@ -830,6 +833,25 @@ export async function readWorkbook(data: Uint8Array): Promise<ReadResult> {
   const wbRoot = parseXml(wbXml);
   const sheetsNode = find(wbRoot, 'sheets')!;
   const sheetNodes = sheetsNode ? children(sheetsNode, 'sheet') : [];
+
+  // Parse named ranges from workbook.xml <definedNames>
+  const namedRanges: NamedRange[] = [];
+  const definedNamesNode = find(wbRoot, 'definedNames');
+  if (definedNamesNode) {
+    for (const dn of children(definedNamesNode, 'definedName')) {
+      const name = dn.attrs['name'] ?? '';
+      const ref = dn.text ?? '';
+      if (!name || !ref) continue;
+      const nr: NamedRange = { name, ref };
+      if (dn.attrs['localSheetId'] !== undefined) {
+        const idx = parseInt(dn.attrs['localSheetId'], 10);
+        const scopeSheet = sheetNodes[idx];
+        if (scopeSheet) nr.scope = scopeSheet.attrs['name'] ?? undefined;
+      }
+      if (dn.attrs['comment']) nr.comment = dn.attrs['comment'];
+      namedRanges.push(nr);
+    }
+  }
 
   // All rels files
   const allRels = new Map<string, RelMap>();
@@ -912,7 +934,7 @@ export async function readWorkbook(data: Uint8Array): Promise<ReadResult> {
     workbookXml: wbXml, workbookRels,
     contentTypes, contentTypesXml: ctXml,
     core, extended, extendedUnknownRaw, custom, hasCustomProps: custom.length > 0,
-    unknownParts, allRels,
+    namedRanges, unknownParts, allRels,
   };
 }
 

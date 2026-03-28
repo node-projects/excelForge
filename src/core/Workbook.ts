@@ -88,6 +88,7 @@ export class Workbook {
     };
 
     wb.sheets = result.sheets.map(s => s.ws);
+    wb.namedRanges = result.namedRanges;
 
     // Parse VBA project if present
     const vbaData = result.unknownParts.get('xl/vbaProject.bin');
@@ -147,6 +148,19 @@ export class Workbook {
 
   addNamedRange(nr: NamedRange): this {
     this.namedRanges.push(nr);
+    return this;
+  }
+
+  getNamedRanges(): readonly NamedRange[] {
+    return this.namedRanges;
+  }
+
+  getNamedRange(name: string): NamedRange | undefined {
+    return this.namedRanges.find(nr => nr.name === name);
+  }
+
+  removeNamedRange(name: string): this {
+    this.namedRanges = this.namedRanges.filter(nr => nr.name !== name);
     return this;
   }
 
@@ -438,8 +452,7 @@ ${hasVba ? '<Relationship Id="rIdVBA" Type="http://schemas.microsoft.com/office/
       hasVba ? 'codeName="ThisWorkbook"' : '',
     ].filter(Boolean).join(' ');
     const date1904 = `<workbookPr${wbPrAttrs ? ' ' + wbPrAttrs : ''}/>`;
-    const namedRangesXml = this.namedRanges.length
-      ? `<definedNames>${this.namedRanges.map(nr => `<definedName name="${escapeXml(nr.name)}"${nr.scope ? ` localSheetId="${this.sheets.findIndex(s=>s.name===nr.scope)}"` : ''}>${escapeXml(nr.ref)}</definedName>`).join('')}</definedNames>` : '';
+    const namedRangesXml = this._definedNamesXml();
     const pivotCachesXml = allPivotTables.length
       ? `<pivotCaches>${allPivotTables.map(p => `<pivotCache cacheId="${p.cacheId}" r:id="${p.cacheRId}"/>`).join('')}</pivotCaches>`
       : '';
@@ -610,7 +623,28 @@ ${dRels.join('\n')}
         xml = xml.replace('<bookViews', '<workbookPr codeName="ThisWorkbook"/><bookViews');
       }
     }
+    // Replace <definedNames> section with current named ranges
+    const dnXml = this._definedNamesXml();
+    if (xml.includes('<definedNames')) {
+      xml = xml.replace(/<definedNames[\s\S]*?<\/definedNames>/, dnXml);
+    } else if (dnXml) {
+      // Insert after </sheets>
+      xml = xml.replace('</sheets>', `</sheets>${dnXml}`);
+    }
     return xml;
+  }
+
+  private _definedNamesXml(): string {
+    if (!this.namedRanges.length) return '';
+    return `<definedNames>${this.namedRanges.map(nr => {
+      let attrs = `name="${escapeXml(nr.name)}"`;
+      if (nr.scope) {
+        const idx = this.sheets.findIndex(s => s.name === nr.scope);
+        if (idx >= 0) attrs += ` localSheetId="${idx}"`;
+      }
+      if (nr.comment) attrs += ` comment="${escapeXml(nr.comment)}"`;
+      return `<definedName ${attrs}>${escapeXml(nr.ref)}</definedName>`;
+    }).join('')}</definedNames>`;
   }
 
   private _buildWorkbookRels(rr: ReadResult, dropCalcChain = false): string {

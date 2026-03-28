@@ -535,6 +535,31 @@ for (const brk of ws.getColBreaks()) {
 
 Page breaks are fully preserved during round-trip editing, even when sheets are modified.
 
+### Named ranges
+
+```typescript
+// Define workbook-scoped named ranges
+wb.addNamedRange({ name: 'SalesData', ref: 'Data!$A$1:$A$5' });
+wb.addNamedRange({ name: 'Products', ref: 'Data!$B$1:$B$5', comment: 'Product list' });
+
+// Define sheet-scoped named range
+wb.addNamedRange({ name: 'LocalTotal', ref: 'Data!$A$6', scope: 'Data' });
+
+// Use in formulas
+ws.setFormula(1, 1, 'SUM(SalesData)');
+
+// Read named ranges from an existing file
+const wb2 = await Workbook.fromBytes(data);
+const ranges = wb2.getNamedRanges();         // all named ranges
+const sales = wb2.getNamedRange('SalesData'); // find by name
+console.log(sales?.ref);                      // "Data!$A$1:$A$5"
+
+// Remove a named range
+wb2.removeNamedRange('SalesData');
+```
+
+Named ranges (including scope and comments) are fully preserved during round-trip editing.
+
 ### Sheet protection
 
 ```typescript
