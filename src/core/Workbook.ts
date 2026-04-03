@@ -784,7 +784,7 @@ ${hasCellImages ? '<Relationship Id="rIdRdArray" Type="http://schemas.microsoft.
       hasVba ? 'codeName="ThisWorkbook"' : '',
     ].filter(Boolean).join(' ');
     const date1904 = `<workbookPr${wbPrAttrs ? ' ' + wbPrAttrs : ''}/>`;
-    const namedRangesXml = this._definedNamesXml();
+    const namedRangesXml = this._definedNamesXml(allSlicerCaches);
     const pivotCachesXml = allPivotTables.length
       ? `<pivotCaches>${allPivotTables.map(p => `<pivotCache cacheId="${p.cacheId}" r:id="${p.cacheRId}"/>`).join('')}</pivotCaches>`
       : '';
@@ -797,7 +797,15 @@ ${date1904}
 ${namedRangesXml}
 <calcPr calcId="191028"/>
 ${pivotCachesXml}
-${hasSlicers ? `<extLst><ext uri="{BBE1A952-AA13-448e-AADC-164F8A28A991}" xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main"><x14:slicerCaches>${allSlicerCaches.map(sc => `<x14:slicerCache r:id="${sc.rId}"/>`).join('')}</x14:slicerCaches></ext></extLst>` : ''}
+${hasSlicers ? (() => {
+  const tableSlicers = allSlicerCaches.filter(sc => sc.type === 'table');
+  const pivotSlicers = allSlicerCaches.filter(sc => sc.type === 'pivot');
+  let xml = '<extLst>';
+  if (pivotSlicers.length) xml += `<ext uri="{BBE1A952-AA13-448e-AADC-164F8A28A991}" xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main"><x14:slicerCaches>${pivotSlicers.map(sc => `<x14:slicerCache r:id="${sc.rId}"/>`).join('')}</x14:slicerCaches></ext>`;
+  if (tableSlicers.length) xml += `<ext uri="{46BE6895-7355-4a93-B00E-2C351335B9C9}" xmlns:x15="http://schemas.microsoft.com/office/spreadsheetml/2010/11/main" xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main"><x15:slicerCaches>${tableSlicers.map(sc => `<x14:slicerCache r:id="${sc.rId}"/>`).join('')}</x15:slicerCaches></ext>`;
+  xml += '</extLst>';
+  return xml;
+})() : ''}
 </workbook>`) });
 
     // ── Connections ─────────────────────────────────────────────────────────
@@ -1020,15 +1028,15 @@ ${allSheetSlicerItems.join('\n')}
     for (const sc of allSlicerCaches) {
       let cacheBody: string;
       if (sc.type === 'table') {
-        cacheBody = `<extLst><ext xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" uri="{2F2917AC-EB37-4324-AD4E-5DD8C200BD13}" xmlns:x15="http://schemas.microsoft.com/office/spreadsheetml/2010/11/main"><x15:tableSlicerCache tableId="${sc.tableId}" column="${sc.columnIndex}" sortOrder="${sc.sortOrder ?? 'ascending'}"/></ext></extLst>`;
+        cacheBody = `<extLst><x:ext uri="{2F2917AC-EB37-4324-AD4E-5DD8C200BD13}" xmlns:x15="http://schemas.microsoft.com/office/spreadsheetml/2010/11/main"><x15:tableSlicerCache tableId="${sc.tableId}" column="${sc.columnIndex}" sortOrder="${sc.sortOrder ?? 'ascending'}"/></x:ext></extLst>`;
       } else {
         const itemsXml = (sc.items ?? []).map((_, xi) => `<i x="${xi}" s="1"/>`).join('');
         cacheBody = `<pivotTables><pivotTable tabId="${sc.tabId}" name="${escapeXml(sc.pivotTableName ?? '')}"/></pivotTables>` +
-          (sc.items?.length ? `<data><tabular pivotCacheId="${sc.pivotCacheId}"><items count="${sc.items.length}">${itemsXml}</items></tabular></data>` : '');
+          (sc.items?.length ? `<data><tabular pivotCacheId="${sc.pivotCacheId}" showMissing="0"><items count="${sc.items.length}">${itemsXml}</items></tabular></data>` : '');
       }
       entries.push({ name: `xl/slicerCaches/slicerCache${sc.idx}.xml`, data: strToBytes(
         `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<slicerCacheDefinition xmlns="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main" name="${escapeXml(sc.name)}" sourceName="${escapeXml(sc.sourceName)}">
+<slicerCacheDefinition xmlns="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main" xmlns:x="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" mc:Ignorable="x" name="${escapeXml(sc.name)}" sourceName="${escapeXml(sc.sourceName)}">
 ${cacheBody}
 </slicerCacheDefinition>`) });
     }
@@ -1136,7 +1144,7 @@ ${(qt.columns ?? []).map((c,ci) => `<queryTableField id="${ci+1}" name="${escape
     return xml;
   }
 
-  private _definedNamesXml(): string {
+  private _definedNamesXml(slicerCaches?: Array<{ name: string }>): string {
     // Collect print areas from sheets
     const printAreaNames: NamedRange[] = [];
     for (const ws of this.sheets) {
@@ -1145,7 +1153,9 @@ ${(qt.columns ?? []).map((c,ci) => `<queryTableField id="${ci+1}" name="${escape
         printAreaNames.push({ name: '_xlnm.Print_Area', ref, scope: ws.name });
       }
     }
-    const all = [...this.namedRanges, ...printAreaNames];
+    // Add slicer cache defined names
+    const slicerNames: NamedRange[] = (slicerCaches ?? []).map(sc => ({ name: sc.name, ref: '#N/A' }));
+    const all = [...this.namedRanges, ...printAreaNames, ...slicerNames];
     if (!all.length) return '';
     return `<definedNames>${all.map(nr => {
       let attrs = `name="${escapeXml(nr.name)}"`;

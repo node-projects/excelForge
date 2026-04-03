@@ -485,7 +485,7 @@ function concat(...arrays: Uint8Array[]): Uint8Array {
 // ── Block key constants (MS-OFFCRYPTO §2.3.6.2) ─────────────────────────────
 
 const BLOCK_KEY_VERIFIER_INPUT  = new Uint8Array([0xfe, 0xa7, 0xd2, 0x76, 0x3b, 0x4b, 0x9e, 0x79]);
-const BLOCK_KEY_VERIFIER_VALUE  = new Uint8Array([0xd7, 0xaa, 0x0f, 0x1d, 0x30, 0x61, 0x34, 0x4e]);
+const BLOCK_KEY_VERIFIER_VALUE  = new Uint8Array([0xd7, 0xaa, 0x0f, 0x6d, 0x30, 0x61, 0x34, 0x4e]);
 const BLOCK_KEY_ENCRYPTED_KEY   = new Uint8Array([0x14, 0x6e, 0x0b, 0xe7, 0xab, 0xac, 0xd0, 0xd6]);
 const BLOCK_KEY_DATA_INTEGRITY1 = new Uint8Array([0x5f, 0xb2, 0xad, 0x01, 0x0c, 0xb9, 0xe1, 0xf6]);
 const BLOCK_KEY_DATA_INTEGRITY2 = new Uint8Array([0xa0, 0x67, 0x7f, 0x02, 0xb2, 0x2c, 0x84, 0x33]);
@@ -697,16 +697,17 @@ function buildEncryptionCfb(encryptionInfo: Uint8Array, encryptedPackage: Uint8A
 
   const dirs: DirEntry[] = [
     { name: 'Root Entry', type: 5, childId: 2, leftId: -1, rightId: -1, size: 0 },
-    // Children of root are sorted by name: \x06DataSpaces (0x06...) < EncryptedPackage < EncryptionInfo
-    // EncryptedPackage as root of sibling tree:
+    // Children of root sorted by CFB name order (shorter < longer):
+    // \x06DataSpaces (12) < EncryptionInfo (14) < EncryptedPackage (16)
+    // BST root = EncryptionInfo
     { name: '\x06DataSpaces', type: 1, childId: 5, leftId: -1, rightId: -1, size: 0 },
     { name: 'EncryptionInfo', type: 2, childId: -1, leftId: 1, rightId: 3, data: encryptionInfo, size: encryptionInfo.length },
     { name: 'EncryptedPackage', type: 2, childId: -1, leftId: -1, rightId: -1, data: encryptedPackage, size: encryptedPackage.length },
-    // Children of \x06DataSpaces: DataSpaceInfo, DataSpaceMap, TransformInfo, Version
-    // Sorted: DataSpaceInfo < DataSpaceMap < TransformInfo < Version
-    // Use DataSpaceMap as root (middle-ish):
+    // Children of \x06DataSpaces sorted by CFB name order (shorter < longer):
+    // Version (7) < DataSpaceMap (12) < DataSpaceInfo (13) < TransformInfo (13)
+    // BST root = DataSpaceMap
     { name: 'Version', type: 2, childId: -1, leftId: -1, rightId: -1, data: versionData, size: versionData.length },
-    { name: 'DataSpaceMap', type: 2, childId: -1, leftId: -1, rightId: 4, data: dsmData, size: dsmData.length },
+    { name: 'DataSpaceMap', type: 2, childId: -1, leftId: 4, rightId: 6, data: dsmData, size: dsmData.length },
     { name: 'DataSpaceInfo', type: 1, childId: 8, leftId: -1, rightId: 7, size: 0 },
     { name: 'TransformInfo', type: 1, childId: 9, leftId: -1, rightId: -1, size: 0 },
     // Child of DataSpaceInfo:
@@ -869,26 +870,21 @@ export async function encryptWorkbook(xlsxData: Uint8Array, password: string, op
   const dataKey = randomBytes(32); // AES-256 key
 
   // 2. Encrypt the data key with the password-derived key
-  const encKeyIv = passwordSalt.slice(); // IV = passwordSalt (truncated/padded to 16 bytes)
-  const encKeyValue = await aesCbcEncrypt(keyDerived, encKeyIv, padToBlockSize(dataKey, 16));
+  // Per [MS-OFFCRYPTO] §2.3.6.2: IV for password key encryptor = raw passwordSalt
+  const encKeyValue = await aesCbcEncrypt(keyDerived, passwordSalt, padToBlockSize(dataKey, 16));
 
-  // 3. Create and encrypt verifier
+  // 3. Create and encrypt verifier (IV = raw passwordSalt for all password key encryptor ops)
   const verifierKey = await deriveKey(password, passwordSalt, spinCount, 256, BLOCK_KEY_VERIFIER_INPUT);
-  const encVerifierInput = await aesCbcEncrypt(verifierKey, encKeyIv, padToBlockSize(verifierInput, 16));
+  const encVerifierInput = await aesCbcEncrypt(verifierKey, passwordSalt, padToBlockSize(verifierInput, 16));
 
   const verifierHash = await sha512(verifierInput);
   const verifierHashKey = await deriveKey(password, passwordSalt, spinCount, 256, BLOCK_KEY_VERIFIER_VALUE);
-  const encVerifierHash = await aesCbcEncrypt(verifierHashKey, encKeyIv, padToBlockSize(verifierHash, 16));
+  const encVerifierHash = await aesCbcEncrypt(verifierHashKey, passwordSalt, padToBlockSize(verifierHash, 16));
 
   // 4. Encrypt the package data
-  // Prepend the original size (8 bytes LE) to the data
-  const packageData = new Uint8Array(8 + xlsxData.length);
-  packageData[0] = xlsxData.length & 0xFF;
-  packageData[1] = (xlsxData.length >> 8) & 0xFF;
-  packageData[2] = (xlsxData.length >> 16) & 0xFF;
-  packageData[3] = (xlsxData.length >> 24) & 0xFF;
-  // High 32 bits = 0 for files < 4GB
-  packageData.set(xlsxData, 8);
+  // Per [MS-OFFCRYPTO] §2.3.6.1: EncryptedPackage = StreamSize(8) + EncryptedData
+  // StreamSize is unencrypted; only the XLSX data is encrypted in 4096-byte segments
+  const packageData = xlsxData;
 
   // Encrypt in 4096-byte segments
   const segmentSize = 4096;
@@ -908,17 +904,23 @@ export async function encryptWorkbook(xlsxData: Uint8Array, password: string, op
     const encSegment = await aesCbcEncrypt(dataKey, segIv, paddedSegment);
     encryptedSegments.push(encSegment);
   }
-  const encryptedPackage = concat(...encryptedSegments);
+  const encryptedData = concat(...encryptedSegments);
 
-  // 5. HMAC for data integrity
-  const hmacKeyDerived = await deriveKey(password, passwordSalt, spinCount, 256, BLOCK_KEY_DATA_INTEGRITY1);
+  // Prepend unencrypted StreamSize (8 bytes LE) per [MS-OFFCRYPTO]
+  const streamSizeHeader = new Uint8Array(8);
+  setU32(streamSizeHeader, 0, xlsxData.length);
+  // High 32 bits at offset 4 stay 0 (files < 4GB)
+  const encryptedPackage = concat(streamSizeHeader, encryptedData);
+
+  // 5. HMAC for data integrity (encrypted with dataKey, IVs derived from keySalt)
   const hmacKey = randomBytes(64);
-  const encHmacKey = await aesCbcEncrypt(hmacKeyDerived, encKeyIv, padToBlockSize(hmacKey, 16));
+  const hmacKeyIv = (await sha512(concat(keySalt, BLOCK_KEY_DATA_INTEGRITY1))).subarray(0, 16);
+  const encHmacKey = await aesCbcEncrypt(dataKey, hmacKeyIv, padToBlockSize(hmacKey, 16));
 
-  // HMAC over encrypted package
-  const hmacValue = await hmacSha512(hmacKey, concat(keySalt, encryptedPackage));
-  const hmacValueKey = await deriveKey(password, passwordSalt, spinCount, 256, BLOCK_KEY_DATA_INTEGRITY2);
-  const encHmacValue = await aesCbcEncrypt(hmacValueKey, encKeyIv, padToBlockSize(hmacValue, 16));
+  // HMAC over the full EncryptedPackage stream (StreamSize + encrypted data)
+  const hmacValue = await hmacSha512(hmacKey, encryptedPackage);
+  const hmacValueIv = (await sha512(concat(keySalt, BLOCK_KEY_DATA_INTEGRITY2))).subarray(0, 16);
+  const encHmacValue = await aesCbcEncrypt(dataKey, hmacValueIv, padToBlockSize(hmacValue, 16));
 
   // 6. Build EncryptionInfo stream
   const xmlStr = buildEncryptionInfoXml(
@@ -961,13 +963,13 @@ export async function decryptWorkbook(encryptedData: Uint8Array, password: strin
   const params = parseEncryptionInfo(xmlStr);
 
   // 3. Derive key and verify password
+  // Per [MS-OFFCRYPTO] §2.3.6.2: IV for password key encryptor = raw passwordSalt
   const keyDerived = await deriveKey(password, params.passwordSalt, params.spinCount, params.keyBits, BLOCK_KEY_ENCRYPTED_KEY);
-  const decIv = params.passwordSalt.subarray(0, 16);
 
   // Decrypt the actual data key
   let dataKey: Uint8Array;
   try {
-    dataKey = await aesCbcDecrypt(keyDerived, decIv, params.encryptedKeyValue);
+    dataKey = await aesCbcDecrypt(keyDerived, params.passwordSalt, params.encryptedKeyValue);
     dataKey = dataKey.subarray(0, params.keyBits / 8);
   } catch {
     throw new Error('Incorrect password');
@@ -977,7 +979,7 @@ export async function decryptWorkbook(encryptedData: Uint8Array, password: strin
   const verifierKey = await deriveKey(password, params.passwordSalt, params.spinCount, params.keyBits, BLOCK_KEY_VERIFIER_INPUT);
   let verifierInput: Uint8Array;
   try {
-    verifierInput = await aesCbcDecrypt(verifierKey, decIv, params.encryptedVerifierInput);
+    verifierInput = await aesCbcDecrypt(verifierKey, params.passwordSalt, params.encryptedVerifierInput);
     verifierInput = verifierInput.subarray(0, 16);
   } catch {
     throw new Error('Incorrect password');
@@ -985,7 +987,7 @@ export async function decryptWorkbook(encryptedData: Uint8Array, password: strin
 
   const verifierHashKey = await deriveKey(password, params.passwordSalt, params.spinCount, params.keyBits, BLOCK_KEY_VERIFIER_VALUE);
   try {
-    const decVerifierHash = await aesCbcDecrypt(verifierHashKey, decIv, params.encryptedVerifierHash);
+    const decVerifierHash = await aesCbcDecrypt(verifierHashKey, params.passwordSalt, params.encryptedVerifierHash);
     const expectedHash = await sha512(verifierInput);
     // Compare first 64 bytes
     for (let i = 0; i < 64; i++) {
@@ -998,7 +1000,10 @@ export async function decryptWorkbook(encryptedData: Uint8Array, password: strin
 
   // 4. Decrypt the package (keySalt from keyData)
   const keySalt = params.keySalt;
-  const encryptedPackage = pkgStream.data;
+
+  // Per [MS-OFFCRYPTO]: first 8 bytes are unencrypted StreamSize
+  const streamSize = u32(pkgStream.data, 0); // original XLSX size
+  const encryptedPackage = pkgStream.data.subarray(8);
 
   const segmentSize = 4096;
   const decryptedSegments: Uint8Array[] = [];
@@ -1027,9 +1032,8 @@ export async function decryptWorkbook(encryptedData: Uint8Array, password: strin
   }
   const decryptedData = concat(...decryptedSegments);
 
-  // 5. Extract original size from first 8 bytes
-  const origSize = u32(decryptedData, 0); // low 32 bits (good for < 4GB)
-  return decryptedData.subarray(8, 8 + origSize);
+  // 5. Truncate to original stream size (removes padding from last segment)
+  return decryptedData.subarray(0, streamSize);
 }
 
 /**

@@ -9,8 +9,8 @@ export function buildTableXml(table: Table, tableId: number): string {
     const colIdx = startCol + i;
     const id = i + 1;
     const totFn = col.totalsRowFunction ?? 'none';
-    const totAttrs = table.totalsRow && totFn !== 'none'
-      ? ` totalsRowFunction="${totFn}"${col.totalsRowFormula ? ` totalsRowFormula="${escapeXml(col.totalsRowFormula)}"` : ''}`
+    const totAttrs = table.totalsRow
+      ? ` totalsRowFunction="${totFn}"${totFn !== 'none' && col.totalsRowFormula ? ` totalsRowFormula="${escapeXml(col.totalsRowFormula)}"` : ''}`
       : '';
     const totLabel = table.totalsRow && col.totalsRowLabel
       ? ` totalsRowLabel="${escapeXml(col.totalsRowLabel)}"` : '';

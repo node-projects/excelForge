@@ -253,6 +253,80 @@ async function buildCmsSignature(
   );
 }
 
+// ── Self-signed test certificate generator ──────────────────────────────────
+
+const OID_COMMON_NAME = [2, 5, 4, 3];
+
+function derBitStr(data: Uint8Array): Uint8Array {
+  const inner = new Uint8Array(1 + data.length);
+  inner[0] = 0; // no unused bits
+  inner.set(data, 1);
+  return derTag(0x03, inner);
+}
+
+function derBigInt(bytes: Uint8Array): Uint8Array {
+  // Ensure leading zero if high bit set (positive)
+  if (bytes[0] & 0x80) {
+    const padded = new Uint8Array(bytes.length + 1);
+    padded.set(bytes, 1);
+    return derTag(0x02, padded);
+  }
+  return derTag(0x02, bytes);
+}
+
+/**
+ * Generate a self-signed X.509 certificate for testing.
+ * Returns PEM-encoded certificate string.
+ *
+ * @param subject  Common Name for the cert (e.g. "ExcelForge Test")
+ * @param privateKeyPem PEM-encoded PKCS#8 private key
+ * @param publicKeySpkiDer DER-encoded SubjectPublicKeyInfo
+ */
+export async function generateTestCertificate(
+  subject: string,
+  privateKeyPem: string,
+  publicKeySpkiDer: Uint8Array,
+): Promise<string> {
+  const keyDer = parsePem(privateKeyPem);
+  const key = await importPrivateKey(keyDer);
+
+  const algId = derSeq(derOid(OID_SHA256_WITH_RSA), derTag(0x05, new Uint8Array(0)));
+  const name = derSeq(derSet(derSeq(derOid(OID_COMMON_NAME), derUtf8Str(subject))));
+
+  // Validity: now to +10 years
+  const now = new Date();
+  const later = new Date(now.getFullYear() + 10, now.getMonth(), now.getDate());
+  const utcFmt = (d: Date) => {
+    const s = d.toISOString().replace(/[-:T]/g, '').slice(2, 14) + 'Z';
+    return derTag(0x17, new TextEncoder().encode(s)); // UTCTime
+  };
+  const validity = derSeq(utcFmt(now), utcFmt(later));
+
+  // TBSCertificate
+  const serial = derTag(0x02, new Uint8Array([0x01])); // serial = 1
+  const version = derExplicit(0, derInt(2)); // v3
+  const tbs = derSeq(version, serial, algId, name, validity, name, derTag(0x30, publicKeySpkiDer.slice(publicKeySpkiDer.indexOf(0x30, 1) >= 0 ? 0 : 0)));
+
+  // Actually we need to wrap the raw SPKI properly. SPKI is already a SEQUENCE, use as-is.
+  const tbs2 = derSeq(version, serial, algId, name, validity, name, publicKeySpkiDer);
+
+  // Sign the TBS
+  const tbsDer = tbs2;
+  const tbsHash = await sha256(tbsDer);
+  // DigestInfo for PKCS#1 v1.5: SEQUENCE { SEQUENCE { OID sha256, NULL }, OCTET STRING hash }
+  // But RSASSA-PKCS1-v1_5 in WebCrypto does the DigestInfo wrapping internally, so we sign raw data
+  const signature = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', key, tbsDer as Uint8Array<ArrayBuffer>);
+  const sigBytes = new Uint8Array(signature);
+
+  // Certificate
+  const cert = derSeq(tbsDer, algId, derBitStr(sigBytes));
+
+  // Convert to PEM
+  const b64 = base64Encode(cert);
+  const lines = b64.match(/.{1,64}/g)!.join('\n');
+  return `-----BEGIN CERTIFICATE-----\n${lines}\n-----END CERTIFICATE-----`;
+}
+
 // ── Signing Options ──────────────────────────────────────────────────────────
 
 export interface SigningOptions {

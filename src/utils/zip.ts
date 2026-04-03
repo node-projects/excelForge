@@ -131,14 +131,16 @@ function buildCodeLengths(freq: Uint32Array, maxBits: number): Uint8Array {
   // Verify Kraft inequality: sum of 2^(maxBits - len_i) must equal 2^maxBits.
   // setDepth already clamps to maxBits, but clamping can over-allocate code space.
   {
-    const blCount = new Int32Array(maxBits + 1);
-    for (let i = 0; i < n; i++) if (lengths[i] > 0) blCount[lengths[i]]++;
-    let kraft = 0;
-    for (let bl = 1; bl <= maxBits; bl++) kraft += blCount[bl] * (1 << (maxBits - bl));
-    const overflow = kraft - (1 << maxBits);
-    if (overflow > 0) {
+    const computeKraft = () => {
+      let k = 0;
+      for (let i = 0; i < n; i++) if (lengths[i] > 0) k += 1 << (maxBits - lengths[i]);
+      return k;
+    };
+    const target = 1 << maxBits;
+    let kraft = computeKraft();
+    if (kraft > target) {
       // Push symbols at shorter lengths to longer ones until Kraft is satisfied
-      let toFix = overflow;
+      let toFix = kraft - target;
       for (let bl = maxBits - 1; bl >= 1 && toFix > 0; bl--) {
         const freed = 1 << (maxBits - bl - 1); // net slots freed by moving one symbol from bl to bl+1
         for (let i = 0; i < n && toFix > 0; i++) {
@@ -148,6 +150,16 @@ function buildCodeLengths(freq: Uint32Array, maxBits: number): Uint8Array {
           }
         }
       }
+    }
+    // Fix under-allocation caused by over-correction:
+    // shortening a symbol from maxBits to maxBits-1 adds exactly 1 Kraft unit
+    kraft = computeKraft();
+    while (kraft < target) {
+      let fixed = false;
+      for (let i = 0; i < n; i++) {
+        if (lengths[i] === maxBits) { lengths[i]--; kraft++; fixed = true; break; }
+      }
+      if (!fixed) break;
     }
   }
 

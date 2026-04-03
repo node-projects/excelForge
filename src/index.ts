@@ -58,7 +58,7 @@ export type { EncryptionOptions } from './features/Encryption.js';
 export { saveChartTemplate, applyChartTemplate, serializeChartTemplate, deserializeChartTemplate } from './features/ChartBuilder.js';
 
 // ── Digital Signing ─────────────────────────────────────────────────────────
-export { signPackage, signVbaProject, signWorkbook } from './features/Signing.js';
+export { signPackage, signVbaProject, signWorkbook, generateTestCertificate } from './features/Signing.js';
 export type { SigningOptions, SignResult } from './features/Signing.js';
 
 // ── Types ───────────────────────────────────────────────────────────────────
