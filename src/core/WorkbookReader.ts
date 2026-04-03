@@ -23,6 +23,8 @@ import type {
   NamedRange, Connection, PowerQuery, ConnectionType, CommandType,
   FormControl, FormControlType, FormControlAnchor, Image, ImageFormat, ImagePosition,
   MathEquation, MathElement, MathElementType, ChartPosition,
+  Shape, ShapeType, WordArt, WordArtPreset, Chart, ChartType, ChartSeries, ChartAxis, ChartDataLabels,
+  Sparkline, SparklineType,
 } from './types.js';
 import { Worksheet } from './Worksheet.js';
 import { SharedStrings } from './SharedStrings.js';
@@ -384,7 +386,7 @@ function parseWorksheet(
     'sheetProtection','printOptions','pageMargins','pageSetup',
     'headerFooter','drawing','tableParts','autoFilter',
     'rowBreaks','colBreaks','picture','oleObjects','ctrlProps',
-    'legacyDrawing','AlternateContent',
+    'legacyDrawing','AlternateContent','extLst',
   ]);
 
   for (const node of root.children) {
@@ -460,6 +462,9 @@ function parseWorksheet(
         }
         break;
       }
+      case 'extLst':
+        parseSparklineExtensions(node, ws);
+        break;
       default:
         if (!knownTags.has(tag)) {
           unknownParts.push(nodeToXml(node));
@@ -867,11 +872,540 @@ function parseDrawingObjects(
       continue;
     }
 
+    // Try chart: find <graphicFrame> with chart reference
+    const graphicFrame = findDescendant(anchor, 'graphicFrame');
+    if (graphicFrame) {
+      parseDrawingChart(graphicFrame, anchor, tag, drawRels, drawDir, getEntry, ws);
+      continue;
+    }
+
     // Try math equation: find <m:oMath> inside shape text body
     const oMath = findDescendant(anchor, 'oMath');
     if (oMath) {
       parseDrawingMathEquation(oMath, anchor, tag, anchorFrom, ws);
       continue;
+    }
+
+    // Try shape: find <sp> element
+    const sp = findDescendant(anchor, 'sp');
+    if (sp) {
+      parseDrawingShape(sp, anchor, tag, ws);
+      continue;
+    }
+  }
+}
+
+// ─── Chart parsing from drawing ────────────────────────────────────────────
+
+function parseDrawingChart(
+  graphicFrame: XmlNode, anchor: XmlNode, tag: string,
+  drawRels: RelMap | undefined, drawDir: string,
+  getEntry: (path: string) => { data: Uint8Array } | undefined,
+  ws: Worksheet,
+): void {
+  // Find chart reference: <a:graphic><a:graphicData><c:chart r:id="rId1"/>
+  const chartRef = findDescendant(graphicFrame, 'chart');
+  if (!chartRef || !drawRels) return;
+
+  const rId = chartRef.attrs['r:id'] ?? attr(chartRef, 'r:id') ?? '';
+  if (!rId) return;
+  const rel = drawRels.get(rId);
+  if (!rel) return;
+
+  const chartPath = rel.target.startsWith('/')
+    ? rel.target.slice(1)
+    : resolvePath(drawDir, rel.target);
+  const chartEntry = getEntry(chartPath);
+  if (!chartEntry) return;
+
+  const dec = new TextDecoder();
+  const chartXml = dec.decode(chartEntry.data);
+  const chartRoot = parseXml(chartXml);
+
+  // Parse from/to anchors
+  let from: ChartPosition = { col: 0, row: 0 };
+  let to: ChartPosition = { col: 8, row: 15 };
+  if (tag === 'twoCellAnchor') {
+    const fromNode = child(anchor, 'from');
+    const toNode = child(anchor, 'to');
+    if (fromNode) {
+      from = {
+        col: parseInt(child(fromNode, 'col')?.text ?? '0', 10),
+        row: parseInt(child(fromNode, 'row')?.text ?? '0', 10),
+      };
+    }
+    if (toNode) {
+      to = {
+        col: parseInt(child(toNode, 'col')?.text ?? '0', 10),
+        row: parseInt(child(toNode, 'row')?.text ?? '0', 10),
+      };
+    }
+  }
+
+  // Find the chart plot area
+  const plotArea = findDescendant(chartRoot, 'plotArea');
+  if (!plotArea) return;
+
+  // Determine chart type from child elements
+  const chartTypeMap: Record<string, ChartType> = {
+    'barChart': 'column', 'bar3DChart': 'column',
+    'lineChart': 'line', 'line3DChart': 'line',
+    'areaChart': 'area', 'area3DChart': 'area',
+    'pieChart': 'pie', 'pie3DChart': 'pie',
+    'doughnutChart': 'doughnut',
+    'scatterChart': 'scatter',
+    'bubbleChart': 'bubble',
+    'radarChart': 'radar',
+    'stockChart': 'stock',
+  };
+
+  let chartType: ChartType = 'column';
+  let chartGroupNode: XmlNode | undefined;
+
+  for (const plotChild of plotArea.children) {
+    if (typeof plotChild === 'string') continue;
+    const localTag = localName(plotChild.tag);
+    if (chartTypeMap[localTag]) {
+      chartType = chartTypeMap[localTag];
+      chartGroupNode = plotChild;
+
+      // Refine bar → column vs horizontal bar
+      if (localTag === 'barChart' || localTag === 'bar3DChart') {
+        const barDir = child(plotChild, 'barDir');
+        const barDirVal = barDir?.attrs['val'] ?? '';
+        if (barDirVal === 'bar') chartType = 'bar';
+        // Check grouping for stacked
+        const grouping = child(plotChild, 'grouping');
+        const grpVal = grouping?.attrs['val'] ?? '';
+        if (grpVal === 'stacked') chartType = (chartType === 'bar' ? 'barStacked' : 'columnStacked') as ChartType;
+        if (grpVal === 'percentStacked') chartType = (chartType === 'bar' ? 'barStacked100' : 'columnStacked100') as ChartType;
+      }
+      // Line with markers
+      if (localTag === 'lineChart') {
+        const marker = findDescendant(plotChild, 'marker');
+        if (marker) {
+          const markerVal = child(marker, 'symbol')?.attrs['val'] ?? '';
+          if (markerVal && markerVal !== 'none') chartType = 'lineMarker';
+        }
+      }
+      if (localTag === 'scatterChart') {
+        const scatterStyle = child(plotChild, 'scatterStyle');
+        if (scatterStyle?.attrs['val']?.includes('Smooth')) chartType = 'scatterSmooth';
+      }
+      if (localTag === 'radarChart') {
+        const radarStyle = child(plotChild, 'radarStyle');
+        if (radarStyle?.attrs['val'] === 'filled') chartType = 'radarFilled';
+      }
+      break;
+    }
+  }
+
+  if (!chartGroupNode) return;
+
+  // Parse series
+  const series: ChartSeries[] = [];
+  for (const ser of children(chartGroupNode, 'ser')) {
+    const s: ChartSeries = { values: '' };
+
+    // Series name
+    const tx = child(ser, 'tx');
+    if (tx) {
+      const strRef = findDescendant(tx, 'strRef');
+      if (strRef) {
+        const f = child(strRef, 'f');
+        if (f?.text) s.name = f.text;
+        // Try to get cached value
+        const strCache = child(strRef, 'strCache');
+        if (strCache) {
+          const pt = findDescendant(strCache, 'pt');
+          const v = pt ? findDescendant(pt, 'v') : undefined;
+          if (v?.text) s.name = v.text;
+        }
+      }
+      const v = findDescendant(tx, 'v');
+      if (v?.text && !s.name) s.name = v.text;
+    }
+
+    // Values
+    const val = child(ser, 'val') || child(ser, 'yVal');
+    if (val) {
+      const numRef = findDescendant(val, 'numRef');
+      if (numRef) {
+        const f = child(numRef, 'f');
+        if (f?.text) s.values = f.text;
+      }
+    }
+
+    // Categories
+    const cat = child(ser, 'cat') || child(ser, 'xVal');
+    if (cat) {
+      const strRef = findDescendant(cat, 'strRef');
+      const numRef = findDescendant(cat, 'numRef');
+      const ref = strRef || numRef;
+      if (ref) {
+        const f = child(ref, 'f');
+        if (f?.text) s.categories = f.text;
+      }
+    }
+
+    // Color
+    const spPr = child(ser, 'spPr');
+    if (spPr) {
+      const solidFill = child(spPr, 'solidFill');
+      if (solidFill) {
+        const srgb = child(solidFill, 'srgbClr');
+        if (srgb?.attrs['val']) s.color = '#' + srgb.attrs['val'];
+      }
+    }
+
+    if (s.values) series.push(s);
+  }
+
+  if (!series.length) return;
+
+  // Title
+  let title: string | undefined;
+  const titleNode = child(chartRoot, 'title') || findDescendant(chartRoot, 'title');
+  if (titleNode) {
+    // Look for a:t text within the title
+    const aT = findDescendant(titleNode, 't');
+    if (aT?.text) title = aT.text;
+  }
+
+  // Axes
+  let xAxis: ChartAxis | undefined;
+  let yAxis: ChartAxis | undefined;
+  const catAx = findDescendant(plotArea, 'catAx') || findDescendant(plotArea, 'dateAx');
+  const valAx = findDescendant(plotArea, 'valAx');
+  if (catAx) {
+    xAxis = {};
+    const axTitle = findDescendant(catAx, 'title');
+    if (axTitle) {
+      const t = findDescendant(axTitle, 't');
+      if (t?.text) xAxis.title = t.text;
+    }
+  }
+  if (valAx) {
+    yAxis = {};
+    const axTitle = findDescendant(valAx, 'title');
+    if (axTitle) {
+      const t = findDescendant(axTitle, 't');
+      if (t?.text) yAxis.title = t.text;
+    }
+    const gridLines = child(valAx, 'majorGridlines');
+    if (gridLines) yAxis.gridLines = true;
+  }
+
+  // Legend
+  let legend: Chart['legend'] = false;
+  const legendNode = findDescendant(chartRoot, 'legend');
+  if (legendNode) {
+    const legendPos = child(legendNode, 'legendPos');
+    const posVal = legendPos?.attrs['val'] as Chart['legend'];
+    legend = posVal || true;
+  }
+
+  // Vary colors
+  const varyColors = child(chartGroupNode, 'varyColors');
+  const varyColorsVal = varyColors?.attrs['val'] !== '0';
+
+  const chart: Chart = { type: chartType, series, from, to };
+  if (title) chart.title = title;
+  if (xAxis) chart.xAxis = xAxis;
+  if (yAxis) chart.yAxis = yAxis;
+  if (legend !== false) chart.legend = legend;
+  if (varyColorsVal) chart.varyColors = true;
+
+  ws.addChart(chart);
+}
+
+// ─── Shape parsing from drawing ──────────────────────────────────────────
+
+function parseDrawingShape(
+  sp: XmlNode, anchor: XmlNode, tag: string, ws: Worksheet,
+): void {
+  // Parse from/to positions
+  let from: ChartPosition = { col: 0, row: 0 };
+  let to: ChartPosition = { col: 2, row: 2 };
+  if (tag === 'twoCellAnchor') {
+    const fromNode = child(anchor, 'from');
+    const toNode = child(anchor, 'to');
+    if (fromNode) {
+      from = {
+        col: parseInt(child(fromNode, 'col')?.text ?? '0', 10),
+        row: parseInt(child(fromNode, 'row')?.text ?? '0', 10),
+      };
+    }
+    if (toNode) {
+      to = {
+        col: parseInt(child(toNode, 'col')?.text ?? '0', 10),
+        row: parseInt(child(toNode, 'row')?.text ?? '0', 10),
+      };
+    }
+  }
+
+  // Shape properties
+  const spPr = findDescendant(sp, 'spPr');
+  let shapeType: ShapeType = 'rect';
+  let fillColor: string | undefined;
+  let lineColor: string | undefined;
+  let lineWidth: number | undefined;
+  let rotation: number | undefined;
+
+  if (spPr) {
+    // Preset geometry
+    const prstGeom = findDescendant(spPr, 'prstGeom');
+    if (prstGeom) {
+      const prst = prstGeom.attrs['prst'] ?? '';
+      const validTypes = new Set([
+        'rect', 'roundRect', 'ellipse', 'triangle', 'diamond',
+        'pentagon', 'hexagon', 'octagon', 'star5', 'star6',
+        'rightArrow', 'leftArrow', 'upArrow', 'downArrow',
+        'line', 'curvedConnector3', 'callout1', 'callout2',
+        'cloud', 'heart', 'lightningBolt', 'sun', 'moon',
+        'smileyFace', 'flowChartProcess', 'flowChartDecision',
+        'flowChartTerminator', 'flowChartDocument',
+      ]);
+      if (validTypes.has(prst)) shapeType = prst as ShapeType;
+    }
+
+    // Fill color
+    const solidFill = child(spPr, 'solidFill');
+    if (solidFill) {
+      const srgb = child(solidFill, 'srgbClr');
+      if (srgb?.attrs['val']) fillColor = '#' + srgb.attrs['val'];
+      const schemeClr = child(solidFill, 'schemeClr');
+      if (schemeClr?.attrs['val']) fillColor = 'theme:' + schemeClr.attrs['val'];
+    }
+
+    // Line
+    const ln = child(spPr, 'ln');
+    if (ln) {
+      const w = ln.attrs['w'];
+      if (w) lineWidth = Math.round(parseInt(w, 10) / EMU_PX);
+      const lineFill = child(ln, 'solidFill');
+      if (lineFill) {
+        const srgb = child(lineFill, 'srgbClr');
+        if (srgb?.attrs['val']) lineColor = '#' + srgb.attrs['val'];
+      }
+    }
+
+    // Transform - rotation
+    const xfrm = findDescendant(spPr, 'xfrm');
+    if (xfrm?.attrs['rot']) rotation = parseInt(xfrm.attrs['rot'], 10) / 60000; // EMU to degrees
+  }
+
+  // Text body
+  let text: string | undefined;
+  let font: Font | undefined;
+  const txBody = findDescendant(sp, 'txBody');
+  if (txBody) {
+    // Check if this is WordArt (has prstTxWarp/bodyPr with preset transform)
+    const bodyPr = child(txBody, 'bodyPr');
+    const prstTxWarp = bodyPr ? child(bodyPr, 'prstTxWarp') : undefined;
+    const wordArtPreset = prstTxWarp?.attrs['prst'] ?? bodyPr?.attrs['prstTxWarp'] ?? '';
+
+    // Collect text from all paragraphs
+    const textParts: string[] = [];
+    for (const p of children(txBody, 'p')) {
+      for (const r of children(p, 'r')) {
+        const t = child(r, 't');
+        if (t?.text) textParts.push(t.text);
+        // Parse font from run properties
+        if (!font) {
+          const rPr = child(r, 'rPr');
+          if (rPr) {
+            font = {};
+            if (rPr.attrs['sz']) font.size = parseInt(rPr.attrs['sz'], 10) / 100;
+            if (rPr.attrs['b'] === '1') font.bold = true;
+            if (rPr.attrs['i'] === '1') font.italic = true;
+            const latin = findDescendant(rPr, 'latin');
+            if (latin?.attrs['typeface']) font.name = latin.attrs['typeface'];
+            const solidFill = child(rPr, 'solidFill');
+            if (solidFill) {
+              const srgb = child(solidFill, 'srgbClr');
+              if (srgb?.attrs['val']) font.color = '#' + srgb.attrs['val'];
+            }
+          }
+        }
+      }
+    }
+    text = textParts.join('');
+
+    // If this is a WordArt, add as WordArt instead of shape
+    const validWordArtPresets = new Set([
+      'textPlain', 'textArchUp', 'textArchDown', 'textCircle',
+      'textWave1', 'textWave2', 'textInflate', 'textDeflate',
+      'textFadeUp', 'textFadeDown', 'textFadeLeft', 'textFadeRight',
+      'textSlantUp', 'textSlantDown', 'textCascadeUp', 'textCascadeDown',
+      'textChevron', 'textRingInside', 'textRingOutside', 'textStop',
+    ]);
+
+    if (wordArtPreset && validWordArtPresets.has(wordArtPreset) && text) {
+      const wa: WordArt = { text, from, to };
+      if (wordArtPreset !== 'textPlain') wa.preset = wordArtPreset as WordArtPreset;
+      if (font) wa.font = font;
+      if (fillColor) wa.fillColor = fillColor;
+      if (lineColor) wa.outlineColor = lineColor;
+      ws.addWordArt(wa);
+      return;
+    }
+  }
+
+  const shape: Shape = { type: shapeType, from, to };
+  if (text) shape.text = text;
+  if (fillColor) shape.fillColor = fillColor;
+  if (lineColor) shape.lineColor = lineColor;
+  if (lineWidth) shape.lineWidth = lineWidth;
+  if (font) shape.font = font;
+  if (rotation) shape.rotation = rotation;
+  ws.addShape(shape);
+}
+
+/* ── Sparkline parsing from extLst ───────────────────────────────────────── */
+
+function parseSparklineExtensions(extLst: XmlNode, ws: Worksheet): void {
+  for (const ext of children(extLst, 'ext')) {
+    // Sparkline groups live inside an <ext> with a specific URI
+    const sparklineGroups = ext.children?.filter(
+      c => typeof c !== 'string' && localName(c.tag) === 'sparklineGroups',
+    ) as XmlNode[] | undefined;
+    if (!sparklineGroups?.length) continue;
+
+    for (const groups of sparklineGroups) {
+      for (const group of children(groups, 'sparklineGroup')) {
+        // Group-level attributes
+        const typeAttr = group.attrs['type'] ?? 'line';
+        const spkType: SparklineType =
+          typeAttr === 'column' ? 'bar' :
+          typeAttr === 'stacked' ? 'stacked' : 'line';
+
+        // Group-level colors
+        const colorSeries = group.children?.find(
+          c => typeof c !== 'string' && localName(c.tag) === 'colorSeries',
+        ) as XmlNode | undefined;
+        const colorHigh = group.children?.find(
+          c => typeof c !== 'string' && localName(c.tag) === 'colorHigh',
+        ) as XmlNode | undefined;
+        const colorLow = group.children?.find(
+          c => typeof c !== 'string' && localName(c.tag) === 'colorLow',
+        ) as XmlNode | undefined;
+        const colorFirst = group.children?.find(
+          c => typeof c !== 'string' && localName(c.tag) === 'colorFirst',
+        ) as XmlNode | undefined;
+        const colorLast = group.children?.find(
+          c => typeof c !== 'string' && localName(c.tag) === 'colorLast',
+        ) as XmlNode | undefined;
+        const colorNegative = group.children?.find(
+          c => typeof c !== 'string' && localName(c.tag) === 'colorNegative',
+        ) as XmlNode | undefined;
+        const colorMarkers = group.children?.find(
+          c => typeof c !== 'string' && localName(c.tag) === 'colorMarkers',
+        ) as XmlNode | undefined;
+
+        // Group-level boolean flags
+        const showHigh = group.attrs['high'] === '1';
+        const showLow = group.attrs['low'] === '1';
+        const showFirst = group.attrs['first'] === '1';
+        const showLast = group.attrs['last'] === '1';
+        const showNegative = group.attrs['negative'] === '1';
+        const showMarkers = group.attrs['markers'] === '1';
+
+        // Line width
+        const lwAttr = group.attrs['lineWeight'];
+        const lineWidth = lwAttr ? parseFloat(lwAttr) : undefined;
+
+        // Min/max axis
+        const minAxisType = group.attrs['minAxisType'] === 'individual' ? 'individual' as const
+          : group.attrs['minAxisType'] === 'custom' ? 'custom' as const : undefined;
+        const maxAxisType = group.attrs['maxAxisType'] === 'individual' ? 'individual' as const
+          : group.attrs['maxAxisType'] === 'custom' ? 'custom' as const : undefined;
+
+        // Find <sparklines> container
+        const sparklinesNode = group.children?.find(
+          c => typeof c !== 'string' && localName(c.tag) === 'sparklines',
+        ) as XmlNode | undefined;
+        if (!sparklinesNode) continue;
+
+        // Each <sparkline> within the group
+        const sparklineNodes = sparklinesNode.children?.filter(
+          c => typeof c !== 'string' && localName(c.tag) === 'sparkline',
+        ) as XmlNode[] | undefined;
+        if (!sparklineNodes) continue;
+
+        for (const spk of sparklineNodes) {
+          // <xm:f> = data range, <xm:sqref> = location cell
+          const fNode = spk.children?.find(
+            c => typeof c !== 'string' && localName(c.tag) === 'f',
+          ) as XmlNode | undefined;
+          const sqrefNode = spk.children?.find(
+            c => typeof c !== 'string' && localName(c.tag) === 'sqref',
+          ) as XmlNode | undefined;
+
+          const dataRange = fNode?.text ?? '';
+          const location = sqrefNode?.text ?? '';
+          if (!dataRange || !location) continue;
+
+          const sp: Sparkline = { type: spkType, dataRange, location };
+
+          // Assign colors
+          if (colorSeries) {
+            const rgb = colorSeries.attrs['rgb'];
+            if (rgb) sp.color = '#' + rgb.slice(2);
+            const theme = colorSeries.attrs['theme'];
+            if (theme) sp.color = 'theme:' + theme;
+          }
+          if (colorHigh) {
+            const rgb = colorHigh.attrs['rgb'];
+            if (rgb) sp.highColor = '#' + rgb.slice(2);
+            const theme = colorHigh.attrs['theme'];
+            if (theme) sp.highColor = 'theme:' + theme;
+          }
+          if (colorLow) {
+            const rgb = colorLow.attrs['rgb'];
+            if (rgb) sp.lowColor = '#' + rgb.slice(2);
+            const theme = colorLow.attrs['theme'];
+            if (theme) sp.lowColor = 'theme:' + theme;
+          }
+          if (colorFirst) {
+            const rgb = colorFirst.attrs['rgb'];
+            if (rgb) sp.firstColor = '#' + rgb.slice(2);
+            const theme = colorFirst.attrs['theme'];
+            if (theme) sp.firstColor = 'theme:' + theme;
+          }
+          if (colorLast) {
+            const rgb = colorLast.attrs['rgb'];
+            if (rgb) sp.lastColor = '#' + rgb.slice(2);
+            const theme = colorLast.attrs['theme'];
+            if (theme) sp.lastColor = 'theme:' + theme;
+          }
+          if (colorNegative) {
+            const rgb = colorNegative.attrs['rgb'];
+            if (rgb) sp.negativeColor = '#' + rgb.slice(2);
+            const theme = colorNegative.attrs['theme'];
+            if (theme) sp.negativeColor = 'theme:' + theme;
+          }
+          if (colorMarkers) {
+            const rgb = colorMarkers.attrs['rgb'];
+            if (rgb) sp.markersColor = '#' + rgb.slice(2);
+            const theme = colorMarkers.attrs['theme'];
+            if (theme) sp.markersColor = 'theme:' + theme;
+          }
+
+          // Assign flags
+          if (showHigh) sp.showHigh = true;
+          if (showLow) sp.showLow = true;
+          if (showFirst) sp.showFirst = true;
+          if (showLast) sp.showLast = true;
+          if (showNegative) sp.showNegative = true;
+          if (showMarkers) sp.showMarkers = true;
+          if (lineWidth !== undefined) sp.lineWidth = lineWidth;
+          if (minAxisType) sp.minAxisType = minAxisType;
+          if (maxAxisType) sp.maxAxisType = maxAxisType;
+
+          ws.addSparkline(sp);
+        }
+      }
     }
   }
 }
