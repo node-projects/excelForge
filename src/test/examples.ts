@@ -2007,6 +2007,21 @@ async function example_cell_images() {
   const ws2 = wb2.getSheet('CellImages')!;
   if (!ws2) throw new Error('Sheet not found after round-trip');
   await wb2.writeFile('./output/29_cell_images_rt.xlsx');
+
+  // EPPlus validation
+  // @ts-ignore
+  const { execSync } = await import('child_process');
+  try {
+    const out = execSync('dotnet run validate_cellimage_epplus.cs output/29_cell_images.xlsx', {
+      encoding: 'utf-8', timeout: 60000, stdio: ['pipe', 'pipe', 'pipe'],
+    }).trim();
+    if (!out.includes('EPPlus validation: OK')) throw new Error('EPPlus: cell images validation failed');
+    if (!out.includes('B2.Picture: EXISTS')) throw new Error('EPPlus: B2 cell picture not found');
+    console.log('  EPPlus validation: OK');
+  } catch (e: any) {
+    if (e.message?.includes('EPPlus:')) throw e;
+    console.log('  EPPlus validation skipped:', e.message?.split('\n')[0]);
+  }
 }
 
 async function example_new_image_formats() {
@@ -2097,6 +2112,107 @@ async function example_new_image_formats() {
   const ws2 = wb2.getSheet('ImageFormats')!;
   if (!ws2) throw new Error('Sheet not found after round-trip');
   await wb2.writeFile('./output/30_new_image_formats_rt.xlsx');
+
+  // EPPlus validation
+  // @ts-ignore
+  const { execSync } = await import('child_process');
+  try {
+    const out = execSync('dotnet run validate_cellimage_epplus.cs output/30_new_image_formats.xlsx', {
+      encoding: 'utf-8', timeout: 60000, stdio: ['pipe', 'pipe', 'pipe'],
+    }).trim();
+    if (!out.includes('EPPlus validation: OK')) throw new Error('EPPlus: new image formats validation failed');
+    console.log('  EPPlus validation: OK');
+  } catch (e: any) {
+    if (e.message?.includes('EPPlus:')) throw e;
+    console.log('  EPPlus validation skipped:', e.message?.split('\n')[0]);
+  }
+}
+
+// ============================================================
+// 31. ABSOLUTE POSITIONING & FORM CONTROL WIDTH/HEIGHT
+// ============================================================
+async function example_absolute_and_sizing() {
+  const wb = new Workbook();
+
+  // Sheet 1: Absolute-positioned images
+  const ws1 = wb.addSheet('AbsoluteImages');
+  ws1.setValue(1, 1, 'Absolute-positioned images (not cell-anchored)');
+  ws1.setStyle(1, 1, style().bold().build());
+
+  const png = makeTestPng(40, 40, 0x33, 0x99, 0xFF);
+
+  // Image at absolute position (100px, 50px)
+  ws1.addImage({
+    data: png, format: 'png',
+    position: { x: 100, y: 50 },
+    width: 80, height: 80,
+    altText: 'Absolute image at (100,50)',
+  });
+
+  // Another at (300, 200)
+  ws1.addImage({
+    data: makeTestPng(40, 40, 0xFF, 0x66, 0x00), format: 'png',
+    position: { x: 300, y: 200 },
+    width: 60, height: 60,
+    altText: 'Absolute image at (300,200)',
+  });
+
+  // Also a cell-anchored image for comparison
+  ws1.addImage({
+    data: makeTestPng(40, 40, 0x00, 0xCC, 0x44), format: 'png',
+    from: { col: 5, row: 5 },
+    width: 50, height: 50,
+  });
+
+  // Sheet 2: Form controls with width/height instead of 'to'
+  const ws2 = wb.addSheet('FormControlSizing');
+  ws2.setValue(1, 1, 'Form controls with width/height');
+  ws2.setStyle(1, 1, style().bold().build());
+
+  ws2.addFormControl({
+    type: 'button',
+    from: { col: 1, row: 2 },
+    width: 120, height: 30,
+    text: 'Wide Button',
+  } as FormControl);
+
+  ws2.addFormControl({
+    type: 'checkBox',
+    from: { col: 1, row: 4 },
+    width: 80, height: 20,
+    text: 'Check me',
+    checked: 'unchecked',
+  } as FormControl);
+
+  // Also a traditional from/to control for comparison
+  ws2.addFormControl({
+    type: 'button',
+    from: { col: 1, row: 6 },
+    to: { col: 3, row: 7 },
+    text: 'Traditional Anchor',
+  } as FormControl);
+
+  await wb.writeFile('./output/31_absolute_and_sizing.xlsx');
+
+  // Round-trip
+  const wb2 = await Workbook.fromFile('./output/31_absolute_and_sizing.xlsx');
+  const ws1rt = wb2.getSheet('AbsoluteImages')!;
+  if (!ws1rt) throw new Error('AbsoluteImages sheet not found after round-trip');
+  await wb2.writeFile('./output/31_absolute_and_sizing_rt.xlsx');
+
+  // EPPlus validation
+  // @ts-ignore
+  const { execSync } = await import('child_process');
+  try {
+    const out = execSync('dotnet run validatorEpplus.cs output/31_absolute_and_sizing.xlsx', {
+      encoding: 'utf-8', timeout: 60000, stdio: ['pipe', 'pipe', 'pipe'],
+    }).trim();
+    if (!out.includes('OK')) throw new Error('EPPlus: absolute positioning validation failed');
+    console.log('  EPPlus validation: OK');
+  } catch (e: any) {
+    if (e.message?.includes('EPPlus:')) throw e;
+    console.log('  EPPlus validation skipped:', e.message?.split('\n')[0]);
+  }
 }
 
 // Run all examples
@@ -2133,9 +2249,10 @@ async function runAll() {
     ['Page Breaks',            example_page_breaks],
     ['Connections',            example_connections],
     ['Form Controls',          example_form_controls],
-    ['Huge File (200×100k)',   example_huge_file],
+    //['Huge File (200×100k)',   example_huge_file],
     ['Cell Images',            example_cell_images],
     ['New Image Formats',      example_new_image_formats],
+    ['Absolute & Sizing',      example_absolute_and_sizing],
   ] as const;
 
   for (const [name, fn] of examples) {

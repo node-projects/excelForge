@@ -11,6 +11,9 @@ import {
   parseCoreXml, parseAppXml, parseCustomXml,
   type CoreProperties, type ExtendedProperties, type CustomProperty,
 } from './properties.js';
+import {
+  CellError,
+} from './types.js';
 import type {
   CellStyle, Font, Fill, PatternFill, GradientFill, Border, BorderSide,
   Alignment, NumberFormat, MergeRange, FreezePane, SheetView,
@@ -533,7 +536,7 @@ function parseSheetData(
             break;
           }
           case 'e':
-            cell.value = raw; // error value
+            cell.value = new CellError(raw as any); // typed error value
             break;
           default: {
             const n = parseFloat(raw);
@@ -1109,12 +1112,23 @@ export async function readWorkbook(data: Uint8Array): Promise<ReadResult> {
     }
   }
 
+  // Restore print areas from named ranges into worksheets
+  const nonPrintAreaRanges: NamedRange[] = [];
+  for (const nr of namedRanges) {
+    if (nr.name === '_xlnm.Print_Area' && nr.scope) {
+      const ws = sheets.find(s => s.ws.name === nr.scope);
+      if (ws) ws.ws.printArea = nr.ref;
+    } else {
+      nonPrintAreaRanges.push(nr);
+    }
+  }
+
   return {
     sheets, styles, stylesXml, sharedStrings, sharedXml: ssXml,
     workbookXml: wbXml, workbookRels,
     contentTypes, contentTypesXml: ctXml,
     core, extended, extendedUnknownRaw, custom, hasCustomProps: custom.length > 0,
-    namedRanges, connections, connectionsXml, powerQueries,
+    namedRanges: nonPrintAreaRanges, connections, connectionsXml, powerQueries,
     unknownParts, allRels,
   };
 }

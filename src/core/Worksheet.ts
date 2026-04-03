@@ -1,3 +1,6 @@
+import {
+  CellError,
+} from '../core/types.js';
 import type {
   Cell, CellValue, CellStyle, MergeRange, Image, CellImage, Chart,
   ConditionalFormat, Table, AutoFilter, FreezePane, SplitPane,
@@ -170,6 +173,8 @@ export class Worksheet {
     return this.merge(sc.row, sc.col, ec.row, ec.col);
   }
 
+  getMerges(): readonly MergeRange[] { return this.merges; }
+
   // ─── Images ──────────────────────────────────────────────────────────────────
 
   addImage(img: Image): this {
@@ -278,6 +283,283 @@ export class Worksheet {
     return result;
   }
 
+  /** Iterate all populated cells. */
+  readAllCells(): Array<{ row: number; col: number; cell: Cell }> {
+    const out: Array<{ row: number; col: number; cell: Cell }> = [];
+    for (const [r, rowMap] of this.cells) {
+      for (const [c, cell] of rowMap) {
+        out.push({ row: r, col: c, cell });
+      }
+    }
+    return out;
+  }
+
+  /** Get the used range dimensions. */
+  getUsedRange(): { startRow: number; startCol: number; endRow: number; endCol: number } | null {
+    let minR = Infinity, maxR = 0, minC = Infinity, maxC = 0;
+    for (const [r, rowMap] of this.cells) {
+      for (const [c] of rowMap) {
+        if (r < minR) minR = r;
+        if (r > maxR) maxR = r;
+        if (c < minC) minC = c;
+        if (c > maxC) maxC = c;
+      }
+    }
+    return maxR === 0 ? null : { startRow: minR, startCol: minC, endRow: maxR, endCol: maxC };
+  }
+
+  /** Get column definition */
+  getColumn(col: number): ColumnDef | undefined {
+    return this.colDefs.get(col);
+  }
+
+  /** Get row definition */
+  getRow(row: number): RowDef | undefined {
+    return this.rowDefs.get(row);
+  }
+
+  // ─── Insert/Delete Rows & Columns ──────────────────────────────────────────
+
+  /** Insert `count` empty rows at the given row index (1-based). Existing rows shift down. */
+  insertRows(atRow: number, count: number): this {
+    // Shift cell data
+    const rows = [...this.cells.keys()].filter(r => r >= atRow).sort((a, b) => b - a);
+    for (const r of rows) {
+      const rowMap = this.cells.get(r)!;
+      this.cells.delete(r);
+      this.cells.set(r + count, rowMap);
+    }
+    // Shift row defs
+    const rdKeys = [...this.rowDefs.keys()].filter(r => r >= atRow).sort((a, b) => b - a);
+    for (const r of rdKeys) {
+      const d = this.rowDefs.get(r)!;
+      this.rowDefs.delete(r);
+      this.rowDefs.set(r + count, d);
+    }
+    // Shift merges
+    for (const m of this.merges) {
+      if (m.startRow >= atRow) m.startRow += count;
+      if (m.endRow >= atRow) m.endRow += count;
+    }
+    return this;
+  }
+
+  /** Delete `count` rows starting at the given row index (1-based). Rows below shift up. */
+  deleteRows(atRow: number, count: number): this {
+    for (let r = atRow; r < atRow + count; r++) {
+      this.cells.delete(r);
+      this.rowDefs.delete(r);
+    }
+    const rows = [...this.cells.keys()].filter(r => r >= atRow + count).sort((a, b) => a - b);
+    for (const r of rows) {
+      const rowMap = this.cells.get(r)!;
+      this.cells.delete(r);
+      this.cells.set(r - count, rowMap);
+    }
+    const rdKeys = [...this.rowDefs.keys()].filter(r => r >= atRow + count).sort((a, b) => a - b);
+    for (const r of rdKeys) {
+      const d = this.rowDefs.get(r)!;
+      this.rowDefs.delete(r);
+      this.rowDefs.set(r - count, d);
+    }
+    // Adjust merges
+    this.merges = this.merges.filter(m => !(m.startRow >= atRow && m.endRow < atRow + count));
+    for (const m of this.merges) {
+      if (m.startRow >= atRow + count) m.startRow -= count;
+      if (m.endRow >= atRow + count) m.endRow -= count;
+    }
+    return this;
+  }
+
+  /** Insert `count` empty columns at the given column index (1-based). Existing columns shift right. */
+  insertColumns(atCol: number, count: number): this {
+    for (const [, rowMap] of this.cells) {
+      const cols = [...rowMap.keys()].filter(c => c >= atCol).sort((a, b) => b - a);
+      for (const c of cols) {
+        const cell = rowMap.get(c)!;
+        rowMap.delete(c);
+        rowMap.set(c + count, cell);
+      }
+    }
+    const cdKeys = [...this.colDefs.keys()].filter(c => c >= atCol).sort((a, b) => b - a);
+    for (const c of cdKeys) {
+      const d = this.colDefs.get(c)!;
+      this.colDefs.delete(c);
+      this.colDefs.set(c + count, d);
+    }
+    for (const m of this.merges) {
+      if (m.startCol >= atCol) m.startCol += count;
+      if (m.endCol >= atCol) m.endCol += count;
+    }
+    return this;
+  }
+
+  // ─── Sort Ranges ─────────────────────────────────────────────────────────────
+
+  /** Sort a range of cells by a column. `sortCol` is 1-based. */
+  sortRange(ref: string, sortCol: number, order: 'asc' | 'desc' = 'asc'): this {
+    const { startRow, startCol, endRow, endCol } = parseRange(ref);
+    // Collect rows as arrays of cells
+    const rows: Array<{ rowIdx: number; cells: Map<number, Cell> }> = [];
+    for (let r = startRow; r <= endRow; r++) {
+      const rowMap = this.cells.get(r);
+      const subset = new Map<number, Cell>();
+      for (let c = startCol; c <= endCol; c++) {
+        const cell = rowMap?.get(c);
+        if (cell) subset.set(c, { ...cell });
+      }
+      rows.push({ rowIdx: r, cells: subset });
+    }
+    // Sort by sortCol value
+    rows.sort((a, b) => {
+      const va = a.cells.get(sortCol)?.value;
+      const vb = b.cells.get(sortCol)?.value;
+      const na = typeof va === 'number' ? va : typeof va === 'string' ? va : '';
+      const nb = typeof vb === 'number' ? vb : typeof vb === 'string' ? vb : '';
+      let cmp = 0;
+      if (typeof na === 'number' && typeof nb === 'number') cmp = na - nb;
+      else cmp = String(na).localeCompare(String(nb));
+      return order === 'desc' ? -cmp : cmp;
+    });
+    // Write sorted rows back
+    for (let i = 0; i < rows.length; i++) {
+      const r = startRow + i;
+      for (let c = startCol; c <= endCol; c++) {
+        const cell = rows[i].cells.get(c);
+        const rowMap = this.cells.get(r) ?? new Map();
+        if (!this.cells.has(r)) this.cells.set(r, rowMap);
+        if (cell) rowMap.set(c, cell);
+        else rowMap.delete(c);
+      }
+    }
+    return this;
+  }
+
+  // ─── Fill Operations ──────────────────────────────────────────────────────────
+
+  /** Fill a column with a numeric sequence. */
+  fillNumber(startRow: number, col: number, count: number, startValue: number = 0, step: number = 1): this {
+    for (let i = 0; i < count; i++) {
+      this.setValue(startRow + i, col, startValue + i * step);
+    }
+    return this;
+  }
+
+  /** Fill a column with dates. */
+  fillDate(startRow: number, col: number, count: number, startDate: Date, unit: 'day' | 'week' | 'month' | 'year' = 'day', step: number = 1): this {
+    for (let i = 0; i < count; i++) {
+      const d = new Date(startDate);
+      switch (unit) {
+        case 'day':   d.setDate(d.getDate() + i * step); break;
+        case 'week':  d.setDate(d.getDate() + i * step * 7); break;
+        case 'month': d.setMonth(d.getMonth() + i * step); break;
+        case 'year':  d.setFullYear(d.getFullYear() + i * step); break;
+      }
+      this.setValue(startRow + i, col, d);
+    }
+    return this;
+  }
+
+  /** Fill a column by cycling through a list of values. */
+  fillList(startRow: number, col: number, list: CellValue[], count: number): this {
+    for (let i = 0; i < count; i++) {
+      this.setValue(startRow + i, col, list[i % list.length]);
+    }
+    return this;
+  }
+
+  // ─── AutoFit Columns ─────────────────────────────────────────────────────────
+
+  /** Approximate autofit based on character count (no font metrics, assumes ~1.2 chars/unit). */
+  autoFitColumns(minWidth: number = 8, maxWidth: number = 60): this {
+    const range = this.getUsedRange();
+    if (!range) return this;
+    for (let c = range.startCol; c <= range.endCol; c++) {
+      let maxLen = 0;
+      for (let r = range.startRow; r <= range.endRow; r++) {
+        const cell = this.cells.get(r)?.get(c);
+        if (cell?.value != null) {
+          const s = String(cell.value);
+          if (s.length > maxLen) maxLen = s.length;
+        }
+        if (cell?.richText) {
+          const s = cell.richText.map(r => r.text).join('');
+          if (s.length > maxLen) maxLen = s.length;
+        }
+      }
+      if (maxLen > 0) {
+        const w = Math.max(minWidth, Math.min(maxWidth, maxLen * 1.2 + 2));
+        this.setColumn(c, { ...(this.colDefs.get(c) ?? {}), width: w, customWidth: true });
+      }
+    }
+    return this;
+  }
+
+  // ─── Row Duplicate / Splice ───────────────────────────────────────────────────
+
+  /** Duplicate a row and insert the copy at targetRow. */
+  duplicateRow(sourceRow: number, targetRow: number): this {
+    this.insertRows(targetRow, 1);
+    const srcMap = this.cells.get(sourceRow >= targetRow ? sourceRow + 1 : sourceRow);
+    if (srcMap) {
+      const newMap = new Map<number, Cell>();
+      for (const [c, cell] of srcMap) {
+        newMap.set(c, { ...cell, style: cell.style ? { ...cell.style } : undefined });
+      }
+      this.cells.set(targetRow, newMap);
+    }
+    // Copy row def
+    const srcDef = this.rowDefs.get(sourceRow >= targetRow ? sourceRow + 1 : sourceRow);
+    if (srcDef) this.rowDefs.set(targetRow, { ...srcDef });
+    return this;
+  }
+
+  /** Splice rows: delete `deleteCount` rows at `startRow`, then insert `newRows` data. */
+  spliceRows(startRow: number, deleteCount: number, newRows?: CellValue[][]): this {
+    if (deleteCount > 0) this.deleteRows(startRow, deleteCount);
+    if (newRows && newRows.length > 0) {
+      this.insertRows(startRow, newRows.length);
+      for (let i = 0; i < newRows.length; i++) {
+        this.writeRow(startRow + i, 1, newRows[i]);
+      }
+    }
+    return this;
+  }
+
+  // ─── Advanced Auto Filters ────────────────────────────────────────────────────
+
+  /** Set autoFilter with optional column filter criteria. */
+  setAutoFilter(ref: string, opts?: {
+    columns?: Array<{
+      col: number;
+      type: 'custom' | 'top10' | 'value' | 'dynamic';
+      operator?: string;
+      val?: string | number;
+      top?: boolean;
+      percent?: boolean;
+      items?: string[];
+      dynamicType?: string;
+    }>;
+  }): this {
+    this.autoFilter = { ref };
+    if (opts?.columns) {
+      this._filterColumns = opts.columns;
+    }
+    return this;
+  }
+
+  /** Internal: advanced filter column definitions */
+  _filterColumns?: Array<{
+    col: number;
+    type: string;
+    operator?: string;
+    val?: string | number;
+    top?: boolean;
+    percent?: boolean;
+    items?: string[];
+    dynamicType?: string;
+  }>;
+
   // ─── Sparklines ──────────────────────────────────────────────────────────────
 
   addSparkline(s: Sparkline): this {
@@ -329,6 +611,30 @@ export class Worksheet {
 
   getFormControls(): FormControl[] { return this.formControls; }
 
+  // ─── Print Area ──────────────────────────────────────────────────────────────
+
+  /** Print area reference, e.g. "A1:D10" or "$A$1:$D$10".
+   *  Converted to a _xlnm.Print_Area defined name at build time. */
+  printArea?: string;
+
+  // ─── Ignore Error Rules ──────────────────────────────────────────────────────
+
+  private ignoreErrors: Array<{ sqref: string; numberStoredAsText?: boolean; formula?: boolean;
+    formulaRange?: boolean; unlockedFormula?: boolean; evalError?: boolean;
+    twoDigitTextYear?: boolean; emptyRef?: boolean; listDataValidation?: boolean;
+    calculatedColumn?: boolean }> = [];
+
+  /** Add an ignoredError rule to suppress green triangles for the given range. */
+  addIgnoredError(sqref: string, opts: { numberStoredAsText?: boolean; formula?: boolean;
+    formulaRange?: boolean; unlockedFormula?: boolean; evalError?: boolean;
+    twoDigitTextYear?: boolean; emptyRef?: boolean; listDataValidation?: boolean;
+    calculatedColumn?: boolean }): this {
+    this.ignoreErrors.push({ sqref, ...opts });
+    return this;
+  }
+
+  getIgnoredErrors() { return this.ignoreErrors; }
+
   // ─── Preserved XML (round-trip) ─────────────────────────────────────────────
 
   addPreservedXml(xml: string): this {
@@ -358,7 +664,7 @@ export class Worksheet {
     const mergesXml    = this._mergesXml();
     const cfXml        = this._conditionalFormatXml(styles);
     const dvXml        = this._dataValidationsXml();
-    const autoFilterXml = this.autoFilter ? `<autoFilter ref="${this.autoFilter.ref}"/>` : '';
+    const autoFilterXml = this.autoFilter ? this._autoFilterXml() : '';
     const tablePartsXml = this.tables.length
       ? `<tableParts count="${this.tables.length}">${
           this.tableRIds.map(rId => `<tablePart r:id="${rId}"/>`).join('')
@@ -372,6 +678,7 @@ export class Worksheet {
       : '';
     const controlsXml = this._formControlsXml();
     const sparklineXml = this._sparklineXml();
+    const ignoredErrorsXml = this._ignoredErrorsXml();
     const protectionXml = this._protectionXml();
     const pageSetupXml  = this._pageSetupXml();
     const pageMarginsXml = this._pageMarginsXml();
@@ -402,6 +709,7 @@ ${pageSetupXml}
 ${headerFooterXml}
 ${rowBreaksXml}
 ${colBreaksXml}
+${ignoredErrorsXml}
 ${drawingXml}
 ${legacyDrawingXml}
 ${controlsXml}
@@ -514,6 +822,10 @@ ${this.preservedXml.join('\n')}
       // Cell image with no value — emit as error cell (Excel expects t="e" + #VALUE! for cell pictures)
       if (vmAttr) return `<c r="${ref}"${sAttr} t="e"${vmAttr}><v>#VALUE!</v></c>`;
       return styleIdx ? `<c r="${ref}"${sAttr}/>` : '';
+    }
+
+    if (v instanceof CellError) {
+      return `<c r="${ref}" t="e"${sAttr}${vmAttr}><v>${escapeXml(v.error)}</v></c>`;
     }
 
     if (typeof v === 'boolean') {
@@ -748,6 +1060,51 @@ ${this.preservedXml.join('\n')}
     });
     const inner = `<x14:sparklineGroups xmlns:xm="http://schemas.microsoft.com/office/excel/2006/main">${groups.join('')}</x14:sparklineGroups>`;
     return `<extLst><ext uri="{05C60535-1F16-4fd2-B633-F4F36F0B64E0}" xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main">${inner}</ext></extLst>`;
+  }
+
+  private _autoFilterXml(): string {
+    if (!this.autoFilter) return '';
+    const cols = this._filterColumns;
+    if (!cols || cols.length === 0) return `<autoFilter ref="${this.autoFilter.ref}"/>`;
+    const colXml = cols.map(fc => {
+      const colId = fc.col - 1; // 0-based
+      let inner = '';
+      if (fc.type === 'custom') {
+        const op = fc.operator ?? 'greaterThan';
+        inner = `<customFilters><customFilter operator="${op}" val="${fc.val ?? ''}"/></customFilters>`;
+      } else if (fc.type === 'top10') {
+        const attrs = [
+          fc.top === false ? 'top="0"' : '',
+          fc.percent ? 'percent="1"' : '',
+          `val="${fc.val ?? 10}"`,
+        ].filter(Boolean).join(' ');
+        inner = `<top10 ${attrs}/>`;
+      } else if (fc.type === 'value' && fc.items) {
+        inner = `<filters>${fc.items.map(v => `<filter val="${escapeXml(String(v))}"/>`).join('')}</filters>`;
+      } else if (fc.type === 'dynamic') {
+        inner = `<dynamicFilter type="${fc.dynamicType ?? 'aboveAverage'}"/>`;
+      }
+      return `<filterColumn colId="${colId}">${inner}</filterColumn>`;
+    }).join('');
+    return `<autoFilter ref="${this.autoFilter.ref}">${colXml}</autoFilter>`;
+  }
+
+  private _ignoredErrorsXml(): string {
+    if (!this.ignoreErrors.length) return '';
+    const items = this.ignoreErrors.map(ie => {
+      const attrs: string[] = [`sqref="${ie.sqref}"`];
+      if (ie.numberStoredAsText) attrs.push('numberStoredAsText="1"');
+      if (ie.formula)            attrs.push('formula="1"');
+      if (ie.formulaRange)       attrs.push('formulaRange="1"');
+      if (ie.unlockedFormula)    attrs.push('unlockedFormula="1"');
+      if (ie.evalError)          attrs.push('evalError="1"');
+      if (ie.twoDigitTextYear)   attrs.push('twoDigitTextYear="1"');
+      if (ie.emptyRef)           attrs.push('emptyRef="1"');
+      if (ie.listDataValidation) attrs.push('listDataValidation="1"');
+      if (ie.calculatedColumn)   attrs.push('calculatedColumn="1"');
+      return `<ignoredError ${attrs.join(' ')}/>`;
+    });
+    return `<ignoredErrors>${items.join('')}</ignoredErrors>`;
   }
 
   /** Drawing XML (images + charts) — returned separately for the drawing part */

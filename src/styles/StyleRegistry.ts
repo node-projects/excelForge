@@ -121,6 +121,10 @@ export class StyleRegistry {
   private dxfs: string[] = [];  // differential formats for conditional formatting
   private nextNumFmtId = 164;  // custom formats start at 164
 
+  // Named/cell styles
+  private cellStyleXfs: string[] = [];
+  private cellStyleNames: Array<{ name: string; xfId: number; builtinId?: number }> = [];
+
   constructor() {
     // Default required entries
     const defFont = fontXml({ name: 'Calibri', size: 11, scheme: 'minor' });
@@ -130,8 +134,34 @@ export class StyleRegistry {
     this.fills.push(fill0, fill1); this.fillIdx.set(fill0, 0); this.fillIdx.set(fill1, 1);
     const defBorder = borderXml({});
     this.borders.push(defBorder); this.borderIdx.set(defBorder, 0);
+    // Default cellStyleXf (Normal style)
+    this.cellStyleXfs.push(`<xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>`);
+    this.cellStyleNames.push({ name: 'Normal', xfId: 0, builtinId: 0 });
     // Default xf (style 0)
     this.xfs.push(`<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>`);
+  }
+
+  /**
+   * Register a named cell style (appears in Excel's Cell Styles gallery).
+   * Returns the xfId that can be referenced via CellStyle.namedStyleId.
+   */
+  registerNamedStyle(name: string, style: CellStyle, builtinId?: number): number {
+    const fontId   = this.internFont(style.font);
+    const fillId   = this.internFill(style.fill);
+    const borderId = this.internBorder(style.border);
+    const numFmtId = this.internNumFmt(style.numberFormat, style.numFmtId);
+    const applyFont      = style.font      ? ' applyFont="1"'      : '';
+    const applyFill      = style.fill      ? ' applyFill="1"'      : '';
+    const applyBorder    = style.border    ? ' applyBorder="1"'    : '';
+    const applyAlignment = style.alignment ? ' applyAlignment="1"' : '';
+    const applyNumFmt    = (style.numberFormat || style.numFmtId !== undefined) ? ' applyNumberFormat="1"' : '';
+    const align = style.alignment ? alignmentXml(style.alignment) : '';
+    const xml = `<xf numFmtId="${numFmtId}" fontId="${fontId}" fillId="${fillId}" borderId="${borderId}"${applyFont}${applyFill}${applyBorder}${applyAlignment}${applyNumFmt}>${align}</xf>`;
+
+    this.cellStyleXfs.push(xml);
+    const xfId = this.cellStyleXfs.length - 1;
+    this.cellStyleNames.push({ name, xfId, builtinId });
+    return xfId;
   }
 
   private internFont(f: Font | undefined): number {
@@ -193,7 +223,8 @@ export class StyleRegistry {
     const prot  = (style.locked !== undefined || style.hidden !== undefined)
       ? `<protection${style.locked !== undefined ? ` locked="${style.locked ? '1' : '0'}"` : ''}${style.hidden !== undefined ? ` hidden="${style.hidden ? '1' : '0'}"` : ''}/>`
       : '';
-    const xml = `<xf numFmtId="${numFmtId}" fontId="${fontId}" fillId="${fillId}" borderId="${borderId}" xfId="0"${applyFont}${applyFill}${applyBorder}${applyAlignment}${applyNumFmt}${applyProtection}>${align}${prot}</xf>`;
+    const xfId = style.namedStyleId ?? 0;
+    const xml = `<xf numFmtId="${numFmtId}" fontId="${fontId}" fillId="${fillId}" borderId="${borderId}" xfId="${xfId}"${applyFont}${applyFill}${applyBorder}${applyAlignment}${applyNumFmt}${applyProtection}>${align}${prot}</xf>`;
 
     this.xfs.push(xml);
     const idx = this.xfs.length - 1;
@@ -239,6 +270,27 @@ export class StyleRegistry {
     this.dxfs.unshift(...rawInners);
   }
 
+  /** Custom table style definitions */
+  private tableStyleDefs: Array<{
+    name: string;
+    elements: Array<{ type: string; dxfId: number }>;
+  }> = [];
+
+  /** Register a custom table style with DXF-based formatting per element type. */
+  registerTableStyle(name: string, def: {
+    headerRow?: import('../core/types.js').CellStyle;
+    dataRow1?: import('../core/types.js').CellStyle;
+    dataRow2?: import('../core/types.js').CellStyle;
+    totalRow?: import('../core/types.js').CellStyle;
+  }): void {
+    const elements: Array<{ type: string; dxfId: number }> = [];
+    if (def.headerRow) elements.push({ type: 'headerRow', dxfId: this.registerDxf(def.headerRow) });
+    if (def.totalRow)  elements.push({ type: 'totalRow',  dxfId: this.registerDxf(def.totalRow) });
+    if (def.dataRow1)  elements.push({ type: 'firstRowStripe', dxfId: this.registerDxf(def.dataRow1) });
+    if (def.dataRow2)  elements.push({ type: 'secondRowStripe', dxfId: this.registerDxf(def.dataRow2) });
+    this.tableStyleDefs.push({ name, elements });
+  }
+
   /** Produce styles.xml content */
   toXml(): string {
     const numFmtXml = this.numFmts.size
@@ -255,10 +307,17 @@ ${numFmtXml}
 <fonts count="${this.fonts.length}">${this.fonts.map(f => `<font>${f}</font>`).join('')}</fonts>
 <fills count="${this.fills.length}">${this.fills.map(f => `<fill>${f}</fill>`).join('')}</fills>
 <borders count="${this.borders.length}">${this.borders.join('')}</borders>
-<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
+<cellStyleXfs count="${this.cellStyleXfs.length}">${this.cellStyleXfs.join('')}</cellStyleXfs>
 <cellXfs count="${this.xfs.length}">${this.xfs.join('')}</cellXfs>
-<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
+<cellStyles count="${this.cellStyleNames.length}">${this.cellStyleNames.map(cs =>
+  `<cellStyle name="${escapeXml(cs.name)}" xfId="${cs.xfId}"${cs.builtinId !== undefined ? ` builtinId="${cs.builtinId}"` : ''}/>`
+).join('')}</cellStyles>
 ${this.dxfs.length ? `<dxfs count="${this.dxfs.length}">${this.dxfs.map(d => `<dxf>${d}</dxf>`).join('')}</dxfs>` : ''}
+${this.tableStyleDefs.length ? `<tableStyles count="${this.tableStyleDefs.length}">${this.tableStyleDefs.map(ts =>
+  `<tableStyle name="${escapeXml(ts.name)}" count="${ts.elements.length}">${ts.elements.map(el =>
+    `<tableStyleElement type="${el.type}" dxfId="${el.dxfId}"/>`
+  ).join('')}</tableStyle>`
+).join('')}</tableStyles>` : ''}
 </styleSheet>`;
   }
 }

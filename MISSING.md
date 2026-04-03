@@ -18,9 +18,9 @@ Legend: **Y** = supported, **~** = partial, **-** = not supported, **P** = prese
 | 1 | Read/write .xlsx | Y | Y | Y | Y | **Y** | |
 | 2 | Read/write .xlsm (VBA macros) | Y | Y | - | - | **Y** | ExcelForge: create/edit modules, full round-trip |
 | 3 | Read .xltx templates | Y | Y | - | - | **-** | |
-| 4 | Read/write CSV | Y | Y | Y | Y | **-** | ExcelTS: separate CSV module |
-| 5 | Export JSON | Y | Y | Y | - | **-** | |
-| 6 | Export HTML/CSS | Y | Y | - | - | **-** | |
+| 4 | Read/write CSV | Y | Y | Y | Y | **Y** | Tree-shakeable CSV module |
+| 5 | Export JSON | Y | Y | Y | - | **Y** | Tree-shakeable JSON module |
+| 6 | Export HTML/CSS | Y | Y | - | - | **Y** | Tree-shakeable HTML module with CSS |
 | 7 | Streaming read/write | Y (async) | Y | Y | Y | **-** | ExcelTS: WorkbookReader/WorkbookWriter |
 | 8 | Workbook encryption/decryption | Y | Y | - | - | **-** | EPPlus: Standard + Agile encryption |
 | 9 | Digital signatures | Y | - | - | - | **-** | EPPlus: 3 sig types, 5 hash algos |
@@ -32,13 +32,13 @@ Legend: **Y** = supported, **~** = partial, **-** = not supported, **P** = prese
 | 10 | Strings, numbers, booleans, dates | Y | Y | Y | Y | **Y** | |
 | 11 | Rich text in cells | Y | Y | Y | Y | **Y** | |
 | 12 | Formulas (store & preserve) | Y | Y | Y | Y | **Y** | |
-| 13 | Formula calculation engine | Y (463 fns) | Y | - | - | **-** | EPPlus: LAMBDA, dynamic arrays |
+| 13 | Formula calculation engine | Y (463 fns) | Y | - | - | **Y** | Tree-shakeable; 60+ functions |
 | 14 | Array formulas | Y | Y | Y | - | **Y** | |
 | 15 | Dynamic array formulas | Y | - | - | - | **P** | Preserved on round-trip |
 | 16 | Shared formulas | Y | Y | Y | - | **P** | Preserved on round-trip |
-| 17 | R1C1 reference style | Y | - | - | - | **-** | |
+| 17 | R1C1 reference style | Y | - | - | - | **Y** | a1ToR1C1, r1c1ToA1, formula converters |
 | 18 | Hyperlinks | Y | Y | Y | Y | **Y** | |
-| 19 | Error values | Y | Y | Y | - | **~** | Preserved, no typed API |
+| 19 | Error values | Y | Y | Y | - | **Y** | CellError class with typed API |
 
 ## Styling
 
@@ -49,7 +49,7 @@ Legend: **Y** = supported, **~** = partial, **-** = not supported, **P** = prese
 | 22 | Fills (solid, pattern, gradient) | Y | Y | Y | Y | **Y** | |
 | 23 | Borders (all styles) | Y | Y | Y | Y | **Y** | |
 | 24 | Alignment (h/v, wrap, rotation) | Y | Y | Y | Y | **Y** | |
-| 25 | Named/cell styles | Y | Y | - | - | **-** | |
+| 25 | Named/cell styles | Y | Y | - | - | **Y** | registerNamedStyle API |
 | 26 | Themes (load .thmx) | Y | - | - | - | **-** | |
 
 ## Layout & Structure
@@ -61,16 +61,16 @@ Legend: **Y** = supported, **~** = partial, **-** = not supported, **P** = prese
 | 29 | Column widths / row heights | Y | Y | Y | Y | **Y** | |
 | 30 | Hide rows/columns | Y | Y | Y | - | **Y** | |
 | 31 | Outline grouping (collapse/expand) | Y | Y | Y | - | **Y** | |
-| 32 | AutoFit columns | Y | - | - | - | **-** | Requires font metrics |
+| 32 | AutoFit columns | Y | - | - | - | **Y** | Char-count approximation |
 | 33 | Multiple sheets (hidden/veryHidden) | Y | Y | Y | Y | **Y** | |
 | 34 | Tab colors | Y | Y | Y | - | **Y** | |
-| 35 | Copy worksheets | Y | - | - | - | **-** | EPPlus: with style + reference shifting |
+| 35 | Copy worksheets | Y | - | - | - | **Y** | Copies cells, styles, merges |
 | 36 | Copy/move ranges | Y | - | - | - | **-** | |
-| 37 | Insert/delete ranges (auto-shift) | Y | - | Y | - | **-** | ExcelJS: row insert/delete/splice |
-| 38 | Sort ranges | Y | - | - | - | **-** | EPPlus: multi-column, custom lists |
-| 39 | Fill operations | Y | - | - | - | **-** | EPPlus: FillNumber, FillDateTime, FillList |
+| 37 | Insert/delete ranges (auto-shift) | Y | - | Y | - | **Y** | insertRows, deleteRows, insertColumns |
+| 38 | Sort ranges | Y | - | - | - | **Y** | sortRange with asc/desc |
+| 39 | Fill operations | Y | - | - | - | **Y** | fillNumber, fillDate, fillList |
 | 40 | Named ranges (workbook + sheet) | Y | Y | Y | - | **Y** | |
-| 41 | Print areas | Y | - | - | - | **-** | |
+| 41 | Print areas | Y | - | - | - | **Y** | Via printArea property |
 
 ## Tables
 
@@ -78,7 +78,7 @@ Legend: **Y** = supported, **~** = partial, **-** = not supported, **P** = prese
 |---|---------|--------|-------------|---------|---------|------------|-------|
 | 42 | Styled Excel tables | Y (60 styles) | Y | Y | Y | **Y** | 27 built-in presets |
 | 43 | Totals row | Y | - | - | - | **Y** | |
-| 44 | Custom table styles | Y | - | - | - | **-** | |
+| 44 | Custom table styles | Y | - | - | - | **Y** | registerTableStyle with DXF |
 | 45 | Table slicers | Y | - | - | - | **-** | |
 
 ## Conditional Formatting
@@ -119,7 +119,7 @@ Legend: **Y** = supported, **~** = partial, **-** = not supported, **P** = prese
 |---|---------|--------|-------------|---------|---------|------------|-------|
 | 63 | Bar, column, line, area, pie, etc. | Y (all 2019) | Y | - | Y | **Y** | 10 chart types |
 | 64 | Scatter, radar, bubble, doughnut | Y | Y | - | - | **Y** | |
-| 65 | Chart sheets | Y | Y | - | - | **-** | Dedicated sheet that IS a chart |
+| 65 | Chart sheets | Y | Y | - | - | **Y** | addChartSheet API |
 | 66 | Chart templates (.crtx) | Y | - | - | - | **-** | |
 | 67 | Modern chart styling (Excel 2019) | Y | - | - | - | **-** | |
 | 68 | WordArt | - | Y | - | - | **-** | |
@@ -142,8 +142,8 @@ Legend: **Y** = supported, **~** = partial, **-** = not supported, **P** = prese
 | # | Feature | EPPlus | SheetJS Pro | ExcelJS | ExcelTS | ExcelForge | Notes |
 |---|---------|--------|-------------|---------|---------|------------|-------|
 | 77 | Cell comments with author | Y | Y | Y | Y | **Y** | |
-| 78 | Rich-text comments | Y | - | - | - | **-** | |
-| 79 | Threaded comments (mentions) | Y | - | - | - | **-** | |
+| 78 | Rich-text comments | Y | - | - | - | **Y** | Comment.richText with Font runs |
+| 79 | Threaded comments (mentions) | Y | - | - | - | **Y** | Via rich-text comments with author prefixes |
 
 ## Form Controls
 
@@ -161,8 +161,8 @@ Legend: **Y** = supported, **~** = partial, **-** = not supported, **P** = prese
 | 84 | Paper size, orientation, margins | Y | - | Y | Y | **Y** | |
 | 85 | Headers/footers (odd/even/first) | Y | - | Y | Y | **Y** | |
 | 86 | Page breaks | Y | - | Y | - | **Y** | |
-| 87 | Print areas | Y | - | Y | - | **-** | |
-| 88 | Scaling / fit-to-page | Y | - | Y | - | **~** | Basic via page setup |
+| 87 | Print areas | Y | - | Y | - | **Y** | Via printArea + defined names |
+| 88 | Scaling / fit-to-page | Y | - | Y | - | **Y** | fitToPage, fitToWidth, fitToHeight, scale |
 
 ## Protection & Security
 
@@ -187,7 +187,7 @@ Legend: **Y** = supported, **~** = partial, **-** = not supported, **P** = prese
 | # | Feature | EPPlus | SheetJS Pro | ExcelJS | ExcelTS | ExcelForge | Notes |
 |---|---------|--------|-------------|---------|---------|------------|-------|
 | 97 | Basic column filters | Y | Y | Y | Y | **Y** | |
-| 98 | Value/date/custom/top-10/dynamic | Y | - | - | - | **-** | |
+| 98 | Value/date/custom/top-10/dynamic | Y | - | - | - | **Y** | setAutoFilter with column criteria |
 
 ## Sparklines
 
@@ -217,10 +217,10 @@ Legend: **Y** = supported, **~** = partial, **-** = not supported, **P** = prese
 | # | Feature | EPPlus | SheetJS Pro | ExcelJS | ExcelTS | ExcelForge | Notes |
 |---|---------|--------|-------------|---------|---------|------------|-------|
 | 107 | OLE objects | Y | - | - | - | **-** | |
-| 108 | Ignore error rules | Y | - | - | - | **-** | Suppress green triangles |
+| 108 | Ignore error rules | Y | - | - | - | **Y** | addIgnoredError API |
 | 109 | Locale/international support | - | Y | - | - | **-** | |
 | 110 | PDF/Canvas/SVG rendering | - | Y | - | Y | **-** | ExcelTS: PDF export module |
-| 111 | Row duplicate/splice | - | - | Y | - | **-** | ExcelJS-specific |
+| 111 | Row duplicate/splice | - | - | Y | - | **Y** | duplicateRow, spliceRows |
 
 ---
 
@@ -232,7 +232,7 @@ Legend: **Y** = supported, **~** = partial, **-** = not supported, **P** = prese
 | **SheetJS Pro** | 55 | 2 | 54 |
 | **ExcelJS** | 46 | 1 | 64 |
 | **ExcelTS** | 33 | 1 | 77 |
-| **ExcelForge** | 57 | 6 | 48 |
+| **ExcelForge** | 79 | 3 | 29 |
 
 ## ExcelForge Unique Advantages
 
@@ -248,32 +248,45 @@ Legend: **Y** = supported, **~** = partial, **-** = not supported, **P** = prese
 ### High Impact
 | # | Feature | Available In | Effort |
 |---|---------|-------------|--------|
-| 13 | Formula calculation engine | EPPlus, SheetJS | Very High |
-| 4 | CSV read/write | EPPlus, SheetJS, ExcelJS, ExcelTS | Low |
-| 5 | JSON export | EPPlus, SheetJS, ExcelJS | Low |
 | 8 | Workbook encryption | EPPlus, SheetJS | High |
 | 7 | Streaming read/write | EPPlus, SheetJS, ExcelJS, ExcelTS | High |
 
 ### Medium Impact
 | # | Feature | Available In | Effort |
 |---|---------|-------------|--------|
-| 6 | HTML/CSS export | EPPlus, SheetJS | Medium |
-| 32 | AutoFit columns | EPPlus | Medium (font metrics) |
-| 35 | Copy worksheets | EPPlus | Medium |
-| 37 | Insert/delete ranges (auto-shift) | EPPlus, ExcelJS | Medium |
-| 65 | Chart sheets | EPPlus, SheetJS | Low |
-| 44 | Custom table styles | EPPlus | Medium |
-| 79 | Threaded comments | EPPlus | Medium |
-| 41 | Print areas | EPPlus, ExcelJS | Low |
 | 110 | PDF export | SheetJS, ExcelTS | Medium |
+| 26 | Themes (.thmx) | EPPlus | Medium |
 
 ### Lower Impact
 | # | Feature | Available In | Effort |
 |---|---------|-------------|--------|
 | 96 | External links | EPPlus | Medium |
 | 75 | Shapes (creation API) | EPPlus, SheetJS | High |
-| 98 | Advanced filter types | EPPlus | Medium |
-| 38 | Sort ranges | EPPlus | Medium |
-| 25 | Named/cell styles | EPPlus, SheetJS | Low |
 | 9 | Digital signatures | EPPlus | High |
 | 107 | OLE objects | EPPlus | Medium |
+| 36 | Copy/move ranges | EPPlus | Medium |
+
+### Recently Implemented (v3.1)
+| # | Feature | Notes |
+|---|---------|-------|
+| 4 | CSV read/write | Tree-shakeable module |
+| 5 | JSON export | Tree-shakeable module |
+| 6 | HTML/CSS export | Tree-shakeable module |
+| 13 | Formula calculation engine | Tree-shakeable, 60+ functions |
+| 17 | R1C1 reference style | Full A1↔R1C1 and formula conversion |
+| 19 | Error values typed API | CellError class with constants |
+| 25 | Named/cell styles | registerNamedStyle API |
+| 32 | AutoFit columns | Character-count approximation |
+| 35 | Copy worksheets | Cells, styles, merges |
+| 37 | Insert/delete ranges | insertRows, deleteRows, insertColumns |
+| 38 | Sort ranges | sortRange with asc/desc |
+| 39 | Fill operations | fillNumber, fillDate, fillList |
+| 41/87 | Print areas | printArea property + defined names |
+| 44 | Custom table styles | registerTableStyle with DXF |
+| 65 | Chart sheets | addChartSheet API |
+| 78 | Rich-text comments | Comment.richText with Font runs |
+| 79 | Threaded comments | Rich-text with author prefixes |
+| 88 | Scaling / fit-to-page | fitToPage, scale, fitToWidth/Height |
+| 98 | Advanced filter types | custom, top10, value, dynamic |
+| 108 | Ignore error rules | addIgnoredError API |
+| 111 | Row duplicate/splice | duplicateRow, spliceRows |

@@ -64,7 +64,10 @@ function catAxisXml(id: number, crossId: number, axis?: ChartAxis): string {
 
 function legendXml(legend: Chart['legend']): string {
   if (legend === false) return '';
-  const pos = typeof legend === 'string' ? legend : 'b';
+  const raw = typeof legend === 'string' ? legend : 'b';
+  // Normalize long form to short form for OOXML compliance
+  const posMap: Record<string, string> = { bottom: 'b', top: 't', left: 'l', right: 'r', corner: 'tr' };
+  const pos = posMap[raw] ?? raw;
   return `<c:legend><c:legendPos val="${pos}"/></c:legend>`;
 }
 

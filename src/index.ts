@@ -29,14 +29,32 @@ export { Workbook }     from './core/Workbook.js';
 export { Worksheet }    from './core/Worksheet.js';
 export { SharedStrings } from './core/SharedStrings.js';
 export { StyleRegistry } from './styles/StyleRegistry.js';
+export { CellError }    from './core/types.js';
 
 // ── Builders & helpers ──────────────────────────────────────────────────────
 export { style, StyleBuilder, Styles, Colors, NumFmt } from './styles/builders.js';
+export {
+  a1ToR1C1, r1c1ToA1, formulaToR1C1, formulaFromR1C1,
+} from './utils/helpers.js';
+
+// ── CSV & JSON modules (tree-shakeable) ─────────────────────────────────────
+export { worksheetToCsv, csvToWorkbook } from './features/CsvModule.js';
+export type { CsvOptions } from './features/CsvModule.js';
+export { worksheetToJson, workbookToJson } from './features/JsonModule.js';
+export type { JsonExportOptions } from './features/JsonModule.js';
+
+// ── HTML export module (tree-shakeable) ─────────────────────────────────────
+export { worksheetToHtml } from './features/HtmlModule.js';
+export type { HtmlExportOptions } from './features/HtmlModule.js';
+
+// ── Formula Calculation Engine (tree-shakeable) ──────────────────────────────
+export { FormulaEngine } from './features/FormulaEngine.js';
 
 // ── Types ───────────────────────────────────────────────────────────────────
 export type {
   // Values
   CellValue,
+  ErrorValue,
   Cell,
   RichTextRun,
 

@@ -145,8 +145,80 @@ export class Workbook {
     return this.sheets.map(s => s.name);
   }
 
+  getSheets(): readonly Worksheet[] {
+    return this.sheets;
+  }
+
   removeSheet(name: string): this {
     this.sheets = this.sheets.filter(s => s.name !== name);
+    return this;
+  }
+
+  /**
+   * Add a chart sheet — a dedicated sheet that is entirely a chart.
+   * The chart fills the whole sheet area.
+   */
+  addChartSheet(name: string, chart: import('./types.js').Chart): Worksheet {
+    const ws = this.addSheet(name);
+    // Mark as chart sheet via an internal flag
+    (ws as any)._isChartSheet = true;
+    ws.addChart(chart);
+    return ws;
+  }
+
+  /**
+   * Copy an existing worksheet (with all cell data, styles, merges) to a new sheet.
+   */
+  copySheet(sourceName: string, newName: string): Worksheet {
+    const src = this.getSheet(sourceName);
+    if (!src) throw new Error(`Sheet "${sourceName}" not found`);
+    const ws = this.addSheet(newName);
+    // Copy cell data
+    const cells = src.readAllCells();
+    for (const { row, col, cell } of cells) {
+      const target = ws.getCell(row, col);
+      if (cell.value != null) target.value = cell.value;
+      if (cell.formula)       target.formula = cell.formula;
+      if (cell.arrayFormula)  target.arrayFormula = cell.arrayFormula;
+      if (cell.richText)      target.richText = cell.richText.map(r => ({ ...r, font: r.font ? { ...r.font } : undefined }));
+      if (cell.style)         target.style = { ...cell.style };
+      if (cell.comment)       target.comment = { ...cell.comment };
+      if (cell.hyperlink)     target.hyperlink = { ...cell.hyperlink };
+    }
+    // Copy merges
+    for (const m of src.getMerges()) {
+      ws.merge(m.startRow, m.startCol, m.endRow, m.endCol);
+    }
+    // Copy column defs
+    const range = src.getUsedRange();
+    if (range) {
+      for (let c = range.startCol; c <= range.endCol; c++) {
+        const cd = src.getColumn(c);
+        if (cd) ws.setColumn(c, { ...cd });
+      }
+    }
+    // Copy page setup and other properties
+    if (src.pageSetup) ws.pageSetup = { ...src.pageSetup };
+    if (src.printArea) ws.printArea = src.printArea;
+    return ws;
+  }
+
+  /** Custom table styles for tables */
+  private _customTableStyles: Map<string, {
+    headerRow?: import('./types.js').CellStyle;
+    dataRow1?: import('./types.js').CellStyle;
+    dataRow2?: import('./types.js').CellStyle;
+    totalRow?: import('./types.js').CellStyle;
+  }> = new Map();
+
+  /** Register a custom table style that can be referenced by tables. */
+  registerTableStyle(name: string, def: {
+    headerRow?: import('./types.js').CellStyle;
+    dataRow1?: import('./types.js').CellStyle;
+    dataRow2?: import('./types.js').CellStyle;
+    totalRow?: import('./types.js').CellStyle;
+  }): this {
+    this._customTableStyles.set(name, def);
     return this;
   }
 
@@ -392,6 +464,11 @@ export class Workbook {
     const styles = new StyleRegistry();
     const shared = new SharedStrings();
     const entries: ZipEntry[] = [];
+
+    // Register custom table styles
+    for (const [name, def] of this._customTableStyles) {
+      styles.registerTableStyle(name, def);
+    }
 
     let globalRId = 1;
     for (const ws of this.sheets) ws.rId = `rId${globalRId++}`;
@@ -786,8 +863,17 @@ ${cellImgRels.join('\n')}
   }
 
   private _definedNamesXml(): string {
-    if (!this.namedRanges.length) return '';
-    return `<definedNames>${this.namedRanges.map(nr => {
+    // Collect print areas from sheets
+    const printAreaNames: NamedRange[] = [];
+    for (const ws of this.sheets) {
+      if (ws.printArea) {
+        const ref = ws.printArea.includes('!') ? ws.printArea : `'${ws.name}'!${ws.printArea}`;
+        printAreaNames.push({ name: '_xlnm.Print_Area', ref, scope: ws.name });
+      }
+    }
+    const all = [...this.namedRanges, ...printAreaNames];
+    if (!all.length) return '';
+    return `<definedNames>${all.map(nr => {
       let attrs = `name="${escapeXml(nr.name)}"`;
       if (nr.scope) {
         const idx = this.sheets.findIndex(s => s.name === nr.scope);
@@ -908,7 +994,28 @@ ${hasCustom ? `<Relationship Id="rId4" Type="http://schemas.openxmlformats.org/o
     const commentsXml = comments.map(({ row, col, comment }) => {
       const ref = `${colIndexToLetter(col)}${row}`;
       const authorIdx = authors.indexOf(comment.author ?? '');
-      return `<comment ref="${ref}" authorId="${authorIdx}"><text><r><t>${escapeXml(comment.text)}</t></r></text></comment>`;
+      let textXml: string;
+      if (comment.richText && comment.richText.length > 0) {
+        textXml = comment.richText.map(run => {
+          let rPr = '';
+          if (run.font) {
+            const f = run.font;
+            if (f.bold)   rPr += '<b/>';
+            if (f.italic) rPr += '<i/>';
+            if (f.underline && f.underline !== 'none') rPr += `<u val="${f.underline === 'single' ? 'single' : f.underline}"/>`;
+            if (f.strike) rPr += '<strike/>';
+            if (f.size)   rPr += `<sz val="${f.size}"/>`;
+            if (f.color)  rPr += `<color rgb="${f.color}"/>`;
+            if (f.name)   rPr += `<rFont val="${escapeXml(f.name)}"/>`;
+            if (f.family != null) rPr += `<family val="${f.family}"/>`;
+          }
+          const rPrTag = rPr ? `<rPr>${rPr}</rPr>` : '';
+          return `<r>${rPrTag}<t xml:space="preserve">${escapeXml(run.text)}</t></r>`;
+        }).join('');
+      } else {
+        textXml = `<r><t>${escapeXml(comment.text)}</t></r>`;
+      }
+      return `<comment ref="${ref}" authorId="${authorIdx}"><text>${textXml}</text></comment>`;
     }).join('');
     return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <comments xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">

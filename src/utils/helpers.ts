@@ -114,3 +114,58 @@ export function bytesToBase64(data: Uint8Array): string {
   }
   return btoa(chunks.join(''));
 }
+
+// ─── R1C1 Reference Style ─────────────────────────────────────────────────────
+
+/**
+ * Convert an A1 reference to R1C1 notation (relative to a base cell).
+ * e.g. a1ToR1C1("C3", 1, 1) → "R[2]C[2]"
+ *      a1ToR1C1("$C$3", 1, 1) → "R3C3"
+ */
+export function a1ToR1C1(ref: string, baseRow: number, baseCol: number): string {
+  const m = ref.match(/^(\$?)([A-Z]+)(\$?)(\d+)$/);
+  if (!m) return ref;
+  const colAbs = m[1] === '$', col = colLetterToIndex(m[2]);
+  const rowAbs = m[3] === '$', row = parseInt(m[4], 10);
+  const rPart = rowAbs ? `R${row}` : (row === baseRow ? 'R' : `R[${row - baseRow}]`);
+  const cPart = colAbs ? `C${col}` : (col === baseCol ? 'C' : `C[${col - baseCol}]`);
+  return rPart + cPart;
+}
+
+/**
+ * Convert R1C1 notation back to A1 (relative to a base cell).
+ * e.g. r1c1ToA1("R[2]C[2]", 1, 1) → "C3"
+ *      r1c1ToA1("R3C3", 1, 1) → "$C$3"
+ */
+export function r1c1ToA1(ref: string, baseRow: number, baseCol: number): string {
+  const m = ref.match(/^R(\[(-?\d+)\]|(\d+))?C(\[(-?\d+)\]|(\d+))?$/);
+  if (!m) return ref;
+  let row: number, rowAbs: boolean;
+  let col: number, colAbs: boolean;
+  if (m[3] !== undefined) { row = parseInt(m[3], 10); rowAbs = true; }
+  else if (m[2] !== undefined) { row = baseRow + parseInt(m[2], 10); rowAbs = false; }
+  else { row = baseRow; rowAbs = false; }
+  if (m[6] !== undefined) { col = parseInt(m[6], 10); colAbs = true; }
+  else if (m[5] !== undefined) { col = baseCol + parseInt(m[5], 10); colAbs = false; }
+  else { col = baseCol; colAbs = false; }
+  return `${colAbs ? '$' : ''}${colIndexToLetter(col)}${rowAbs ? '$' : ''}${row}`;
+}
+
+/**
+ * Convert a formula's references from A1 to R1C1 notation.
+ * baseRow/baseCol is the cell containing the formula.
+ */
+export function formulaToR1C1(formula: string, baseRow: number, baseCol: number): string {
+  return formula.replace(/(\$?)([A-Z]+)(\$?)(\d+)/g, (m, d1, c, d2, r) =>
+    a1ToR1C1(`${d1}${c}${d2}${r}`, baseRow, baseCol)
+  );
+}
+
+/**
+ * Convert a formula's references from R1C1 to A1 notation.
+ */
+export function formulaFromR1C1(formula: string, baseRow: number, baseCol: number): string {
+  return formula.replace(/R(\[(-?\d+)\]|(\d+))?C(\[(-?\d+)\]|(\d+))?/g, (m) =>
+    r1c1ToA1(m, baseRow, baseCol)
+  );
+}

@@ -106,11 +106,33 @@ export interface CellStyle {
   numFmtId?:     number;
   locked?:       boolean;
   hidden?:       boolean;
+  /** Reference to a named style xfId (from StyleRegistry.registerNamedStyle) */
+  namedStyleId?: number;
 }
 
 // ─── Cell Value ───────────────────────────────────────────────────────────────
 
-export type CellValue = string | number | boolean | Date | null | undefined;
+/** Excel error value constants */
+export type ErrorValue =
+  | '#NULL!' | '#DIV/0!' | '#VALUE!' | '#REF!' | '#NAME?' | '#NUM!' | '#N/A' | '#GETTING_DATA';
+
+/** Sentinel object that represents an Excel error value in a cell */
+export class CellError {
+  readonly error: ErrorValue;
+  constructor(error: ErrorValue) { this.error = error; }
+  toString() { return this.error; }
+
+  static readonly NULL    = new CellError('#NULL!');
+  static readonly DIV0    = new CellError('#DIV/0!');
+  static readonly VALUE   = new CellError('#VALUE!');
+  static readonly REF     = new CellError('#REF!');
+  static readonly NAME    = new CellError('#NAME?');
+  static readonly NUM     = new CellError('#NUM!');
+  static readonly NA      = new CellError('#N/A');
+  static readonly GETTING = new CellError('#GETTING_DATA');
+}
+
+export type CellValue = string | number | boolean | Date | CellError | null | undefined;
 
 // ─── Rich Text ────────────────────────────────────────────────────────────────
 
@@ -138,6 +160,8 @@ export interface Cell {
 export interface Comment {
   text:       string;
   author?:    string;
+  /** Rich-text runs for formatted comments (overrides plain text) */
+  richText?:  RichTextRun[];
 }
 
 // ─── Hyperlink ────────────────────────────────────────────────────────────────
