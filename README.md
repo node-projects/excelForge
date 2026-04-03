@@ -16,28 +16,36 @@ ExcelForge gives you the full power of the OOXML spec — including real DEFLATE
 | **Read existing files** | Load `.xlsx` from file, `Uint8Array`, `base64`, or `Blob` |
 | **Patch-only writes** | Re-serialise only changed sheets; preserve pivot tables, VBA, charts, unknown parts verbatim |
 | **Compression** | Full LZ77 + Huffman DEFLATE (levels 0–9). Typical XML compresses 80–85% |
-| **Cell Values** | Strings, numbers, booleans, dates, formulas, array formulas, rich text |
+| **Cell Values** | Strings, numbers, booleans, dates, formulas, array formulas, dynamic arrays, shared formulas, rich text |
 | **Styles** | Fonts, solid/pattern/gradient fills, all border styles, alignment, 30+ number format presets |
 | **Layout** | Merge cells, freeze/split panes, column widths, row heights, hide rows/cols, outline grouping |
-| **Charts** | Bar, column (stacked/100%), line, area, pie, doughnut, scatter, radar, bubble |
+| **Charts** | Bar, column (stacked/100%), line, area, pie, doughnut, scatter, radar, bubble; chart sheets |
 | **Images** | PNG, JPEG, GIF, BMP, SVG, WebP, ICO, EMF, WMF, TIFF — two-cell, one-cell, or absolute anchors |
 | **In-Cell Pictures** | Embed images directly inside cells via richData/metadata (Excel 365+) |
-| **Tables** | Styled Excel tables with totals row, filter buttons, column definitions |
-| **Conditional Formatting** | Cell rules, color scales, data bars, icon sets, top/bottom N, above/below average |
+| **Shapes** | 28 preset shapes (rect, ellipse, arrows, flowchart, etc.) with fill, line, text, rotation |
+| **WordArt** | Text effects with 20 preset transforms (arch, wave, inflate, etc.) |
+| **Tables** | Styled Excel tables with totals row, filter buttons, custom table styles, table slicers |
+| **Conditional Formatting** | Cell rules, color scales, data bars, icon sets (incl. custom), cross-worksheet refs |
 | **Data Validation** | Dropdowns, whole number, decimal, date, time, text length, custom formula |
 | **Sparklines** | Line, bar, stacked — with high/low/first/last/negative colors |
+| **Pivot Tables** | Row/column/data fields, aggregation, calculated fields, grouping, custom styles, slicers |
 | **Page Setup** | Paper size, orientation, margins, headers/footers (odd/even/first), print options, page breaks |
 | **Protection** | Sheet protection with password, cell locking/hiding |
 | **Named Ranges** | Workbook and sheet-scoped |
-| **Connections** | OLEDB, ODBC, text/CSV, web — create, read, round-trip |
+| **Connections** | OLEDB, ODBC, text/CSV, web — create, read, round-trip; query tables |
 | **Power Query** | Read M formulas from DataMashup; full round-trip preservation |
-| **Pivot Tables** | Row/column/data fields, aggregation functions (sum, count, avg, max, min…), styles |
+| **External Links** | Cross-workbook references with sheet names and defined names |
 | **VBA Macros** | Create/read `.xlsm` with standard modules, class modules, document modules; full round-trip |
-| **Auto Filter** | Dropdown filters on column headers |
+| **Auto Filter** | Dropdown filters — value, date, custom, top-10, dynamic filters |
 | **Hyperlinks** | External URLs, mailto, internal navigation |
 | **Form Controls** | Button, checkbox, combobox, listbox, radio, groupbox, label, scrollbar, spinner — with macro assignment |
-| **Comments** | Cell comments with author |
+| **Dialog Sheets** | Excel 5 dialog sheets with dialog frame, OK/Cancel buttons, combo boxes |
+| **Comments** | Cell comments with author, rich text formatting |
+| **Themes** | Full Office theme XML with customizable colors and fonts |
 | **Multiple Sheets** | Any number, hidden/veryHidden, tab colors |
+| **Formula Engine** | 60+ functions including GETPIVOTDATA — tree-shakeable |
+| **Export** | CSV, JSON, HTML (with CF visualization, sparklines, charts, shapes, form controls) |
+| **Locale** | Configurable decimal/thousands separators, date format, currency symbol |
 | **Core Properties** | Title, author, subject, keywords, description, language, revision, category… |
 | **Extended Properties** | Company, manager, application, appVersion, hyperlinkBase, word/line/page counts… |
 | **Custom Properties** | Typed key-value store: string, int, decimal, bool, date, r8, i8 |
@@ -692,6 +700,109 @@ for (const ctrl of controls) {
 ```
 
 Supported control types: `button`, `checkBox`, `comboBox`, `listBox`, `optionButton`, `groupBox`, `label`, `scrollBar`, `spinner`. All control types support `macro` assignment and are fully preserved during round-trip editing.
+
+### Shapes
+
+```typescript
+ws.addShape({
+  type: 'roundRect',
+  from: { col: 1, row: 3 },
+  to:   { col: 5, row: 8 },
+  fillColor: '4472C4',
+  lineColor: '2F5496',
+  text: 'Process Step',
+  rotation: 0,
+});
+```
+
+Supported shape types: `rect`, `roundRect`, `ellipse`, `triangle`, `diamond`, `pentagon`, `hexagon`, `octagon`, `star5`, `star6`, `rightArrow`, `leftArrow`, `upArrow`, `downArrow`, `line`, `curvedConnector3`, `callout1`, `callout2`, `cloud`, `heart`, `lightningBolt`, `sun`, `moon`, `smileyFace`, `flowChartProcess`, `flowChartDecision`, `flowChartTerminator`, `flowChartDocument`.
+
+### WordArt
+
+```typescript
+ws.addWordArt({
+  text: 'SALE!',
+  preset: 'textArchUp',
+  font: { name: 'Impact', size: 48, bold: true },
+  fillColor: 'FF0000',
+  outlineColor: '990000',
+  from: { col: 1, row: 1 },
+  to:   { col: 8, row: 6 },
+});
+```
+
+Supported presets: `textPlain`, `textArchUp`, `textArchDown`, `textCircle`, `textWave1`, `textWave2`, `textInflate`, `textDeflate`, `textFadeUp`, `textFadeDown`, `textSlantUp`, `textSlantDown`, and more.
+
+### Themes
+
+```typescript
+wb.theme = {
+  name: 'Corporate Theme',
+  colors: [
+    { name: 'dk1', color: '000000' }, { name: 'lt1', color: 'FFFFFF' },
+    { name: 'dk2', color: '44546A' }, { name: 'lt2', color: 'E7E6E6' },
+    { name: 'accent1', color: '4472C4' }, { name: 'accent2', color: 'ED7D31' },
+    { name: 'accent3', color: 'A5A5A5' }, { name: 'accent4', color: 'FFC000' },
+    { name: 'accent5', color: '5B9BD5' }, { name: 'accent6', color: '70AD47' },
+    { name: 'hlink', color: '0563C1' }, { name: 'folHlink', color: '954F72' },
+  ],
+  majorFont: 'Calibri Light',
+  minorFont: 'Calibri',
+};
+```
+
+### Table Slicers
+
+```typescript
+ws.addTableSlicer({
+  name: 'RegionSlicer',
+  tableName: 'SalesTable',
+  columnName: 'Region',
+  caption: 'Filter by Region',
+  style: 'SlicerStyleLight1',
+});
+```
+
+### Pivot Slicers & Custom Pivot Styles
+
+```typescript
+wb.registerPivotStyle({
+  name: 'BrandedPivot',
+  elements: [
+    { type: 'headerRow', style: { font: { bold: true, color: 'FFFFFF' }, fill: { type: 'pattern', pattern: 'solid', fgColor: '4472C4' } } },
+  ],
+});
+
+wb.addPivotSlicer({
+  name: 'ProductSlicer',
+  pivotTableName: 'SalesPivot',
+  fieldName: 'Product',
+  caption: 'Product Filter',
+});
+```
+
+### External Links
+
+```typescript
+wb.addExternalLink({
+  target: 'file:///C:/Reports/Budget.xlsx',
+  sheets: [{ name: 'Sheet1' }, { name: 'Summary' }],
+});
+
+// Reference external data in formulas
+ws.setFormula(1, 1, '[1]Sheet1!A1');
+```
+
+### Locale Settings
+
+```typescript
+wb.locale = {
+  decimalSeparator: ',',
+  thousandsSeparator: '.',
+  dateFormat: 'DD.MM.YYYY',
+  currencySymbol: '€',
+};
+```
 
 ### Sheet protection
 

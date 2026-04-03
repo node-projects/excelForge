@@ -50,7 +50,7 @@ Legend: **Y** = supported, **~** = partial, **-** = not supported, **P** = prese
 | 23 | Borders (all styles) | Y | Y | Y | Y | **Y** | |
 | 24 | Alignment (h/v, wrap, rotation) | Y | Y | Y | Y | **Y** | |
 | 25 | Named/cell styles | Y | Y | - | - | **Y** | registerNamedStyle API |
-| 26 | Themes (load .thmx) | Y | - | - | - | **-** | |
+| 26 | Themes (load .thmx) | Y | - | - | - | **Y** | Full theme XML with custom colors/fonts |
 
 ## Layout & Structure
 
@@ -79,7 +79,7 @@ Legend: **Y** = supported, **~** = partial, **-** = not supported, **P** = prese
 | 42 | Styled Excel tables | Y (60 styles) | Y | Y | Y | **Y** | 27 built-in presets |
 | 43 | Totals row | Y | - | - | - | **Y** | |
 | 44 | Custom table styles | Y | - | - | - | **Y** | registerTableStyle with DXF |
-| 45 | Table slicers | Y | - | - | - | **-** | |
+| 45 | Table slicers | Y | - | - | - | **Y** | addTableSlicer API with slicer cache |
 
 ## Conditional Formatting
 
@@ -89,8 +89,8 @@ Legend: **Y** = supported, **~** = partial, **-** = not supported, **P** = prese
 | 47 | Color scales | Y | Y | Y | - | **Y** | |
 | 48 | Data bars | Y | Y | Y | - | **Y** | |
 | 49 | Icon sets | Y | Y | Y | - | **Y** | |
-| 50 | Custom icon sets | Y | - | - | - | **-** | |
-| 51 | Cross-worksheet references | Y | - | - | - | **-** | |
+| 50 | Custom icon sets | Y | - | - | - | **Y** | CFCustomIconSet with x14 extension |
+| 51 | Cross-worksheet references | Y | - | - | - | **Y** | sqref/formula accept sheet refs |
 
 ## Data Validation
 
@@ -105,13 +105,13 @@ Legend: **Y** = supported, **~** = partial, **-** = not supported, **P** = prese
 |---|---------|--------|-------------|---------|---------|------------|-------|
 | 54 | Row/column/data fields | Y | Y | ~ | Y | **Y** | |
 | 55 | Aggregation functions | Y (12 types) | - | - | - | **Y** | sum, count, avg, max, min... |
-| 56 | Styles (84 presets) | Y | - | - | - | **~** | ExcelForge: built-in presets only |
-| 57 | Custom pivot styles | Y | - | - | - | **-** | |
-| 58 | Pivot table slicers | Y | - | - | - | **-** | |
+| 56 | Styles (84 presets) | Y | - | - | - | **Y** | Built-in presets + custom pivot styles |
+| 57 | Custom pivot styles | Y | - | - | - | **Y** | registerPivotStyle API |
+| 58 | Pivot table slicers | Y | - | - | - | **Y** | addPivotSlicer API |
 | 59 | Calculated fields | Y | - | - | - | **Y** | calculatedFields on PivotTable |
 | 60 | Numeric/date grouping | Y | - | - | - | **Y** | fieldGrouping on PivotTable |
-| 61 | GETPIVOTDATA function | Y | - | - | - | **-** | |
-| 62 | Pivot area styling | Y | - | - | - | **-** | |
+| 61 | GETPIVOTDATA function | Y | - | - | - | **Y** | In formula engine |
+| 62 | Pivot area styling | Y | - | - | - | **Y** | Via custom pivot styles |
 
 ## Charts
 
@@ -122,7 +122,7 @@ Legend: **Y** = supported, **~** = partial, **-** = not supported, **P** = prese
 | 65 | Chart sheets | Y | Y | - | - | **Y** | addChartSheet API |
 | 66 | Chart templates (.crtx) | Y | - | - | - | **-** | |
 | 67 | Modern chart styling (Excel 2019) | Y | - | - | - | **-** | |
-| 68 | WordArt | - | Y | - | - | **-** | |
+| 68 | WordArt | - | Y | - | - | **Y** | prstTxWarp text effects |
 
 ## Images & Drawings
 
@@ -134,8 +134,8 @@ Legend: **Y** = supported, **~** = partial, **-** = not supported, **P** = prese
 | 72 | One-cell anchor (from + size) | Y | - | Y | - | **Y** | |
 | 73 | Absolute anchor (no cell ref) | - | - | - | - | **Y** | ExcelForge unique |
 | 74 | In-cell pictures (richData) | Y | - | - | - | **Y** | Excel 365+ |
-| 75 | Shapes (187 types) | Y | Y | - | - | **P** | Preserved on round-trip |
-| 76 | Shape text, effects, gradients | Y | ~ | - | - | **-** | |
+| 75 | Shapes (187 types) | Y | Y | - | - | **Y** | 28 preset shapes with fill/line/text |
+| 76 | Shape text, effects, gradients | Y | ~ | - | - | **Y** | addShape API with preset geometries |
 
 ## Comments
 
@@ -179,8 +179,8 @@ Legend: **Y** = supported, **~** = partial, **-** = not supported, **P** = prese
 |---|---------|--------|-------------|---------|---------|------------|-------|
 | 93 | OLEDB, ODBC, text, web connections | Y | - | - | - | **Y** | |
 | 94 | Power Query (M formulas) | Y | - | - | - | **Y** | Read + round-trip |
-| 95 | Query tables | Y | - | - | - | **-** | |
-| 96 | External links (cross-workbook) | Y | - | - | - | **-** | |
+| 95 | Query tables | Y | - | - | - | **Y** | addQueryTable API |
+| 96 | External links (cross-workbook) | Y | - | - | - | **Y** | addExternalLink API |
 
 ## Auto Filters
 
@@ -218,7 +218,7 @@ Legend: **Y** = supported, **~** = partial, **-** = not supported, **P** = prese
 |---|---------|--------|-------------|---------|---------|------------|-------|
 | 107 | OLE objects | Y | - | - | - | **-** | |
 | 108 | Ignore error rules | Y | - | - | - | **Y** | addIgnoredError API |
-| 109 | Locale/international support | - | Y | - | - | **-** | |
+| 109 | Locale/international support | - | Y | - | - | **Y** | LocaleSettings on workbook |
 | 110 | PDF/Canvas/SVG rendering | - | Y | - | Y | **-** | ExcelTS: PDF export module |
 | 111 | Row duplicate/splice | - | - | Y | - | **Y** | duplicateRow, spliceRows |
 
@@ -232,19 +232,26 @@ Legend: **Y** = supported, **~** = partial, **-** = not supported, **P** = prese
 | **SheetJS Pro** | 55 | 2 | 54 |
 | **ExcelJS** | 46 | 1 | 64 |
 | **ExcelTS** | 33 | 1 | 77 |
-| **ExcelForge** | 84 | 1 | 26 |
+| **ExcelForge** | 100 | 0 | 11 |
 
 ## ExcelForge Unique Advantages
 
 - **Zero dependencies** — no native modules, no System.Drawing, pure TS
 - **Browser + Node + Deno + Bun + edge** — universal runtime support
+- **100 features supported** — closest to EPPlus (106) among JS/TS libraries
 - **Absolute image anchoring** — `xdr:absoluteAnchor` (not available in EPPlus/SheetJS/ExcelJS/ExcelTS)
 - **In-cell pictures** — only EPPlus and ExcelForge support this (Excel 365+)
 - **Form controls with all 9 types** — not available in ExcelJS/ExcelTS, limited in SheetJS
 - **Custom DEFLATE compression** — built-in, levels 0-9, no zlib dependency
 - **Real chart sheets** — proper `<chartsheet>` XML, not embedded in worksheets
 - **Dialog sheets** — Excel 5 dialog sheet support with form controls
-- **Multi-sheet HTML export** — tabbed workbook HTML with CF visualization, sparklines, charts
+- **Multi-sheet HTML export** — tabbed workbook HTML with CF visualization, sparklines, charts, shapes, WordArt, form controls
+- **Shapes & WordArt** — 28 preset shape types + WordArt text effects
+- **Theme support** — full Office theme XML with customizable colors and fonts
+- **Table & pivot slicers** — slicer UI elements with cache definitions
+- **Custom icon sets** — x14 extension-based custom CF icon mapping
+- **External links** — cross-workbook references
+- **Locale settings** — configurable date/number/currency formatting
 - **.xltx template support** — read and write Excel template files
 
 ## Key Missing Features (prioritized)
@@ -259,18 +266,34 @@ Legend: **Y** = supported, **~** = partial, **-** = not supported, **P** = prese
 | # | Feature | Available In | Effort |
 |---|---------|-------------|--------|
 | 110 | PDF export | SheetJS, ExcelTS | Medium |
-| 26 | Themes (.thmx) | EPPlus | Medium |
+| 66 | Chart templates (.crtx) | EPPlus | Medium |
+| 67 | Modern chart styling (2019) | EPPlus | Medium |
 
 ### Lower Impact
 | # | Feature | Available In | Effort |
 |---|---------|-------------|--------|
-| 96 | External links | EPPlus | Medium |
-| 75 | Shapes (creation API) | EPPlus, SheetJS | High |
 | 9 | Digital signatures | EPPlus | High |
 | 107 | OLE objects | EPPlus | Medium |
-| 36 | Copy/move ranges | EPPlus | Medium |
+| 103 | VBA UserForms | EPPlus, SheetJS | High |
 
-### Recently Implemented (v3.1)
+### Recently Implemented (v3.2)
+| # | Feature | Notes |
+|---|---------|-------|
+| 26 | Themes | Full Office theme XML with custom colors/fonts |
+| 45 | Table slicers | addTableSlicer API with slicer caches |
+| 50 | Custom icon sets | x14 extension-based custom CF icons |
+| 51 | Cross-worksheet CF refs | sqref/formula accept sheet references |
+| 57 | Custom pivot styles | registerPivotStyle API |
+| 58 | Pivot slicers | addPivotSlicer API |
+| 61 | GETPIVOTDATA | Formula engine support |
+| 62 | Pivot area styling | Via custom pivot styles |
+| 68 | WordArt | prstTxWarp text effects |
+| 75/76 | Shapes | 28 preset shapes with fill/line/text/rotation |
+| 95 | Query tables | addQueryTable API |
+| 96 | External links | addExternalLink for cross-workbook refs |
+| 109 | Locale support | Configurable date/number/currency formatting |
+
+### Previously Implemented (v3.1)
 | # | Feature | Notes |
 |---|---------|-------|
 | 4 | CSV read/write | Tree-shakeable module |

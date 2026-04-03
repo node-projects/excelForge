@@ -7,6 +7,7 @@ import type {
   SheetProtection, PageSetup, PageMargins, HeaderFooter, PrintOptions,
   SheetView, ColumnDef, RowDef, Sparkline, DataValidation,
   WorksheetOptions, PivotTable, PageBreak, FormControl,
+  Shape, WordArt, QueryTable, TableSlicer, CFCustomIconSet,
 } from '../core/types.js';
 import type { SharedStrings } from '../core/SharedStrings.js';
 import type { StyleRegistry } from '../styles/StyleRegistry.js';
@@ -45,6 +46,10 @@ export class Worksheet {
   private pivotTables: PivotTable[] = [];
   private sparklines: Sparkline[] = [];
   private formControls: FormControl[] = [];
+  private shapes: Shape[] = [];
+  private wordArt: WordArt[] = [];
+  private queryTables: QueryTable[] = [];
+  private tableSlicers: TableSlicer[] = [];
   private colDefs: Map<number, ColumnDef> = new Map();
   private rowDefs: Map<number, RowDef>    = new Map();
   private dataValidations: Map<string, DataValidation> = new Map();
@@ -684,6 +689,26 @@ export class Worksheet {
 
   getFormControls(): FormControl[] { return this.formControls; }
 
+  // ─── Shapes ──────────────────────────────────────────────────────────────────
+
+  addShape(shape: Shape): this { this.shapes.push(shape); return this; }
+  getShapes(): Shape[] { return this.shapes; }
+
+  // ─── WordArt ─────────────────────────────────────────────────────────────────
+
+  addWordArt(wa: WordArt): this { this.wordArt.push(wa); return this; }
+  getWordArt(): WordArt[] { return this.wordArt; }
+
+  // ─── Query Tables ────────────────────────────────────────────────────────────
+
+  addQueryTable(qt: QueryTable): this { this.queryTables.push(qt); return this; }
+  getQueryTables(): QueryTable[] { return this.queryTables; }
+
+  // ─── Table Slicers ───────────────────────────────────────────────────────────
+
+  addTableSlicer(slicer: TableSlicer): this { this.tableSlicers.push(slicer); return this; }
+  getTableSlicers(): TableSlicer[] { return this.tableSlicers; }
+
   // ─── Print Area ──────────────────────────────────────────────────────────────
 
   /** Print area reference, e.g. "A1:D10" or "$A$1:$D$10".
@@ -753,6 +778,7 @@ export class Worksheet {
       : '';
     const controlsXml = this._formControlsXml();
     const sparklineXml = this._sparklineXml();
+    const customIconExtXml = this._customIconExtXml();
     const ignoredErrorsXml = this._ignoredErrorsXml();
     const protectionXml = this._protectionXml();
     const pageSetupXml  = this._pageSetupXml();
@@ -789,6 +815,7 @@ ${drawingXml}
 ${legacyDrawingXml}
 ${controlsXml}
 ${sparklineXml}
+${customIconExtXml}
 ${tablePartsXml}
 ${this.preservedXml.join('\n')}
 </worksheet>`;
@@ -801,8 +828,9 @@ ${this.preservedXml.join('\n')}
     return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <chartsheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
   xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
-<sheetViews><sheetView workbookViewId="0" zoomScale="100"/></sheetViews>
-${pageMarginsXml || '<pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/>'}
+<sheetPr/>
+<sheetViews><sheetView zoomScale="99" workbookViewId="0" zoomToFit="1"/></sheetViews>
+${pageMarginsXml || '<pageMargins left="0.7" right="0.7" top="0.78740157499999996" bottom="0.78740157499999996" header="0.3" footer="0.3"/>'}
 ${pageSetupXml}
 <drawing r:id="${this.drawingRId}"/>
 </chartsheet>`;
@@ -816,9 +844,10 @@ ${pageSetupXml}
     return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <dialogsheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
   xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
-<sheetViews><sheetView workbookViewId="0"/></sheetViews>
-<sheetFormatPr defaultRowHeight="15"/>
-${pageMarginsXml || '<pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/>'}
+<sheetViews><sheetView showRowColHeaders="0" showZeros="0" showOutlineSymbols="0" workbookViewId="0"/></sheetViews>
+<sheetFormatPr baseColWidth="10" defaultColWidth="1" defaultRowHeight="5.65" customHeight="1"/>
+<sheetProtection sheet="1"/>
+${pageMarginsXml || '<pageMargins left="0.7" right="0.7" top="0.78740157499999996" bottom="0.78740157499999996" header="0.3" footer="0.3"/>'}
 ${legacyDrawingXml}
 </dialogsheet>`;
   }
@@ -992,6 +1021,7 @@ ${legacyDrawingXml}
       } else if (cf.iconSet?.type === 'iconSet') {
         const is = cf.iconSet;
         const cfvos = is.cfvo.map(v => `<cfvo type="${v.type}"${v.val ? ` val="${v.val}"` : ''}/>`).join('');
+        // Custom icon overrides go into extLst, standard iconSet stays in base CF
         inner = `<iconSet iconSet="${is.iconSet}"${is.showValue===false?' showValue="0"':''}${is.reverse?' reverse="1"':''}>${cfvos}</iconSet>`;
       }
 
@@ -1179,6 +1209,35 @@ ${legacyDrawingXml}
     return `<extLst><ext uri="{05C60535-1F16-4fd2-B633-F4F36F0B64E0}" xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main">${inner}</ext></extLst>`;
   }
 
+  private _customIconExtXml(): string {
+    // Custom icon set CF rules need to be wrapped in x14:conditionalFormattings extension
+    const customCFs = this.conditionalFormats.filter(cf =>
+      cf.iconSet?.type === 'iconSet' && 'custom' in cf.iconSet && cf.iconSet.custom?.length
+    );
+    if (!customCFs.length) return '';
+
+    const rules = customCFs.map((cf, i) => {
+      const is = cf.iconSet as CFCustomIconSet;
+      const cfvos = is.cfvo.map(v => `<x14:cfvo type="${v.type}"${v.val ? ` val="${v.val}"` : ''}/>`).join('');
+      const icons = is.custom!.map(ci => `<x14:cfIcon iconSet="${ci.iconSet}" iconId="${ci.iconId}"/>`).join('');
+      return `<x14:conditionalFormatting xmlns:xm="http://schemas.microsoft.com/office/excel/2006/main"><x14:cfRule type="iconSet" id="{${this._uuid()}}"><x14:iconSet iconSet="${is.iconSet}" custom="1"${is.showValue===false?' showValue="0"':''}${is.reverse?' reverse="1"':''}>${cfvos}${icons}</x14:iconSet></x14:cfRule><xm:sqref>${cf.sqref}</xm:sqref></x14:conditionalFormatting>`;
+    }).join('');
+
+    return `<extLst><ext uri="{78C0D931-6437-407d-A8EE-F0AAD7539E65}" xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main">${rules}</ext></extLst>`;
+  }
+
+  private _uuid(): string {
+    const h = '0123456789ABCDEF';
+    let u = '';
+    for (let i = 0; i < 36; i++) {
+      if (i === 8 || i === 13 || i === 18 || i === 23) u += '-';
+      else if (i === 14) u += '4';
+      else if (i === 19) u += h[(Math.random() * 4 | 0) + 8];
+      else u += h[Math.random() * 16 | 0];
+    }
+    return u;
+  }
+
   private _autoFilterXml(): string {
     if (!this.autoFilter) return '';
     const cols = this._filterColumns;
@@ -1278,18 +1337,69 @@ ${legacyDrawingXml}
       const rId = chartRIds[i];
       const from = chart.from;
       const to   = chart.to;
-      const fromXml = `<xdr:from><xdr:col>${from.col}</xdr:col><xdr:colOff>${from.colOff ?? 0}</xdr:colOff><xdr:row>${from.row}</xdr:row><xdr:rowOff>${from.rowOff ?? 0}</xdr:rowOff></xdr:from>`;
-      const toXml   = `<xdr:to><xdr:col>${to.col}</xdr:col><xdr:colOff>${to.colOff ?? 0}</xdr:colOff><xdr:row>${to.row}</xdr:row><xdr:rowOff>${to.rowOff ?? 0}</xdr:rowOff></xdr:to>`;
       const graphicXml = `<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
   <a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart">
     <c:chart xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" r:id="${rId}"/>
   </a:graphicData>
 </a:graphic>`;
-      parts.push(`<xdr:twoCellAnchor editAs="oneCell">${fromXml}${toXml}<xdr:graphicFrame macro=""><xdr:nvGraphicFramePr><xdr:cNvPr id="${this.images.length + i + 2}" name="Chart ${i+1}"/><xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr><xdr:xfrm><a:off xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" x="0" y="0"/><a:ext xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" cx="0" cy="0"/></xdr:xfrm>${graphicXml}</xdr:graphicFrame><xdr:clientData/></xdr:twoCellAnchor>`);
+      if (this._isChartSheet) {
+        // Chart sheets use absoluteAnchor filling the entire sheet
+        parts.push(`<xdr:absoluteAnchor><xdr:pos x="0" y="0"/><xdr:ext cx="9294091" cy="6003636"/><xdr:graphicFrame macro=""><xdr:nvGraphicFramePr><xdr:cNvPr id="${this.images.length + i + 2}" name="Chart ${i+1}"/><xdr:cNvGraphicFramePr><a:graphicFrameLocks xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" noGrp="1"/></xdr:cNvGraphicFramePr></xdr:nvGraphicFramePr><xdr:xfrm><a:off xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" x="0" y="0"/><a:ext xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" cx="0" cy="0"/></xdr:xfrm>${graphicXml}</xdr:graphicFrame><xdr:clientData/></xdr:absoluteAnchor>`);
+      } else {
+        const fromXml = `<xdr:from><xdr:col>${from.col}</xdr:col><xdr:colOff>${from.colOff ?? 0}</xdr:colOff><xdr:row>${from.row}</xdr:row><xdr:rowOff>${from.rowOff ?? 0}</xdr:rowOff></xdr:from>`;
+        const toXml   = `<xdr:to><xdr:col>${to.col}</xdr:col><xdr:colOff>${to.colOff ?? 0}</xdr:colOff><xdr:row>${to.row}</xdr:row><xdr:rowOff>${to.rowOff ?? 0}</xdr:rowOff></xdr:to>`;
+        parts.push(`<xdr:twoCellAnchor editAs="oneCell">${fromXml}${toXml}<xdr:graphicFrame macro=""><xdr:nvGraphicFramePr><xdr:cNvPr id="${this.images.length + i + 2}" name="Chart ${i+1}"/><xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr><xdr:xfrm><a:off xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" x="0" y="0"/><a:ext xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" cx="0" cy="0"/></xdr:xfrm>${graphicXml}</xdr:graphicFrame><xdr:clientData/></xdr:twoCellAnchor>`);
+      }
+    });
+
+    // ── Shapes ──────────────────────────────────────────────────────────────
+    let shapeCounter = this.images.length + this.charts.length + 2;
+    // Helper to normalize color to 6-char hex
+    const toHex6 = (c: string) => { let h = c.replace(/^#/, ''); if (h.length === 8) h = h.substring(2); return h; };
+
+    this.shapes.forEach(shape => {
+      const id = shapeCounter++;
+      const from = shape.from;
+      const to   = shape.to;
+      const fromXml = `<xdr:from><xdr:col>${from.col}</xdr:col><xdr:colOff>${from.colOff ?? 0}</xdr:colOff><xdr:row>${from.row}</xdr:row><xdr:rowOff>${from.rowOff ?? 0}</xdr:rowOff></xdr:from>`;
+      const toXml   = `<xdr:to><xdr:col>${to.col}</xdr:col><xdr:colOff>${to.colOff ?? 0}</xdr:colOff><xdr:row>${to.row}</xdr:row><xdr:rowOff>${to.rowOff ?? 0}</xdr:rowOff></xdr:to>`;
+      const fillXml = shape.fillColor
+        ? `<a:solidFill><a:srgbClr val="${toHex6(shape.fillColor)}"/></a:solidFill>`
+        : '<a:noFill/>';
+      const lineXml = shape.lineColor
+        ? `<a:ln${shape.lineWidth ? ` w="${shape.lineWidth * 12700}"` : ''}><a:solidFill><a:srgbClr val="${toHex6(shape.lineColor)}"/></a:solidFill></a:ln>`
+        : '';
+      const rotAttr = shape.rotation ? ` rot="${shape.rotation * 60000}"` : '';
+      const textXml = shape.text ? `<xdr:txBody><a:bodyPr vertOverflow="clip" wrap="square" rtlCol="0" anchor="ctr"/><a:lstStyle/><a:p><a:pPr algn="ctr"/><a:r><a:rPr lang="en-US"${shape.font?.bold ? ' b="1"' : ''}${shape.font?.size ? ` sz="${shape.font.size * 100}"` : ''}/><a:t>${escapeXml(shape.text)}</a:t></a:r></a:p></xdr:txBody>` : '';
+      parts.push(`<xdr:twoCellAnchor editAs="oneCell">${fromXml}${toXml}<xdr:sp><xdr:nvSpPr><xdr:cNvPr id="${id}" name="Shape ${id}"/><xdr:cNvSpPr/></xdr:nvSpPr><xdr:spPr><a:xfrm${rotAttr}><a:off x="0" y="0"/><a:ext cx="0" cy="0"/></a:xfrm><a:prstGeom prst="${shape.type}"><a:avLst/></a:prstGeom>${fillXml}${lineXml}</xdr:spPr>${textXml}</xdr:sp><xdr:clientData/></xdr:twoCellAnchor>`);
+    });
+
+    // ── WordArt ─────────────────────────────────────────────────────────────
+    this.wordArt.forEach(wa => {
+      const id = shapeCounter++;
+      const from = wa.from;
+      const to   = wa.to;
+      const fromXml = `<xdr:from><xdr:col>${from.col}</xdr:col><xdr:colOff>${from.colOff ?? 0}</xdr:colOff><xdr:row>${from.row}</xdr:row><xdr:rowOff>${from.rowOff ?? 0}</xdr:rowOff></xdr:from>`;
+      const toXml   = `<xdr:to><xdr:col>${to.col}</xdr:col><xdr:colOff>${to.colOff ?? 0}</xdr:colOff><xdr:row>${to.row}</xdr:row><xdr:rowOff>${to.rowOff ?? 0}</xdr:rowOff></xdr:to>`;
+      const preset = wa.preset ?? 'textPlain';
+      const fillXml = wa.fillColor
+        ? `<a:solidFill><a:srgbClr val="${toHex6(wa.fillColor)}"/></a:solidFill>`
+        : '<a:solidFill><a:schemeClr val="tx1"/></a:solidFill>';
+      const outlineXml = wa.outlineColor
+        ? `<a:ln><a:solidFill><a:srgbClr val="${toHex6(wa.outlineColor)}"/></a:solidFill></a:ln>`
+        : '';
+      const fontAttrs = [
+        'lang="en-US"',
+        wa.font?.bold ? 'b="1"' : '',
+        wa.font?.italic ? 'i="1"' : '',
+        wa.font?.size ? `sz="${wa.font.size * 100}"` : 'sz="3600"',
+      ].filter(Boolean).join(' ');
+      parts.push(`<xdr:twoCellAnchor editAs="oneCell">${fromXml}${toXml}<xdr:sp><xdr:nvSpPr><xdr:cNvPr id="${id}" name="WordArt ${id}"/><xdr:cNvSpPr/></xdr:nvSpPr><xdr:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/>${outlineXml}</xdr:spPr><xdr:txBody><a:bodyPr wrap="none" lIns="91440" tIns="45720" rIns="91440" bIns="45720"><a:prstTxWarp prst="${preset}"><a:avLst/></a:prstTxWarp></a:bodyPr><a:lstStyle/><a:p><a:r><a:rPr ${fontAttrs}>${fillXml}</a:rPr><a:t>${escapeXml(wa.text)}</a:t></a:r></a:p></xdr:txBody></xdr:sp><xdr:clientData/></xdr:twoCellAnchor>`);
     });
 
     return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing"
+  xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
   xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
 ${parts.join('\n')}
 </xdr:wsDr>`;

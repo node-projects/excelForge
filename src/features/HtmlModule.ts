@@ -323,6 +323,53 @@ function chartToHtml(chart: Chart): string {
   return `<div style="display:inline-block;width:${w}px;height:${h}px;border:1px solid #ccc;background:#f9f9f9;text-align:center;line-height:${h}px;color:#666;font-size:14px;margin:8px 0" data-chart-type="${chart.type}">[Chart: ${escapeXml(chart.title ?? chart.type)}]</div>`;
 }
 
+/* ─── Shape rendering ──────────────────────────────────────────────────────── */
+
+function shapeToHtml(shape: { type: string; text?: string; fillColor?: string; lineColor?: string }): string {
+  const toHex = (c: string) => { let h = c.replace(/^#/, ''); if (h.length === 8) h = h.substring(2); return '#' + h; };
+  const bg = shape.fillColor ? toHex(shape.fillColor) : '#4472C4';
+  const border = shape.lineColor ? toHex(shape.lineColor) : '#2F5496';
+  const radius = shape.type === 'ellipse' ? '50%' : shape.type === 'roundRect' ? '12px' : '0';
+  return `<div style="display:inline-flex;align-items:center;justify-content:center;width:160px;height:80px;background:${bg};border:2px solid ${border};border-radius:${radius};color:white;font-weight:600;font-size:13px;margin:4px;text-align:center">${escapeXml(shape.text ?? shape.type)}</div>`;
+}
+
+/* ─── WordArt rendering ────────────────────────────────────────────────────── */
+
+function wordArtToHtml(wa: { text: string; fillColor?: string; font?: any; preset?: string }): string {
+  const toHex = (c: string) => { let h = c.replace(/^#/, ''); if (h.length === 8) h = h.substring(2); return '#' + h; };
+  const color = wa.fillColor ? toHex(wa.fillColor) : '#333';
+  const family = wa.font?.name ?? 'Impact';
+  const size = wa.font?.size ?? 36;
+  return `<div style="display:inline-block;font-family:'${escapeXml(family)}',sans-serif;font-size:${size}px;font-weight:bold;color:${color};text-shadow:2px 2px 4px rgba(0,0,0,.3);margin:8px 0;padding:8px 16px">${escapeXml(wa.text)}</div>`;
+}
+
+/* ─── Form control (dialog) rendering ──────────────────────────────────────── */
+
+function formControlToHtml(fc: { type: string; text?: string }): string {
+  switch (fc.type) {
+    case 'button':
+    case 'dialog':
+      return `<button style="padding:6px 16px;margin:4px;font-size:13px;border:1px solid #999;background:#f0f0f0;cursor:pointer">${escapeXml(fc.text ?? fc.type)}</button>`;
+    case 'checkbox':
+      return `<label style="margin:4px;font-size:13px"><input type="checkbox"${fc.text ? '' : ' checked'}/> ${escapeXml(fc.text ?? 'Checkbox')}</label>`;
+    case 'radio':
+      return `<label style="margin:4px;font-size:13px"><input type="radio" name="group"/> ${escapeXml(fc.text ?? 'Radio')}</label>`;
+    case 'dropdown':
+    case 'combobox':
+      return `<select style="padding:4px;margin:4px;font-size:13px"><option>${escapeXml(fc.text ?? 'Select...')}</option></select>`;
+    case 'spinner':
+      return `<input type="number" value="0" style="width:60px;padding:4px;margin:4px;font-size:13px"/>`;
+    case 'scrollbar':
+      return `<input type="range" style="width:120px;margin:4px"/>`;
+    case 'label':
+      return `<span style="margin:4px;font-size:13px">${escapeXml(fc.text ?? 'Label')}</span>`;
+    case 'groupBox':
+      return `<fieldset style="margin:4px;padding:8px;border:1px solid #999;font-size:13px"><legend>${escapeXml(fc.text ?? 'Group')}</legend></fieldset>`;
+    default:
+      return `<span style="margin:4px;font-size:13px">[${escapeXml(fc.type)}]</span>`;
+  }
+}
+
 /* ─── Column letter → 0-based index ───────────────────────────────────────── */
 
 function colLetterToIdx(letter: string): number {
@@ -492,7 +539,24 @@ export function worksheetToHtml(ws: Worksheet, options: HtmlExportOptions = {}):
     if (charts.length) chartsHtml = '\n' + charts.map(chartToHtml).join('\n');
   }
 
-  if (options.fullDocument === false) return tableHtml + chartsHtml;
+  // Shapes
+  let shapesHtml = '';
+  const shapes = ws.getShapes?.();
+  if (shapes?.length) shapesHtml = '\n<div class="shapes">' + shapes.map(shapeToHtml).join('\n') + '</div>';
+
+  // WordArt
+  let wordArtHtml = '';
+  const wordArts = ws.getWordArt?.();
+  if (wordArts?.length) wordArtHtml = '\n<div class="wordart">' + wordArts.map(wordArtToHtml).join('\n') + '</div>';
+
+  // Form controls (dialog elements)
+  let formControlsHtml = '';
+  const fcs = ws.getFormControls?.();
+  if (fcs?.length) formControlsHtml = '\n<div class="form-controls" style="padding:8px;background:#f0f0f0;border:1px solid #ccc;margin:8px 0">' + fcs.map(formControlToHtml).join('\n') + '</div>';
+
+  const extraHtml = chartsHtml + shapesHtml + wordArtHtml + formControlsHtml;
+
+  if (options.fullDocument === false) return tableHtml + extraHtml;
 
   const title = escapeXml(options.title ?? options.sheetName ?? 'Export');
   const css = `<style>
@@ -514,7 +578,7 @@ export function worksheetToHtml(ws: Worksheet, options: HtmlExportOptions = {}):
 ${css}
 </head>
 <body>
-${tableHtml}${chartsHtml}
+${tableHtml}${extraHtml}
 </body>
 </html>`;
 }

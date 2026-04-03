@@ -1,6 +1,7 @@
 import type {
   WorkbookProperties, NamedRange, WorksheetOptions, Image, CellImage, Comment, PivotTable,
   Connection, PowerQuery, ConnectionType,
+  Theme, ExternalLink, CustomPivotStyle, LocaleSettings, PivotSlicer,
 } from '../core/types.js';
 import { Worksheet } from './Worksheet.js';
 import { StyleRegistry } from '../styles/StyleRegistry.js';
@@ -23,6 +24,13 @@ export class Workbook {
   private namedRanges: NamedRange[] = [];
   private connections: Connection[] = [];
   private powerQueries: PowerQuery[] = [];
+  private externalLinks: ExternalLink[] = [];
+  private customPivotStyles: CustomPivotStyle[] = [];
+  private pivotSlicers: PivotSlicer[] = [];
+  /** Theme definition (colors, fonts) */
+  theme?: Theme;
+  /** Locale settings for number/date formatting */
+  locale?: LocaleSettings;
   properties: WorkbookProperties = {};
 
   /**
@@ -302,6 +310,35 @@ export class Workbook {
     return this;
   }
 
+  // ─── External Links ────────────────────────────────────────────────────────
+
+  addExternalLink(link: ExternalLink): this {
+    this.externalLinks.push(link);
+    return this;
+  }
+
+  getExternalLinks(): readonly ExternalLink[] {
+    return this.externalLinks;
+  }
+
+  // ─── Custom Pivot Styles ───────────────────────────────────────────────────
+
+  registerPivotStyle(style: CustomPivotStyle): this {
+    this.customPivotStyles.push(style);
+    return this;
+  }
+
+  // ─── Pivot Slicers ─────────────────────────────────────────────────────────
+
+  addPivotSlicer(slicer: PivotSlicer): this {
+    this.pivotSlicers.push(slicer);
+    return this;
+  }
+
+  getPivotSlicers(): readonly PivotSlicer[] {
+    return this.pivotSlicers;
+  }
+
   // ─── Build ─────────────────────────────────────────────────────────────────
 
   /**
@@ -509,7 +546,7 @@ export class Workbook {
       const tables = ws.getTables();
       const imgRIds: string[] = [], chartRIds: string[] = [], tblRIds: string[] = [];
 
-      if (imgs.length || charts.length) ws.drawingRId = `rId${globalRId++}`;
+      if (imgs.length || charts.length || ws.getShapes().length || ws.getWordArt().length) ws.drawingRId = `rId${globalRId++}`;
       const controls = ws.getFormControls();
       // legacyDrawing needed for comments OR form controls (they share VML)
       if (ws.getComments().length || controls.length) ws.legacyDrawingRId = `rId${globalRId++}`;
@@ -570,10 +607,11 @@ export class Workbook {
     const commentsCTs = sheetsWithComments.map(() =>
       `<Override PartName="/xl/comments${++vmlIdx}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.comments+xml"/>`
     ).join('');
-    // ctrlProp content types
+    // ctrlProp content types — skip dialog sheets (they use pure VML)
     let ctrlPropCtr = 0;
     const ctrlPropCTs: string[] = [];
     for (const ws of this.sheets) {
+      if (ws._isDialogSheet) continue;
       for (let ci = 0; ci < ws.getFormControls().length; ci++) {
         ctrlPropCTs.push(`<Override PartName="/xl/ctrlProps/ctrlProp${++ctrlPropCtr}.xml" ContentType="application/vnd.ms-excel.controlproperties+xml"/>`);
       }
@@ -588,6 +626,7 @@ ${[...imgCTs].join('')}
 ${hasVba ? '<Override PartName="/xl/vbaProject.bin" ContentType="application/vnd.ms-office.vbaProject"/>' : ''}
 <Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
 <Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/>
+<Override PartName="/xl/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/>
 ${this.sheets.filter(ws => !ws._isChartSheet && !ws._isDialogSheet).map(ws => { const idx = this.sheets.indexOf(ws); return `<Override PartName="/xl/worksheets/sheet${idx+1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`; }).join('')}
 ${this.sheets.filter(ws => ws._isChartSheet).map(ws => { const idx = this.sheets.indexOf(ws); return `<Override PartName="/xl/chartsheets/sheet${idx+1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.chartsheet+xml"/>`; }).join('')}
 ${this.sheets.filter(ws => ws._isDialogSheet).map(ws => { const idx = this.sheets.indexOf(ws); return `<Override PartName="/xl/dialogsheets/sheet${idx+1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.dialogsheet+xml"/>`; }).join('')}
@@ -603,6 +642,12 @@ ${ctrlPropCTs.join('')}
 <Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>
 ${hasCustom ? '<Override PartName="/docProps/custom.xml" ContentType="application/vnd.openxmlformats-officedocument.custom-properties+xml"/>' : ''}
 ${this.connections.length ? '<Override PartName="/xl/connections.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.connections+xml"/>' : ''}
+${this.externalLinks.map((_,i) => `<Override PartName="/xl/externalLinks/externalLink${i+1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.externalLink+xml"/>`).join('\n')}
+${this.sheets.flatMap(ws => ws.getTableSlicers()).length ? '<Override PartName="/xl/slicers/slicer1.xml" ContentType="application/vnd.ms-excel.slicer+xml"/>' : ''}
+${this.sheets.flatMap(ws => ws.getTableSlicers()).map((_,i) => `<Override PartName="/xl/slicerCaches/slicerCache${i+1}.xml" ContentType="application/vnd.ms-excel.slicerCache+xml"/>`).join('\n')}
+${this.pivotSlicers.length ? '<Override PartName="/xl/slicers/slicer2.xml" ContentType="application/vnd.ms-excel.slicer+xml"/>' : ''}
+${this.pivotSlicers.map((_,i) => `<Override PartName="/xl/slicerCaches/pivotSlicerCache${i+1}.xml" ContentType="application/vnd.ms-excel.slicerCache+xml"/>`).join('\n')}
+${this.sheets.flatMap(ws => ws.getQueryTables()).map((_,i) => `<Override PartName="/xl/queryTables/queryTable${i+1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.queryTable+xml"/>`).join('\n')}
 ${hasCellImages ? `<Override PartName="/xl/metadata.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheetMetadata+xml"/>
 <Override PartName="/xl/richData/rdrichvalue.xml" ContentType="application/vnd.ms-excel.rdrichvalue+xml"/>
 <Override PartName="/xl/richData/rdRichValueStructure.xml" ContentType="application/vnd.ms-excel.rdrichvaluestructure+xml"/>
@@ -622,9 +667,11 @@ ${this.sheets.map((ws,i) => {
 }).join('')}
 <Relationship Id="rIdStyles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
 <Relationship Id="rIdShared" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/>
+<Relationship Id="rIdTheme" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" Target="theme/theme1.xml"/>
 ${allPivotTables.map(p => `<Relationship Id="${p.cacheRId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/pivotCacheDefinition" Target="pivotCache/pivotCacheDefinition${p.pivotIdx}.xml"/>`).join('\n')}
 ${hasVba ? '<Relationship Id="rIdVBA" Type="http://schemas.microsoft.com/office/2006/relationships/vbaProject" Target="vbaProject.bin"/>' : ''}
 ${this.connections.length ? '<Relationship Id="rIdConns" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/connections" Target="connections.xml"/>' : ''}
+${this.externalLinks.map((_,i) => `<Relationship Id="rIdExtLink${i+1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/externalLink" Target="externalLinks/externalLink${i+1}.xml"/>`).join('\n')}
 ${hasCellImages ? '<Relationship Id="rIdMeta" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sheetMetadata" Target="metadata.xml"/>' : ''}
 ${hasCellImages ? '<Relationship Id="rIdRichValueRel" Type="http://schemas.microsoft.com/office/2022/10/relationships/richValueRel" Target="richData/richValueRel.xml"/>' : ''}
 ${hasCellImages ? '<Relationship Id="rIdRichValue" Type="http://schemas.microsoft.com/office/2017/06/relationships/rdRichValue" Target="richData/rdrichvalue.xml"/>' : ''}
@@ -736,12 +783,14 @@ ${pivotCachesXml}
 
         entries.push({ name: `xl/drawings/vmlDrawing${vIdx}.vml`, data: strToBytes(buildVmlWithControls(commentShapes, controlShapes)) });
 
-        // ctrlProp rels and files
-        const ctrlRIds = ws.ctrlPropRIds;
-        for (let ci = 0; ci < sheetControls.length; ci++) {
-          const ctrlPropIdx = ++ctrlPropGlobal;
-          wsRels.push(`<Relationship Id="${ctrlRIds[ci]}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/ctrlProp" Target="../ctrlProps/ctrlProp${ctrlPropIdx}.xml"/>`);
-          entries.push({ name: `xl/ctrlProps/ctrlProp${ctrlPropIdx}.xml`, data: strToBytes(buildCtrlPropXml(sheetControls[ci])) });
+        // ctrlProp rels and files — skip for dialog sheets (dialog controls are purely VML-based)
+        if (!ws._isDialogSheet) {
+          const ctrlRIds = ws.ctrlPropRIds;
+          for (let ci = 0; ci < sheetControls.length; ci++) {
+            const ctrlPropIdx = ++ctrlPropGlobal;
+            wsRels.push(`<Relationship Id="${ctrlRIds[ci]}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/ctrlProp" Target="../ctrlProps/ctrlProp${ctrlPropIdx}.xml"/>`);
+            entries.push({ name: `xl/ctrlProps/ctrlProp${ctrlPropIdx}.xml`, data: strToBytes(buildCtrlPropXml(sheetControls[ci])) });
+          }
         }
       }
       if (wsRels.length) {
@@ -822,6 +871,88 @@ ${cellImgRels.join('\n')}
 
     entries.push({ name: 'xl/styles.xml',        data: strToBytes(styles.toXml()) });
     entries.push({ name: 'xl/sharedStrings.xml', data: strToBytes(shared.toXml()) });
+
+    // ── Theme ──────────────────────────────────────────────────────────────
+    entries.push({ name: 'xl/theme/theme1.xml', data: strToBytes(this._buildThemeXml()) });
+
+    // ── External Links ──────────────────────────────────────────────────────
+    for (let i = 0; i < this.externalLinks.length; i++) {
+      const link = this.externalLinks[i];
+      const idx = i + 1;
+      const sheetsXml = link.sheets.map(s => {
+        const dNames = s.definedNames?.map(d =>
+          `<definedName name="${escapeXml(d.name)}" refersTo="${escapeXml(d.ref)}"/>`
+        ).join('') ?? '';
+        return `<sheetName val="${escapeXml(s.name)}"/>${dNames ? `<sheetDataSet>${dNames}</sheetDataSet>` : ''}`;
+      }).join('');
+      entries.push({ name: `xl/externalLinks/externalLink${idx}.xml`, data: strToBytes(
+        `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<externalLink xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+<externalBook r:id="rId1"><sheetNames>${sheetsXml}</sheetNames></externalBook>
+</externalLink>`) });
+      entries.push({ name: `xl/externalLinks/_rels/externalLink${idx}.xml.rels`, data: strToBytes(
+        `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/externalLinkPath" Target="${escapeXml(link.target)}" TargetMode="External"/>
+</Relationships>`) });
+    }
+
+    // ── Table Slicers ───────────────────────────────────────────────────────
+    const allSlicers = this.sheets.flatMap(ws => ws.getTableSlicers());
+    if (allSlicers.length) {
+      const slicerItems = allSlicers.map((s, i) =>
+        `<slicer name="${escapeXml(s.name)}" cache="${escapeXml(s.name + '_cache')}" caption="${escapeXml(s.caption ?? s.columnName)}" columnCount="${s.columnCount ?? 1}" style="${s.style ?? 'SlicerStyleLight1'}"/>`
+      ).join('');
+      entries.push({ name: 'xl/slicers/slicer1.xml', data: strToBytes(
+        `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<slicers xmlns="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" mc:Ignorable="x">
+${slicerItems}
+</slicers>`) });
+      // Slicer caches
+      for (let i = 0; i < allSlicers.length; i++) {
+        const s = allSlicers[i];
+        entries.push({ name: `xl/slicerCaches/slicerCache${i + 1}.xml`, data: strToBytes(
+          `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<slicerCacheDefinition xmlns="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main" name="${escapeXml(s.name + '_cache')}" sourceName="${escapeXml(s.columnName)}">
+<extLst><ext uri="{03082B11-2C62-411c-B77F-237D8FCFBE4C}"><x15:tableSlicerCache xmlns:x15="http://schemas.microsoft.com/office/spreadsheetml/2010/11/main" tableId="1" column="1" sortOrder="${s.sortOrder ?? 'ascending'}"/></ext></extLst>
+</slicerCacheDefinition>`) });
+      }
+    }
+
+    // ── Pivot Slicers ───────────────────────────────────────────────────────
+    if (this.pivotSlicers.length) {
+      const pivSlicerItems = this.pivotSlicers.map(s =>
+        `<slicer name="${escapeXml(s.name)}" cache="${escapeXml(s.name + '_cache')}" caption="${escapeXml(s.caption ?? s.fieldName)}" columnCount="${s.columnCount ?? 1}" style="${s.style ?? 'SlicerStyleLight1'}"/>`
+      ).join('');
+      entries.push({ name: 'xl/slicers/slicer2.xml', data: strToBytes(
+        `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<slicers xmlns="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" mc:Ignorable="x">
+${pivSlicerItems}
+</slicers>`) });
+      for (let i = 0; i < this.pivotSlicers.length; i++) {
+        const s = this.pivotSlicers[i];
+        entries.push({ name: `xl/slicerCaches/pivotSlicerCache${i + 1}.xml`, data: strToBytes(
+          `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<slicerCacheDefinition xmlns="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main" name="${escapeXml(s.name + '_cache')}" sourceName="${escapeXml(s.fieldName)}">
+<pivotTables><pivotTable tabId="1" name="${escapeXml(s.pivotTableName)}"/></pivotTables>
+</slicerCacheDefinition>`) });
+      }
+    }
+
+    // ── Query Tables ────────────────────────────────────────────────────────
+    const allQueryTables = this.sheets.flatMap(ws => ws.getQueryTables());
+    for (let i = 0; i < allQueryTables.length; i++) {
+      const qt = allQueryTables[i];
+      entries.push({ name: `xl/queryTables/queryTable${i + 1}.xml`, data: strToBytes(
+        `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<queryTable xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" name="${escapeXml(qt.name)}" connectionId="${qt.connectionId}" autoFormatId="16" applyNumberFormats="0" applyBorderFormats="0" applyFontFormats="0" applyPatternFormats="0" applyAlignmentFormats="0" applyWidthHeightFormats="0">
+<queryTableRefresh nextId="${(qt.columns?.length ?? 0) + 1}">
+<queryTableFields count="${qt.columns?.length ?? 0}">
+${(qt.columns ?? []).map((c,ci) => `<queryTableField id="${ci+1}" name="${escapeXml(c)}" tableColumnId="${ci+1}"/>`).join('\n')}
+</queryTableFields>
+</queryTableRefresh>
+</queryTable>`) });
+    }
 
     const cp = { ...this.coreProperties, created: this.coreProperties.created ?? new Date(), modified: new Date() };
     if (!cp.creator && this.properties.author) cp.creator = this.properties.author;
@@ -984,6 +1115,50 @@ ${rels.join('\n')}
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
 ${[...relMap.entries()].map(([id,r]) => `<Relationship Id="${escapeXml(id)}" Type="${escapeXml(r.type)}" Target="${escapeXml(r.target)}"${r.targetMode ? ` TargetMode="${escapeXml(r.targetMode)}"` : ''}/>`).join('\n')}
 </Relationships>`;
+  }
+
+  private _buildThemeXml(): string {
+    const t = this.theme;
+    const majorFont = t?.majorFont ?? 'Calibri Light';
+    const minorFont = t?.minorFont ?? 'Calibri';
+    const defaultColors = [
+      { name: 'dk1', color: '000000' }, { name: 'lt1', color: 'FFFFFF' },
+      { name: 'dk2', color: '44546A' }, { name: 'lt2', color: 'E7E6E6' },
+      { name: 'accent1', color: '4472C4' }, { name: 'accent2', color: 'ED7D31' },
+      { name: 'accent3', color: 'A5A5A5' }, { name: 'accent4', color: 'FFC000' },
+      { name: 'accent5', color: '5B9BD5' }, { name: 'accent6', color: '70AD47' },
+      { name: 'hlink', color: '0563C1' }, { name: 'folHlink', color: '954F72' },
+    ];
+    const colors = t?.colors?.map(c => {
+      let hex = c.color.replace(/^#/, '');
+      if (hex.length === 8) hex = hex.substring(2); // strip alpha prefix like FF
+      return { name: c.name, color: hex };
+    }) ?? defaultColors;
+    const colorElements = colors.map(c => {
+      if (c.name === 'dk1' || c.name === 'lt1') {
+        return `<a:${c.name}><a:sysClr val="${c.name === 'dk1' ? 'windowText' : 'window'}" lastClr="${c.color}"/></a:${c.name}>`;
+      }
+      return `<a:${c.name}><a:srgbClr val="${c.color}"/></a:${c.name}>`;
+    }).join('');
+
+    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="${escapeXml(t?.name ?? 'Office Theme')}">
+<a:themeElements>
+<a:clrScheme name="Office">${colorElements}</a:clrScheme>
+<a:fontScheme name="Office">
+<a:majorFont><a:latin typeface="${escapeXml(majorFont)}"/><a:ea typeface=""/><a:cs typeface=""/></a:majorFont>
+<a:minorFont><a:latin typeface="${escapeXml(minorFont)}"/><a:ea typeface=""/><a:cs typeface=""/></a:minorFont>
+</a:fontScheme>
+<a:fmtScheme name="Office">
+<a:fillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:gradFill rotWithShape="1"><a:gsLst><a:gs pos="0"><a:schemeClr val="phClr"><a:lumMod val="110000"/><a:satMod val="105000"/><a:tint val="67000"/></a:schemeClr></a:gs><a:gs pos="50000"><a:schemeClr val="phClr"><a:lumMod val="105000"/><a:satMod val="103000"/><a:tint val="73000"/></a:schemeClr></a:gs><a:gs pos="100000"><a:schemeClr val="phClr"><a:lumMod val="105000"/><a:satMod val="109000"/><a:tint val="81000"/></a:schemeClr></a:gs></a:gsLst><a:lin ang="5400000" scaled="0"/></a:gradFill><a:gradFill rotWithShape="1"><a:gsLst><a:gs pos="0"><a:schemeClr val="phClr"><a:satMod val="103000"/><a:lumMod val="102000"/><a:tint val="94000"/></a:schemeClr></a:gs><a:gs pos="50000"><a:schemeClr val="phClr"><a:satMod val="110000"/><a:lumMod val="100000"/><a:shade val="100000"/></a:schemeClr></a:gs><a:gs pos="100000"><a:schemeClr val="phClr"><a:lumMod val="99000"/><a:satMod val="120000"/><a:shade val="78000"/></a:schemeClr></a:gs></a:gsLst><a:lin ang="5400000" scaled="0"/></a:gradFill></a:fillStyleLst>
+<a:lnStyleLst><a:ln w="6350" cap="flat" cmpd="sng" algn="ctr"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:prstDash val="solid"/><a:miter lim="800000"/></a:ln><a:ln w="12700" cap="flat" cmpd="sng" algn="ctr"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:prstDash val="solid"/><a:miter lim="800000"/></a:ln><a:ln w="19050" cap="flat" cmpd="sng" algn="ctr"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:prstDash val="solid"/><a:miter lim="800000"/></a:ln></a:lnStyleLst>
+<a:effectStyleLst><a:effectStyle><a:effectLst/></a:effectStyle><a:effectStyle><a:effectLst/></a:effectStyle><a:effectStyle><a:effectLst><a:outerShdw blurRad="57150" dist="19050" dir="5400000" algn="ctr" rotWithShape="0"><a:srgbClr val="000000"><a:alpha val="63000"/></a:srgbClr></a:outerShdw></a:effectLst></a:effectStyle></a:effectStyleLst>
+<a:bgFillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"><a:tint val="95000"/><a:satMod val="170000"/></a:schemeClr></a:solidFill><a:gradFill rotWithShape="1"><a:gsLst><a:gs pos="0"><a:schemeClr val="phClr"><a:tint val="93000"/><a:satMod val="150000"/><a:shade val="98000"/><a:lumMod val="102000"/></a:schemeClr></a:gs><a:gs pos="50000"><a:schemeClr val="phClr"><a:tint val="98000"/><a:satMod val="130000"/><a:shade val="90000"/><a:lumMod val="103000"/></a:schemeClr></a:gs><a:gs pos="100000"><a:schemeClr val="phClr"><a:shade val="63000"/><a:satMod val="120000"/></a:schemeClr></a:gs></a:gsLst><a:lin ang="5400000" scaled="0"/></a:gradFill></a:bgFillStyleLst>
+</a:fmtScheme>
+</a:themeElements>
+<a:objectDefaults/>
+<a:extraClrSchemeLst/>
+</a:theme>`;
   }
 
   private _buildRootRels(hasCustom: boolean): string {

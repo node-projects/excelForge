@@ -452,6 +452,14 @@ export class FormulaEngine {
       case 'MONTH': return new Date(String(flat(args)[0])).getMonth() + 1;
       case 'DAY': return new Date(String(flat(args)[0])).getDate();
 
+      // ── Pivot ──
+      case 'GETPIVOTDATA': {
+        // GETPIVOTDATA(data_field, pivot_table, [field1, item1, ...])
+        // Simplified: returns the data field name as we don't have a live pivot cache
+        const dataField = String(flat(args.slice(0, 1))[0] ?? '');
+        return dataField || '#REF!';
+      }
+
       default: return '#NAME?';
     }
   }

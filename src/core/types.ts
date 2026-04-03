@@ -346,7 +346,7 @@ export interface ConditionalFormat {
   style?:    CellStyle;
   colorScale?: CFColorScale;
   dataBar?:   CFDataBar;
-  iconSet?:   CFIconSet;
+  iconSet?:   CFIconSet | CFCustomIconSet;
   aboveAverage?: boolean;
   percent?:   boolean;
   rank?:      number;
@@ -626,7 +626,7 @@ export interface PivotFieldGrouping {
 export type FormControlType =
   | 'button' | 'checkBox' | 'comboBox' | 'listBox'
   | 'optionButton' | 'groupBox' | 'label'
-  | 'scrollBar' | 'spinner';
+  | 'scrollBar' | 'spinner' | 'dialog';
 
 export interface FormControlAnchor {
   /** 0-based column index */
@@ -680,6 +680,15 @@ export interface FormControl {
   selType?:    'single' | 'multi' | 'extend';
   /** Disable 3D shading effect */
   noThreeD?:   boolean;
+
+  /** Mark button as the default (Enter) button for dialog sheets */
+  isDefault?:  boolean;
+  /** Mark button as dismissing the dialog on click */
+  isDismiss?:  boolean;
+  /** Mark button as the Cancel button for dialog sheets */
+  isCancel?:   boolean;
+  /** Drop style for combo boxes (e.g. 'Combo') */
+  dropStyle?:  string;
 
   /** Internal: preserved raw VML shape XML for lossless round-trip */
   _vmlShapeXml?:  string;
@@ -762,4 +771,187 @@ export interface WorksheetOptions {
   defaultColWidth?:  number;
   outlineSummaryBelow?: boolean;
   outlineSummaryRight?: boolean;
+}
+
+// ─── Custom Icon Sets ─────────────────────────────────────────────────────────
+
+/** Custom icon specification for custom icon sets */
+export interface CustomIcon {
+  /** Built-in icon set to source from (e.g. '3TrafficLights1') */
+  iconSet: IconSet | 'NoIcons';
+  /** 0-based index within the icon set */
+  iconId: number;
+}
+
+/** Extended icon set that supports custom icon mapping */
+export interface CFCustomIconSet {
+  type: 'iconSet';
+  iconSet: IconSet;
+  cfvo: Array<{ type: string; val?: string }>;
+  showValue?: boolean;
+  reverse?: boolean;
+  /** Custom icon overrides — one per cfvo entry */
+  custom?: CustomIcon[];
+}
+
+// ─── Table Slicers ────────────────────────────────────────────────────────────
+
+export interface TableSlicer {
+  /** Slicer name */
+  name: string;
+  /** Table name this slicer is connected to */
+  tableName: string;
+  /** Column name to filter on */
+  columnName: string;
+  /** Display caption */
+  caption?: string;
+  /** Top-left cell for slicer placement */
+  cell?: string;
+  /** Slicer style */
+  style?: string;
+  /** Number of columns in slicer */
+  columnCount?: number;
+  /** Sort order */
+  sortOrder?: 'ascending' | 'descending';
+}
+
+// ─── Pivot Table Slicers ──────────────────────────────────────────────────────
+
+export interface PivotSlicer {
+  /** Slicer name */
+  name: string;
+  /** Pivot table name this slicer is connected to */
+  pivotTableName: string;
+  /** Field name to filter on */
+  fieldName: string;
+  /** Display caption */
+  caption?: string;
+  /** Top-left cell for slicer placement */
+  cell?: string;
+  /** Slicer style */
+  style?: string;
+  /** Number of columns in slicer */
+  columnCount?: number;
+}
+
+// ─── Custom Pivot Table Styles ────────────────────────────────────────────────
+
+export interface PivotStyleElement {
+  type: 'wholeTable' | 'headerRow' | 'totalRow' | 'firstColumn' | 'lastColumn'
+    | 'firstRowStripe' | 'secondRowStripe' | 'firstColumnStripe' | 'secondColumnStripe'
+    | 'pageFieldLabels' | 'pageFieldValues' | 'subtotalColumn' | 'subtotalRow';
+  style: CellStyle;
+}
+
+export interface CustomPivotStyle {
+  name: string;
+  elements: PivotStyleElement[];
+}
+
+// ─── Query Tables ─────────────────────────────────────────────────────────────
+
+export interface QueryTable {
+  /** Query table name */
+  name: string;
+  /** Connection ID (references a Connection) */
+  connectionId: number;
+  /** Target cell range in the worksheet */
+  ref: string;
+  /** Column names from the query result */
+  columns?: string[];
+  /** Auto-fill columns? */
+  fillFormulas?: boolean;
+  /** Grow on insert? */
+  growShrink?: boolean;
+  /** Remove data on delete? */
+  removeDataOnSave?: boolean;
+  /** Adjust column widths? */
+  adjustColumnWidth?: boolean;
+}
+
+// ─── External Links ───────────────────────────────────────────────────────────
+
+export interface ExternalLink {
+  /** File path or URL to the external workbook */
+  target: string;
+  /** Sheet name mappings: external sheet name → data */
+  sheets: Array<{
+    name: string;
+    /** Defined names from the external workbook */
+    definedNames?: Array<{ name: string; ref: string }>;
+  }>;
+}
+
+// ─── Themes ───────────────────────────────────────────────────────────────────
+
+export interface ThemeColor {
+  name: string;
+  color: Color;
+}
+
+export interface Theme {
+  name: string;
+  /** Major font (headings) */
+  majorFont: string;
+  /** Minor font (body) */
+  minorFont: string;
+  /** 12 standard theme colors: dk1, lt1, dk2, lt2, accent1-6, hlink, folHlink */
+  colors: ThemeColor[];
+}
+
+// ─── WordArt ──────────────────────────────────────────────────────────────────
+
+export type WordArtPreset =
+  | 'textPlain' | 'textArchUp' | 'textArchDown' | 'textCircle'
+  | 'textWave1' | 'textWave2' | 'textInflate' | 'textDeflate'
+  | 'textFadeUp' | 'textFadeDown' | 'textFadeLeft' | 'textFadeRight'
+  | 'textSlantUp' | 'textSlantDown' | 'textCascadeUp' | 'textCascadeDown'
+  | 'textChevron' | 'textRingInside' | 'textRingOutside' | 'textStop';
+
+export interface WordArt {
+  text: string;
+  preset?: WordArtPreset;
+  font?: Font;
+  fillColor?: Color;
+  outlineColor?: Color;
+  from: ChartPosition;
+  to: ChartPosition;
+}
+
+// ─── Shapes (creation API) ────────────────────────────────────────────────────
+
+export type ShapeType =
+  | 'rect' | 'roundRect' | 'ellipse' | 'triangle' | 'diamond'
+  | 'pentagon' | 'hexagon' | 'octagon' | 'star5' | 'star6'
+  | 'rightArrow' | 'leftArrow' | 'upArrow' | 'downArrow'
+  | 'line' | 'curvedConnector3' | 'callout1' | 'callout2'
+  | 'cloud' | 'heart' | 'lightningBolt' | 'sun' | 'moon'
+  | 'smileyFace' | 'flowChartProcess' | 'flowChartDecision'
+  | 'flowChartTerminator' | 'flowChartDocument';
+
+export interface Shape {
+  type: ShapeType;
+  from: ChartPosition;
+  to: ChartPosition;
+  text?: string;
+  fillColor?: Color;
+  lineColor?: Color;
+  lineWidth?: number;
+  font?: Font;
+  rotation?: number;
+}
+
+// ─── Locale ───────────────────────────────────────────────────────────────────
+
+export interface LocaleSettings {
+  /** Decimal separator character (default '.') */
+  decimalSeparator?: string;
+  /** Thousands separator character (default ',') */
+  thousandsSeparator?: string;
+  /** Date format pattern (default 'yyyy-mm-dd') */
+  dateFormat?: string;
+  /** Currency symbol (default '$') */
+  currencySymbol?: string;
+  /** Currency format pattern */
+  currencyFormat?: string;
 }

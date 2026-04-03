@@ -133,6 +133,23 @@ export type {
   // Workbook
   WorkbookProperties,
   WorksheetOptions,
+
+  // New features
+  Shape,
+  ShapeType,
+  WordArt,
+  WordArtPreset,
+  Theme,
+  ThemeColor,
+  CustomIcon,
+  CFCustomIconSet,
+  TableSlicer,
+  PivotSlicer,
+  CustomPivotStyle,
+  PivotStyleElement,
+  QueryTable,
+  ExternalLink,
+  LocaleSettings,
 } from './core/types.js';
 
 // ── VBA ──────────────────────────────────────────────────────────────────────

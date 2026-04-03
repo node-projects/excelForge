@@ -18,12 +18,14 @@ const VML_OBJ_TYPE: Record<string, string> = {
   label:        'Label',
   scrollBar:    'Scroll',
   spinner:      'Spin',
+  dialog:       'Dialog',
 };
 
 /** Map from our friendly type names to ctrlProp objectType values (differs from VML for CheckBox) */
 const CTRL_OBJ_TYPE: Record<string, string> = {
   ...VML_OBJ_TYPE,
   checkBox:     'CheckBox',   // ctrlProp uses capital B
+  dialog:       'Dialog',
 };
 
 /** Reverse map: OOXML objectType → our type name (handles both VML and ctrlProp casing) */
@@ -103,6 +105,7 @@ export function buildFormControlVmlShape(ctrl: FormControl, shapeId: number): st
   if (ctrl.inputRange) cd.push(`<x:FmlaRange>${escapeXml(ctrl.inputRange)}</x:FmlaRange>`);
   if (ctrl.checked !== undefined) cd.push(`<x:Checked>${CHECKED_MAP[ctrl.checked] ?? '0'}</x:Checked>`);
   if (ctrl.dropLines !== undefined) cd.push(`<x:DropLines>${ctrl.dropLines}</x:DropLines>`);
+  if (ctrl.dropStyle) cd.push(`<x:DropStyle>${escapeXml(ctrl.dropStyle)}</x:DropStyle>`);
   if (ctrl.min !== undefined) cd.push(`<x:Min>${ctrl.min}</x:Min>`);
   if (ctrl.max !== undefined) cd.push(`<x:Max>${ctrl.max}</x:Max>`);
   if (ctrl.inc !== undefined) cd.push(`<x:Inc>${ctrl.inc}</x:Inc>`);
@@ -113,11 +116,16 @@ export function buildFormControlVmlShape(ctrl: FormControl, shapeId: number): st
     cd.push(`<x:Sel>${selMap[ctrl.selType] ?? 'Single'}</x:Sel>`);
   }
   if (ctrl.noThreeD) cd.push('<x:NoThreeD/>');
+  // Dialog-specific button attributes
+  if (ctrl.isDefault) cd.push('<x:Default/>');
+  if (ctrl.isDismiss) cd.push('<x:Dismiss/>');
+  if (ctrl.isCancel) cd.push('<x:Cancel/>');
 
   // Text content for controls that display text
   let textBox = '';
   if (ctrl.text && (ctrl.type === 'button' || ctrl.type === 'checkBox' ||
-      ctrl.type === 'optionButton' || ctrl.type === 'groupBox' || ctrl.type === 'label')) {
+      ctrl.type === 'optionButton' || ctrl.type === 'groupBox' || ctrl.type === 'label' ||
+      ctrl.type === 'dialog')) {
     const align = ctrl.type === 'button' ? 'center' : 'left';
     textBox = `<v:textbox style="mso-direction-alt:auto"><div style="text-align:${align}"><font face="Calibri" size="220" color="#000000">${escapeXml(ctrl.text)}</font></div></v:textbox>`;
     cd.push('<x:TextHAlign>Center</x:TextHAlign>');
@@ -132,7 +140,10 @@ export function buildFormControlVmlShape(ctrl: FormControl, shapeId: number): st
 
   const shapeName = ctrl.text ?? `${ctrl.type}_${shapeId}`;
 
-  return `<v:shape o:spid="_x0000_s${shapeId}" id="${escapeXml(shapeName)}" type="#_x0000_t201" style="position:absolute;margin-left:${left.toFixed(1)}pt;margin-top:${top.toFixed(1)}pt;width:${width.toFixed(1)}pt;height:${height.toFixed(1)}pt;z-index:${shapeId}" filled="f" stroked="f" o:insetmode="auto"><o:lock v:ext="edit" rotation="t"/>${textBox}<x:ClientData ObjectType="${objType}">${cd.join('')}</x:ClientData></v:shape>`;
+  // Dialog frames use a visible filled shape; other controls are invisible
+  const fillStroke = ctrl.type === 'dialog' ? '' : ' filled="f" stroked="f"';
+
+  return `<v:shape o:spid="_x0000_s${shapeId}" id="${escapeXml(shapeName)}" type="#_x0000_t201" style="position:absolute;margin-left:${left.toFixed(1)}pt;margin-top:${top.toFixed(1)}pt;width:${width.toFixed(1)}pt;height:${height.toFixed(1)}pt;z-index:${shapeId}"${fillStroke} o:insetmode="auto"><o:lock v:ext="edit" rotation="t"/>${textBox}<x:ClientData ObjectType="${objType}">${cd.join('')}</x:ClientData></v:shape>`;
 }
 
 // ── Complete VML document ────────────────────────────────────────────────────
