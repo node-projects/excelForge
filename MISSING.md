@@ -22,7 +22,7 @@ Legend: **Y** = supported, **~** = partial, **-** = not supported, **P** = prese
 | 5 | Export JSON | Y | Y | Y | - | **Y** | Tree-shakeable JSON module |
 | 6 | Export HTML/CSS | Y | Y | - | - | **Y** | Enhanced: number fmts, CF viz, sparklines, charts, column widths, multi-sheet tabs |
 | 7 | Streaming read/write | Y (async) | Y | Y | Y | **-** | ExcelTS: WorkbookReader/WorkbookWriter |
-| 8 | Workbook encryption/decryption | Y | Y | - | - | **-** | EPPlus: Standard + Agile encryption |
+| 8 | Workbook encryption/decryption | Y | Y | - | - | **Y** | OOXML Agile Encryption with AES-256-CBC + SHA-512 |
 | 9 | Digital signatures | Y | - | - | - | **-** | EPPlus: 3 sig types, 5 hash algos |
 
 ## Cell Values & Formulas
@@ -123,6 +123,7 @@ Legend: **Y** = supported, **~** = partial, **-** = not supported, **P** = prese
 | 66 | Chart templates (.crtx) | Y | - | - | - | **-** | |
 | 67 | Modern chart styling (Excel 2019) | Y | - | - | - | **-** | |
 | 68 | WordArt | - | Y | - | - | **Y** | prstTxWarp text effects |
+| 68b | Math Equations (OMML) | Y | - | - | - | **Y** | Office Math Markup Language in drawings |
 
 ## Images & Drawings
 
@@ -170,7 +171,7 @@ Legend: **Y** = supported, **~** = partial, **-** = not supported, **P** = prese
 |---|---------|--------|-------------|---------|---------|------------|-------|
 | 89 | Sheet protection with password | Y | Y | Y | Y | **Y** | |
 | 90 | Cell locking/hiding | Y | - | Y | - | **Y** | |
-| 91 | Workbook encryption | Y | Y | - | - | **-** | |
+| 91 | Workbook encryption | Y | Y | - | - | **Y** | Agile Encryption: encrypt/decrypt/isEncrypted |
 | 92 | VBA code signing | Y | - | - | - | **-** | |
 
 ## Connections & External Data
@@ -232,20 +233,22 @@ Legend: **Y** = supported, **~** = partial, **-** = not supported, **P** = prese
 | **SheetJS Pro** | 55 | 2 | 54 |
 | **ExcelJS** | 46 | 1 | 64 |
 | **ExcelTS** | 33 | 1 | 77 |
-| **ExcelForge** | 100 | 0 | 11 |
+| **ExcelForge** | 102 | 0 | 10 |
 
 ## ExcelForge Unique Advantages
 
 - **Zero dependencies** — no native modules, no System.Drawing, pure TS
 - **Browser + Node + Deno + Bun + edge** — universal runtime support
-- **100 features supported** — closest to EPPlus (106) among JS/TS libraries
+- **102 features supported** — closest to EPPlus (106) among JS/TS libraries
 - **Absolute image anchoring** — `xdr:absoluteAnchor` (not available in EPPlus/SheetJS/ExcelJS/ExcelTS)
 - **In-cell pictures** — only EPPlus and ExcelForge support this (Excel 365+)
 - **Form controls with all 9 types** — not available in ExcelJS/ExcelTS, limited in SheetJS
 - **Custom DEFLATE compression** — built-in, levels 0-9, no zlib dependency
 - **Real chart sheets** — proper `<chartsheet>` XML, not embedded in worksheets
 - **Dialog sheets** — Excel 5 dialog sheet support with form controls
-- **Multi-sheet HTML export** — tabbed workbook HTML with CF visualization, sparklines, charts, shapes, WordArt, form controls
+- **Workbook encryption** — OOXML Agile Encryption with Web Crypto API (tree-shakeable)
+- **Math equations (OMML)** — only EPPlus and ExcelForge among listed libraries
+- **Multi-sheet HTML export** — tabbed workbook HTML with CF visualization, sparklines, charts, shapes, WordArt, math, images, form controls
 - **Shapes & WordArt** — 28 preset shape types + WordArt text effects
 - **Theme support** — full Office theme XML with customizable colors and fonts
 - **Table & pivot slicers** — slicer UI elements with cache definitions
@@ -259,7 +262,6 @@ Legend: **Y** = supported, **~** = partial, **-** = not supported, **P** = prese
 ### High Impact
 | # | Feature | Available In | Effort |
 |---|---------|-------------|--------|
-| 8 | Workbook encryption | EPPlus, SheetJS | High |
 | 7 | Streaming read/write | EPPlus, SheetJS, ExcelJS, ExcelTS | High |
 
 ### Medium Impact
@@ -276,7 +278,13 @@ Legend: **Y** = supported, **~** = partial, **-** = not supported, **P** = prese
 | 107 | OLE objects | EPPlus | Medium |
 | 103 | VBA UserForms | EPPlus, SheetJS | High |
 
-### Recently Implemented (v3.2)
+### Recently Implemented (v3.3)
+| # | Feature | Notes |
+|---|---------|-------|
+| 8/91 | Workbook encryption | OOXML Agile Encryption with AES-256-CBC + SHA-512 |
+| 68b | Math Equations (OMML) | 16 element types: fractions, superscripts, radicals, matrices, etc. |
+
+### Previously Implemented (v3.2)
 | # | Feature | Notes |
 |---|---------|-------|
 | 26 | Themes | Full Office theme XML with custom colors/fonts |

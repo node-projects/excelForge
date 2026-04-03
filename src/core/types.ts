@@ -955,3 +955,72 @@ export interface LocaleSettings {
   /** Currency format pattern */
   currencyFormat?: string;
 }
+
+// ─── Math Equations (OMML) ────────────────────────────────────────────────────
+
+/** A math equation element — corresponds to OMML (Office Math Markup Language) */
+export type MathElementType =
+  | 'text'         // simple text run (m:r)
+  | 'frac'         // fraction (m:f)
+  | 'sup'          // superscript (m:sSup)
+  | 'sub'          // subscript (m:sSub)
+  | 'subSup'       // sub-superscript (m:sSubSup)
+  | 'nary'         // n-ary operator like sum/product (m:nary)
+  | 'rad'          // radical / square root (m:rad)
+  | 'delim'        // delimiters / parentheses (m:d)
+  | 'func'         // function name (m:func)
+  | 'groupChar'    // group character (m:groupChr)
+  | 'matrix'       // matrix (m:m)
+  | 'eqArr'        // equation array (m:eqArr)
+  | 'accent'       // accent above/below (m:acc)
+  | 'bar'          // bar (m:bar)
+  | 'limLow'       // lower limit (m:limLow)
+  | 'limUpp';      // upper limit (m:limUpp)
+
+export interface MathElement {
+  type: MathElementType;
+  /** Text content for 'text' type */
+  text?: string;
+  /** Numerator for 'frac', base for 'sup'/'sub', function name for 'func' */
+  base?: MathElement[];
+  /** Denominator for 'frac', superscript for 'sup', subscript for 'sub' */
+  argument?: MathElement[];
+  /** Superscript for 'subSup' */
+  superscript?: MathElement[];
+  /** Subscript for 'subSup' */
+  subscript?: MathElement[];
+  /** Lower limit for 'nary' */
+  lower?: MathElement[];
+  /** Upper limit for 'nary' */
+  upper?: MathElement[];
+  /** Body for 'nary', 'rad', 'delim' */
+  body?: MathElement[];
+  /** Operator character for 'nary' (default '∑'), 'groupChar', 'accent' */
+  operator?: string;
+  /** Rows for 'matrix', items for 'eqArr' */
+  rows?: MathElement[][];
+  /** Opening delimiter for 'delim' (default '(') */
+  open?: string;
+  /** Closing delimiter for 'delim' (default ')') */
+  close?: string;
+  /** Whether to show the degree for 'rad' */
+  hideDegree?: boolean;
+  /** Degree for 'rad' */
+  degree?: MathElement[];
+  /** Font name override */
+  font?: string;
+}
+
+export interface MathEquation {
+  /** Top-level equation elements */
+  elements: MathElement[];
+  /** Position (from anchor) */
+  from: ChartPosition;
+  /** Size in EMU (optional, auto-sized if omitted) */
+  width?: number;
+  height?: number;
+  /** Font size in points (default 11) */
+  fontSize?: number;
+  /** Font name (default 'Cambria Math') */
+  fontName?: string;
+}

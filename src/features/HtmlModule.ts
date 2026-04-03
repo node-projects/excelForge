@@ -9,7 +9,7 @@ import type { Worksheet } from '../core/Worksheet.js';
 import type { Workbook } from '../core/Workbook.js';
 import type {
   CellStyle, Font, Fill, PatternFill, GradientFill, Border, BorderSide, Alignment,
-  ConditionalFormat, Chart, Sparkline,
+  ConditionalFormat, Chart, Sparkline, MathElement,
 } from '../core/types.js';
 import { escapeXml, colIndexToLetter } from '../utils/helpers.js';
 
@@ -335,12 +335,101 @@ function shapeToHtml(shape: { type: string; text?: string; fillColor?: string; l
 
 /* ─── WordArt rendering ────────────────────────────────────────────────────── */
 
-function wordArtToHtml(wa: { text: string; fillColor?: string; font?: any; preset?: string }): string {
+function wordArtToHtml(wa: { text: string; fillColor?: string; outlineColor?: string; font?: any; preset?: string }): string {
   const toHex = (c: string) => { let h = c.replace(/^#/, ''); if (h.length === 8) h = h.substring(2); return '#' + h; };
   const color = wa.fillColor ? toHex(wa.fillColor) : '#333';
+  const outline = wa.outlineColor ? toHex(wa.outlineColor) : '';
   const family = wa.font?.name ?? 'Impact';
   const size = wa.font?.size ?? 36;
-  return `<div style="display:inline-block;font-family:'${escapeXml(family)}',sans-serif;font-size:${size}px;font-weight:bold;color:${color};text-shadow:2px 2px 4px rgba(0,0,0,.3);margin:8px 0;padding:8px 16px">${escapeXml(wa.text)}</div>`;
+  const bold = wa.font?.bold !== false ? 'font-weight:bold;' : '';
+  const textStroke = outline ? `-webkit-text-stroke:1px ${outline};paint-order:stroke fill;` : '';
+  const presetStyle = wordArtPresetCSS(wa.preset);
+  return `<div style="display:inline-block;font-family:'${escapeXml(family)}',sans-serif;font-size:${size}px;${bold}color:${color};${textStroke}text-shadow:2px 2px 4px rgba(0,0,0,.3);${presetStyle}margin:8px 0;padding:8px 16px">${escapeXml(wa.text)}</div>`;
+}
+
+function wordArtPresetCSS(preset?: string): string {
+  if (!preset || preset === 'textPlain') return '';
+  if (preset === 'textArchUp') return 'letter-spacing:4px;';
+  if (preset === 'textArchDown') return 'letter-spacing:4px;transform:scaleY(-1);';
+  if (preset === 'textWave1' || preset === 'textWave2') return 'letter-spacing:2px;font-style:italic;';
+  if (preset === 'textInflate') return 'letter-spacing:3px;transform:scaleY(1.3);';
+  if (preset === 'textDeflate') return 'letter-spacing:1px;transform:scaleY(0.7);';
+  if (preset === 'textSlantUp') return 'transform:perspective(200px) rotateY(-5deg);';
+  if (preset === 'textSlantDown') return 'transform:perspective(200px) rotateY(5deg);';
+  return '';
+}
+
+/* ─── Image rendering ──────────────────────────────────────────────────────── */
+
+function imageToHtml(img: { data: string | Uint8Array; format?: string; altText?: string }): string {
+  let src: string;
+  if (typeof img.data === 'string') {
+    // Already base64
+    const mime = formatToMime(img.format);
+    src = `data:${mime};base64,${img.data}`;
+  } else {
+    // Uint8Array → base64
+    const mime = formatToMime(img.format);
+    let b64 = '';
+    const bytes = img.data;
+    for (let i = 0; i < bytes.length; i += 3) {
+      const b0 = bytes[i], b1 = bytes[i + 1] ?? 0, b2 = bytes[i + 2] ?? 0;
+      const n = (b0 << 16) | (b1 << 8) | b2;
+      const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+      b64 += chars[(n >> 18) & 63] + chars[(n >> 12) & 63];
+      b64 += i + 1 < bytes.length ? chars[(n >> 6) & 63] : '=';
+      b64 += i + 2 < bytes.length ? chars[n & 63] : '=';
+    }
+    src = `data:${mime};base64,${b64}`;
+  }
+  const alt = img.altText ? ` alt="${escapeXml(img.altText)}"` : '';
+  return `<img src="${src}"${alt} style="max-width:400px;max-height:300px;margin:4px;border:1px solid #ddd;border-radius:4px"/>`;
+}
+
+function formatToMime(fmt?: string): string {
+  switch (fmt) {
+    case 'jpeg': case 'jpg': return 'image/jpeg';
+    case 'gif': return 'image/gif';
+    case 'svg': return 'image/svg+xml';
+    case 'webp': return 'image/webp';
+    case 'bmp': return 'image/bmp';
+    default: return 'image/png';
+  }
+}
+
+/* ─── Math equation rendering ──────────────────────────────────────────────── */
+
+function mathElementToHtml(el: MathElement): string {
+  switch (el.type) {
+    case 'text':
+      return `<span style="font-style:italic">${escapeXml(el.text ?? '')}</span>`;
+    case 'frac':
+      return `<span style="display:inline-flex;flex-direction:column;align-items:center;vertical-align:middle"><span style="border-bottom:1px solid #333;padding:0 4px">${(el.base ?? []).map(mathElementToHtml).join('')}</span><span style="padding:0 4px">${(el.argument ?? []).map(mathElementToHtml).join('')}</span></span>`;
+    case 'sup':
+      return `<span>${(el.base ?? []).map(mathElementToHtml).join('')}<sup>${(el.argument ?? []).map(mathElementToHtml).join('')}</sup></span>`;
+    case 'sub':
+      return `<span>${(el.base ?? []).map(mathElementToHtml).join('')}<sub>${(el.argument ?? []).map(mathElementToHtml).join('')}</sub></span>`;
+    case 'subSup':
+      return `<span>${(el.base ?? []).map(mathElementToHtml).join('')}<sub>${(el.subscript ?? []).map(mathElementToHtml).join('')}</sub><sup>${(el.superscript ?? []).map(mathElementToHtml).join('')}</sup></span>`;
+    case 'nary':
+      return `<span style="display:inline-flex;align-items:center;vertical-align:middle"><span style="display:inline-flex;flex-direction:column;align-items:center;font-size:0.7em"><span>${(el.upper ?? []).map(mathElementToHtml).join('')}</span><span style="font-size:2em">${escapeXml(el.operator ?? '∑')}</span><span>${(el.lower ?? []).map(mathElementToHtml).join('')}</span></span>${(el.body ?? []).map(mathElementToHtml).join('')}</span>`;
+    case 'rad':
+      return `<span style="display:inline-flex;align-items:baseline;vertical-align:middle">${!el.hideDegree && el.degree?.length ? `<sup style="font-size:0.65em">${el.degree.map(mathElementToHtml).join('')}</sup>` : ''}√<span style="border-top:1px solid #333;padding:0 2px">${(el.body ?? []).map(mathElementToHtml).join('')}</span></span>`;
+    case 'delim':
+      return `<span>${escapeXml(el.open ?? '(')}${(el.body ?? []).map(mathElementToHtml).join('')}${escapeXml(el.close ?? ')')}</span>`;
+    case 'func':
+      return `<span><span style="font-style:normal">${(el.base ?? []).map(mathElementToHtml).join('')}</span>${(el.argument ?? []).map(mathElementToHtml).join('')}</span>`;
+    case 'matrix':
+      return `<table style="display:inline-table;border-collapse:collapse;vertical-align:middle;margin:0 4px">${(el.rows ?? []).map(row => `<tr>${row.map(c => `<td style="padding:2px 6px;text-align:center">${mathElementToHtml(c)}</td>`).join('')}</tr>`).join('')}</table>`;
+    default:
+      return `<span>${escapeXml(el.text ?? '')}</span>`;
+  }
+}
+
+function mathEquationToHtml(eq: { elements: MathElement[]; fontSize?: number; fontName?: string }): string {
+  const size = eq.fontSize ?? 11;
+  const font = eq.fontName ?? 'Cambria Math';
+  return `<div style="display:inline-block;font-family:'${escapeXml(font)}',serif;font-size:${size}pt;margin:8px;padding:4px">${eq.elements.map(mathElementToHtml).join('')}</div>`;
 }
 
 /* ─── Form control (dialog) rendering ──────────────────────────────────────── */
@@ -378,6 +467,26 @@ function colLetterToIdx(letter: string): number {
     idx = idx * 26 + (letter.charCodeAt(i) - 64);
   }
   return idx; // 1-based
+}
+
+/* ─── Sparkline data resolver ──────────────────────────────────────────────── */
+
+function resolveSparklineData(ws: Worksheet, dataRange: string): number[] {
+  const vals: number[] = [];
+  // Try to parse common range formats like "Sheet1!A2:A10" or "A2:A10"
+  const ref = dataRange.includes('!') ? dataRange.split('!')[1] : dataRange;
+  const m = ref.match(/^([A-Z]+)(\d+):([A-Z]+)(\d+)$/);
+  if (m) {
+    const c1 = colLetterToIdx(m[1]), r1 = parseInt(m[2], 10);
+    const c2 = colLetterToIdx(m[3]), r2 = parseInt(m[4], 10);
+    for (let r = r1; r <= r2; r++) {
+      for (let c = c1; c <= c2; c++) {
+        const cell = ws.getCell(r, c);
+        if (typeof cell.value === 'number') vals.push(cell.value);
+      }
+    }
+  }
+  return vals;
 }
 
 /* ─── Main worksheet export ────────────────────────────────────────────────── */
@@ -539,6 +648,11 @@ export function worksheetToHtml(ws: Worksheet, options: HtmlExportOptions = {}):
     if (charts.length) chartsHtml = '\n' + charts.map(chartToHtml).join('\n');
   }
 
+  // Images
+  let imagesHtml = '';
+  const images = ws.getImages?.();
+  if (images?.length) imagesHtml = '\n<div class="images">' + images.map(imageToHtml).join('\n') + '</div>';
+
   // Shapes
   let shapesHtml = '';
   const shapes = ws.getShapes?.();
@@ -549,12 +663,31 @@ export function worksheetToHtml(ws: Worksheet, options: HtmlExportOptions = {}):
   const wordArts = ws.getWordArt?.();
   if (wordArts?.length) wordArtHtml = '\n<div class="wordart">' + wordArts.map(wordArtToHtml).join('\n') + '</div>';
 
+  // Math equations
+  let mathHtml = '';
+  const mathEqs = ws.getMathEquations?.();
+  if (mathEqs?.length) mathHtml = '\n<div class="math-equations">' + mathEqs.map(mathEquationToHtml).join('\n') + '</div>';
+
   // Form controls (dialog elements)
   let formControlsHtml = '';
   const fcs = ws.getFormControls?.();
   if (fcs?.length) formControlsHtml = '\n<div class="form-controls" style="padding:8px;background:#f0f0f0;border:1px solid #ccc;margin:8px 0">' + fcs.map(formControlToHtml).join('\n') + '</div>';
 
-  const extraHtml = chartsHtml + shapesHtml + wordArtHtml + formControlsHtml;
+  // Sparklines rendered inline
+  let sparklinesHtml = '';
+  if (options.includeSparklines !== false) {
+    const spks = ws.getSparklines();
+    if (spks.length) {
+      const spkItems = spks.map(sp => {
+        // Try to resolve data range to values
+        const vals = resolveSparklineData(ws, sp.dataRange);
+        return sparklineToSvg(sp, vals);
+      }).filter(Boolean);
+      if (spkItems.length) sparklinesHtml = '\n<div class="sparklines" style="display:flex;gap:8px;margin:8px 0">' + spkItems.join('\n') + '</div>';
+    }
+  }
+
+  const extraHtml = chartsHtml + imagesHtml + shapesHtml + wordArtHtml + mathHtml + formControlsHtml + sparklinesHtml;
 
   if (options.fullDocument === false) return tableHtml + extraHtml;
 

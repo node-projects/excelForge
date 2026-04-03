@@ -8,6 +8,7 @@ import type {
   SheetView, ColumnDef, RowDef, Sparkline, DataValidation,
   WorksheetOptions, PivotTable, PageBreak, FormControl,
   Shape, WordArt, QueryTable, TableSlicer, CFCustomIconSet,
+  MathEquation, MathElement,
 } from '../core/types.js';
 import type { SharedStrings } from '../core/SharedStrings.js';
 import type { StyleRegistry } from '../styles/StyleRegistry.js';
@@ -50,6 +51,7 @@ export class Worksheet {
   private wordArt: WordArt[] = [];
   private queryTables: QueryTable[] = [];
   private tableSlicers: TableSlicer[] = [];
+  private mathEquations: MathEquation[] = [];
   private colDefs: Map<number, ColumnDef> = new Map();
   private rowDefs: Map<number, RowDef>    = new Map();
   private dataValidations: Map<string, DataValidation> = new Map();
@@ -709,6 +711,11 @@ export class Worksheet {
   addTableSlicer(slicer: TableSlicer): this { this.tableSlicers.push(slicer); return this; }
   getTableSlicers(): TableSlicer[] { return this.tableSlicers; }
 
+  // ─── Math Equations ──────────────────────────────────────────────────────────
+
+  addMathEquation(eq: MathEquation): this { this.mathEquations.push(eq); return this; }
+  getMathEquations(): MathEquation[] { return this.mathEquations; }
+
   // ─── Print Area ──────────────────────────────────────────────────────────────
 
   /** Print area reference, e.g. "A1:D10" or "$A$1:$D$10".
@@ -770,7 +777,7 @@ export class Worksheet {
           this.tableRIds.map(rId => `<tablePart r:id="${rId}"/>`).join('')
         }</tableParts>`
       : '';
-    const drawingXml = (this.images.length || this.charts.length) && this.drawingRId
+    const drawingXml = (this.images.length || this.charts.length || this.shapes.length || this.wordArt.length || this.mathEquations.length) && this.drawingRId
       ? `<drawing r:id="${this.drawingRId}"/>`
       : '';
     const legacyDrawingXml = this.legacyDrawingRId
@@ -1382,19 +1389,107 @@ ${legacyDrawingXml}
       const fromXml = `<xdr:from><xdr:col>${from.col}</xdr:col><xdr:colOff>${from.colOff ?? 0}</xdr:colOff><xdr:row>${from.row}</xdr:row><xdr:rowOff>${from.rowOff ?? 0}</xdr:rowOff></xdr:from>`;
       const toXml   = `<xdr:to><xdr:col>${to.col}</xdr:col><xdr:colOff>${to.colOff ?? 0}</xdr:colOff><xdr:row>${to.row}</xdr:row><xdr:rowOff>${to.rowOff ?? 0}</xdr:rowOff></xdr:to>`;
       const preset = wa.preset ?? 'textPlain';
-      const fillXml = wa.fillColor
-        ? `<a:solidFill><a:srgbClr val="${toHex6(wa.fillColor)}"/></a:solidFill>`
+      const fontSize = wa.font?.size ? wa.font.size * 100 : 3600;
+      const fillHex = wa.fillColor ? toHex6(wa.fillColor) : '';
+      const outlineHex = wa.outlineColor ? toHex6(wa.outlineColor) : '';
+      // Text fill: solidFill or schemeClr default
+      const textFillXml = fillHex
+        ? `<a:solidFill><a:srgbClr val="${fillHex}"/></a:solidFill>`
         : '<a:solidFill><a:schemeClr val="tx1"/></a:solidFill>';
-      const outlineXml = wa.outlineColor
-        ? `<a:ln><a:solidFill><a:srgbClr val="${toHex6(wa.outlineColor)}"/></a:solidFill></a:ln>`
+      // Outline on run properties (matches Excel's WordArt)
+      const textOutlineXml = outlineHex
+        ? `<a:ln w="12700"><a:solidFill><a:srgbClr val="${outlineHex}"/></a:solidFill><a:prstDash val="solid"/></a:ln>`
         : '';
+      // Shadow effect
+      const effectXml = `<a:effectLst><a:outerShdw dist="38100" dir="2700000" algn="bl" rotWithShape="0"><a:srgbClr val="000000"><a:alpha val="40000"/></a:srgbClr></a:outerShdw></a:effectLst>`;
       const fontAttrs = [
         'lang="en-US"',
-        wa.font?.bold ? 'b="1"' : '',
+        `sz="${fontSize}"`,
+        wa.font?.bold ? 'b="1"' : 'b="1"',
         wa.font?.italic ? 'i="1"' : '',
-        wa.font?.size ? `sz="${wa.font.size * 100}"` : 'sz="3600"',
+        'cap="none" spc="0"',
       ].filter(Boolean).join(' ');
-      parts.push(`<xdr:twoCellAnchor editAs="oneCell">${fromXml}${toXml}<xdr:sp><xdr:nvSpPr><xdr:cNvPr id="${id}" name="WordArt ${id}"/><xdr:cNvSpPr/></xdr:nvSpPr><xdr:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/>${outlineXml}</xdr:spPr><xdr:txBody><a:bodyPr wrap="none" lIns="91440" tIns="45720" rIns="91440" bIns="45720"><a:prstTxWarp prst="${preset}"><a:avLst/></a:prstTxWarp></a:bodyPr><a:lstStyle/><a:p><a:r><a:rPr ${fontAttrs}>${fillXml}</a:rPr><a:t>${escapeXml(wa.text)}</a:t></a:r></a:p></xdr:txBody></xdr:sp><xdr:clientData/></xdr:twoCellAnchor>`);
+      const fontFace = wa.font?.name ?? 'Calibri';
+      const prstWarpXml = preset !== 'textPlain'
+        ? `<a:prstTxWarp prst="${preset}"><a:avLst/></a:prstTxWarp>`
+        : '';
+      parts.push(`<xdr:twoCellAnchor editAs="oneCell">${fromXml}${toXml}<xdr:sp macro="" textlink=""><xdr:nvSpPr><xdr:cNvPr id="${id}" name="WordArt ${id}"/><xdr:cNvSpPr/></xdr:nvSpPr><xdr:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></xdr:spPr><xdr:txBody><a:bodyPr wrap="square" lIns="91440" tIns="45720" rIns="91440" bIns="45720">${prstWarpXml}<a:spAutoFit/></a:bodyPr><a:lstStyle/><a:p><a:pPr algn="ctr"/><a:r><a:rPr ${fontAttrs}>${textOutlineXml}${textFillXml}${effectXml}<a:latin typeface="${escapeXml(fontFace)}"/></a:rPr><a:t>${escapeXml(wa.text)}</a:t></a:r></a:p></xdr:txBody></xdr:sp><xdr:clientData/></xdr:twoCellAnchor>`);
+    });
+
+    // ── Math Equations (OMML) ───────────────────────────────────────────────
+    this.mathEquations.forEach(eq => {
+      const id = shapeCounter++;
+      const from = eq.from;
+      const fromXml = `<xdr:from><xdr:col>${from.col}</xdr:col><xdr:colOff>${from.colOff ?? 0}</xdr:colOff><xdr:row>${from.row}</xdr:row><xdr:rowOff>${from.rowOff ?? 0}</xdr:rowOff></xdr:from>`;
+      const w = eq.width ?? 1800000; // default ~2 inches
+      const h = eq.height ?? 500000; // default ~0.5 inches
+      const extXml = `<xdr:ext cx="${w}" cy="${h}"/>`;
+      const fontSize = eq.fontSize ? eq.fontSize * 100 : 1100;
+      const fontName = eq.fontName ?? 'Cambria Math';
+      const rPr = `<a:rPr lang="en-US" sz="${fontSize}" i="1"><a:latin typeface="${escapeXml(fontName)}" panose="02040503050406030204" pitchFamily="18" charset="0"/></a:rPr>`;
+      const ctrlPr = `<m:ctrlPr>${rPr}</m:ctrlPr>`;
+
+      const buildOmml = (el: MathElement): string => {
+        switch (el.type) {
+          case 'text':
+            return `<m:r>${rPr}<m:t>${escapeXml(el.text ?? '')}</m:t></m:r>`;
+          case 'frac':
+            return `<m:f><m:fPr>${el.hideDegree ? '<m:type m:val="noBar"/>' : ''}${ctrlPr}</m:fPr><m:num>${(el.base ?? []).map(buildOmml).join('')}</m:num><m:den>${(el.argument ?? []).map(buildOmml).join('')}</m:den></m:f>`;
+          case 'sup':
+            return `<m:sSup><m:sSupPr>${ctrlPr}</m:sSupPr><m:e>${(el.base ?? []).map(buildOmml).join('')}</m:e><m:sup>${(el.argument ?? []).map(buildOmml).join('')}</m:sup></m:sSup>`;
+          case 'sub':
+            return `<m:sSub><m:sSubPr>${ctrlPr}</m:sSubPr><m:e>${(el.base ?? []).map(buildOmml).join('')}</m:e><m:sub>${(el.argument ?? []).map(buildOmml).join('')}</m:sub></m:sSub>`;
+          case 'subSup':
+            return `<m:sSubSup><m:sSubSupPr>${ctrlPr}</m:sSubSupPr><m:e>${(el.base ?? []).map(buildOmml).join('')}</m:e><m:sub>${(el.subscript ?? []).map(buildOmml).join('')}</m:sub><m:sup>${(el.superscript ?? []).map(buildOmml).join('')}</m:sup></m:sSubSup>`;
+          case 'nary': {
+            const chr = el.operator ?? '∑';
+            return `<m:nary><m:naryPr><m:chr m:val="${escapeXml(chr)}"/>${ctrlPr}</m:naryPr><m:sub>${(el.lower ?? []).map(buildOmml).join('')}</m:sub><m:sup>${(el.upper ?? []).map(buildOmml).join('')}</m:sup><m:e>${(el.body ?? []).map(buildOmml).join('')}</m:e></m:nary>`;
+          }
+          case 'rad':
+            return `<m:rad><m:radPr>${el.hideDegree ? '<m:degHide m:val="1"/>' : ''}${ctrlPr}</m:radPr><m:deg>${(el.degree ?? []).map(buildOmml).join('')}</m:deg><m:e>${(el.body ?? []).map(buildOmml).join('')}</m:e></m:rad>`;
+          case 'delim': {
+            const open = el.open ?? '(';
+            const close = el.close ?? ')';
+            return `<m:d><m:dPr>${open !== '(' ? `<m:begChr m:val="${escapeXml(open)}"/>` : ''}${close !== ')' ? `<m:endChr m:val="${escapeXml(close)}"/>` : ''}${ctrlPr}</m:dPr><m:e>${(el.body ?? []).map(buildOmml).join('')}</m:e></m:d>`;
+          }
+          case 'func':
+            return `<m:func><m:funcPr>${ctrlPr}</m:funcPr><m:fName>${(el.base ?? []).map(buildOmml).join('')}</m:fName><m:e>${(el.argument ?? []).map(buildOmml).join('')}</m:e></m:func>`;
+          case 'accent':
+            return `<m:acc><m:accPr>${el.operator ? `<m:chr m:val="${escapeXml(el.operator)}"/>` : ''}${ctrlPr}</m:accPr><m:e>${(el.body ?? []).map(buildOmml).join('')}</m:e></m:acc>`;
+          case 'bar':
+            return `<m:bar><m:barPr>${ctrlPr}</m:barPr><m:e>${(el.body ?? []).map(buildOmml).join('')}</m:e></m:bar>`;
+          case 'matrix':
+            return `<m:m><m:mPr>${ctrlPr}</m:mPr>${(el.rows ?? []).map(row => `<m:mr>${row.map(c => `<m:e>${buildOmml(c)}</m:e>`).join('')}</m:mr>`).join('')}</m:m>`;
+          case 'eqArr':
+            return `<m:eqArr><m:eqArrPr>${ctrlPr}</m:eqArrPr>${(el.rows ?? []).map(row => `<m:e>${row.map(buildOmml).join('')}</m:e>`).join('')}</m:eqArr>`;
+          case 'limLow':
+            return `<m:limLow><m:limLowPr>${ctrlPr}</m:limLowPr><m:e>${(el.base ?? []).map(buildOmml).join('')}</m:e><m:lim>${(el.argument ?? []).map(buildOmml).join('')}</m:lim></m:limLow>`;
+          case 'limUpp':
+            return `<m:limUpp><m:limUppPr>${ctrlPr}</m:limUppPr><m:e>${(el.base ?? []).map(buildOmml).join('')}</m:e><m:lim>${(el.argument ?? []).map(buildOmml).join('')}</m:lim></m:limUpp>`;
+          case 'groupChar':
+            return `<m:groupChr><m:groupChrPr>${el.operator ? `<m:chr m:val="${escapeXml(el.operator)}"/>` : ''}${ctrlPr}</m:groupChrPr><m:e>${(el.body ?? []).map(buildOmml).join('')}</m:e></m:groupChr>`;
+          default:
+            return `<m:r>${rPr}<m:t>${escapeXml(el.text ?? '')}</m:t></m:r>`;
+        }
+      };
+
+      const ommlBody = eq.elements.map(buildOmml).join('');
+      const ommlXml = `<m:oMathPara xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"><m:oMathParaPr><m:jc m:val="centerGroup"/></m:oMathParaPr><m:oMath xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math">${ommlBody}</m:oMath></m:oMathPara>`;
+      // Fallback text: flatten equation elements to plain text
+      const flattenText = (el: MathElement): string => {
+        if (el.text) return el.text;
+        const parts = [el.base, el.argument, el.body, el.lower, el.upper, el.superscript, el.subscript, el.degree]
+          .filter(Boolean).map(arr => arr!.map(flattenText).join('')).join('');
+        if (el.type === 'frac') return `(${(el.base ?? []).map(flattenText).join('')})/(${(el.argument ?? []).map(flattenText).join('')})`;
+        if (el.type === 'sup') return `${(el.base ?? []).map(flattenText).join('')}^${(el.argument ?? []).map(flattenText).join('')}`;
+        if (el.type === 'nary') return `${el.operator ?? '∑'}(${(el.body ?? []).map(flattenText).join('')})`;
+        if (el.type === 'delim') return `${el.open ?? '('}${(el.body ?? []).map(flattenText).join('')}${el.close ?? ')'}`;
+        if (el.type === 'rad') return `√(${(el.body ?? []).map(flattenText).join('')})`;
+        return parts;
+      };
+      const fallbackText = eq.elements.map(flattenText).join('');
+
+      parts.push(`<xdr:oneCellAnchor>${fromXml}${extXml}<mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"><mc:Choice xmlns:a14="http://schemas.microsoft.com/office/drawing/2010/main" Requires="a14"><xdr:sp macro="" textlink=""><xdr:nvSpPr><xdr:cNvPr id="${id}" name="MathEq ${id}"/><xdr:cNvSpPr txBox="1"/></xdr:nvSpPr><xdr:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${w}" cy="${h}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></xdr:spPr><xdr:txBody><a:bodyPr vertOverflow="clip" horzOverflow="clip" wrap="none" lIns="0" tIns="0" rIns="0" bIns="0" rtlCol="0" anchor="t"><a:spAutoFit/></a:bodyPr><a:lstStyle/><a:p><a14:m>${ommlXml}</a14:m><a:endParaRPr lang="en-US" sz="${fontSize}"/></a:p></xdr:txBody></xdr:sp></mc:Choice><mc:Fallback><xdr:sp macro="" textlink=""><xdr:nvSpPr><xdr:cNvPr id="${id}" name="MathEq ${id}"/><xdr:cNvSpPr txBox="1"/></xdr:nvSpPr><xdr:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${w}" cy="${h}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></xdr:spPr><xdr:txBody><a:bodyPr vertOverflow="clip" horzOverflow="clip" wrap="none" lIns="0" tIns="0" rIns="0" bIns="0" rtlCol="0" anchor="t"><a:spAutoFit/></a:bodyPr><a:lstStyle/><a:p><a:r><a:rPr lang="en-US" sz="${fontSize}" i="0"><a:latin typeface="${escapeXml(fontName)}" panose="02040503050406030204" pitchFamily="18" charset="0"/></a:rPr><a:t>${escapeXml(fallbackText)}</a:t></a:r><a:endParaRPr lang="en-US" sz="${fontSize}"/></a:p></xdr:txBody></xdr:sp></mc:Fallback></mc:AlternateContent><xdr:clientData/></xdr:oneCellAnchor>`);
     });
 
     return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>

@@ -50,6 +50,10 @@ export type { HtmlExportOptions, WorkbookHtmlExportOptions } from './features/Ht
 // ── Formula Calculation Engine (tree-shakeable) ──────────────────────────────
 export { FormulaEngine } from './features/FormulaEngine.js';
 
+// ── Encryption (tree-shakeable, optional) ────────────────────────────────────
+export { encryptWorkbook, decryptWorkbook, isEncrypted } from './features/Encryption.js';
+export type { EncryptionOptions } from './features/Encryption.js';
+
 // ── Types ───────────────────────────────────────────────────────────────────
 export type {
   // Values
@@ -150,6 +154,9 @@ export type {
   QueryTable,
   ExternalLink,
   LocaleSettings,
+  MathEquation,
+  MathElement,
+  MathElementType,
 } from './core/types.js';
 
 // ── VBA ──────────────────────────────────────────────────────────────────────

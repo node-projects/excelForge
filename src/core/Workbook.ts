@@ -546,7 +546,7 @@ export class Workbook {
       const tables = ws.getTables();
       const imgRIds: string[] = [], chartRIds: string[] = [], tblRIds: string[] = [];
 
-      if (imgs.length || charts.length || ws.getShapes().length || ws.getWordArt().length) ws.drawingRId = `rId${globalRId++}`;
+      if (imgs.length || charts.length || ws.getShapes().length || ws.getWordArt().length || ws.getMathEquations().length) ws.drawingRId = `rId${globalRId++}`;
       const controls = ws.getFormControls();
       // legacyDrawing needed for comments OR form controls (they share VML)
       if (ws.getComments().length || controls.length) ws.legacyDrawingRId = `rId${globalRId++}`;
