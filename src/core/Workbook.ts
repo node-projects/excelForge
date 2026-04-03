@@ -49,6 +49,9 @@ export class Workbook {
   /** VBA macro project (set to enable .xlsm output) */
   vbaProject?: VbaProject;
 
+  /** Save as .xltx template (changes the content type) */
+  isTemplate = false;
+
   // ─── Internal state for round-trip patching ────────────────────────────────
 
   private _readResult?: ReadResult;
@@ -160,9 +163,18 @@ export class Workbook {
    */
   addChartSheet(name: string, chart: import('./types.js').Chart): Worksheet {
     const ws = this.addSheet(name);
-    // Mark as chart sheet via an internal flag
-    (ws as any)._isChartSheet = true;
+    ws._isChartSheet = true;
     ws.addChart(chart);
+    return ws;
+  }
+
+  /**
+   * Add a dialog sheet (Excel 5 dialog).
+   * Dialog sheets can contain form controls and legacy dialog elements.
+   */
+  addDialogSheet(name: string): Worksheet {
+    const ws = this.addSheet(name);
+    ws._isDialogSheet = true;
     return ws;
   }
 
@@ -348,7 +360,7 @@ export class Workbook {
         ...rr.extended,
         ...this.extendedProperties,
         titlesOfParts: this.sheets.map(s => s.name),
-        headingPairs:  [{ name: 'Worksheets', count: this.sheets.length }],
+        headingPairs:  this._headingPairs(),
       }, rr.extendedUnknownRaw)),
     });
 
@@ -383,9 +395,17 @@ export class Workbook {
 
     // ── Sheets ────────────────────────────────────────────────────────────
     for (let i = 0; i < this.sheets.length; i++) {
-      const path = `xl/worksheets/sheet${i + 1}.xml`;
+      const ws = this.sheets[i];
+      const folder = ws._isChartSheet ? 'chartsheets' : ws._isDialogSheet ? 'dialogsheets' : 'worksheets';
+      const path = `xl/${folder}/sheet${i + 1}.xml`;
       if (hasDirty) {
-        entries.push({ name: path, data: strToBytes(sheetXmls.get(i) ?? '') });
+        if (ws._isChartSheet) {
+          entries.push({ name: path, data: strToBytes(ws.toChartSheetXml()) });
+        } else if (ws._isDialogSheet) {
+          entries.push({ name: path, data: strToBytes(ws.toDialogSheetXml(styles, shared)) });
+        } else {
+          entries.push({ name: path, data: strToBytes(sheetXmls.get(i) ?? '') });
+        }
       } else {
         // Preserve original sheet verbatim (unknownParts are already in originalXml)
         entries.push({ name: path, data: strToBytes(rr.sheets[i]?.originalXml ?? '') });
@@ -564,11 +584,13 @@ export class Workbook {
 <Default Extension="xml" ContentType="application/xml"/>
 ${vmlCT}
 ${[...imgCTs].join('')}
-<Override PartName="/xl/workbook.xml" ContentType="${hasVba ? 'application/vnd.ms-excel.sheet.macroEnabled.main+xml' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml'}"/>
+<Override PartName="/xl/workbook.xml" ContentType="${hasVba ? 'application/vnd.ms-excel.sheet.macroEnabled.main+xml' : this.isTemplate ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.template.main+xml' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml'}"/>
 ${hasVba ? '<Override PartName="/xl/vbaProject.bin" ContentType="application/vnd.ms-office.vbaProject"/>' : ''}
 <Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
 <Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/>
-${this.sheets.map((_,i) => `<Override PartName="/xl/worksheets/sheet${i+1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join('')}
+${this.sheets.filter(ws => !ws._isChartSheet && !ws._isDialogSheet).map(ws => { const idx = this.sheets.indexOf(ws); return `<Override PartName="/xl/worksheets/sheet${idx+1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`; }).join('')}
+${this.sheets.filter(ws => ws._isChartSheet).map(ws => { const idx = this.sheets.indexOf(ws); return `<Override PartName="/xl/chartsheets/sheet${idx+1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.chartsheet+xml"/>`; }).join('')}
+${this.sheets.filter(ws => ws._isDialogSheet).map(ws => { const idx = this.sheets.indexOf(ws); return `<Override PartName="/xl/dialogsheets/sheet${idx+1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.dialogsheet+xml"/>`; }).join('')}
 ${this.sheets.filter(ws=>ws.drawingRId).map((_,i) => `<Override PartName="/xl/drawings/drawing${i+1}.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>`).join('')}
 ${allCharts.map(({globalIdx}) => `<Override PartName="/xl/charts/chart${globalIdx}.xml" ContentType="application/vnd.openxmlformats-officedocument.drawingml.chart+xml"/>`).join('')}
 ${allTables.map(({globalTableId}) => `<Override PartName="/xl/tables/table${globalTableId}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml"/>`).join('')}
@@ -593,7 +615,11 @@ ${hasCellImages ? `<Override PartName="/xl/metadata.xml" ContentType="applicatio
 
     entries.push({ name: 'xl/_rels/workbook.xml.rels', data: strToBytes(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-${this.sheets.map((ws,i) => `<Relationship Id="${ws.rId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i+1}.xml"/>`).join('')}
+${this.sheets.map((ws,i) => {
+  const type = ws._isChartSheet ? 'chartsheet' : ws._isDialogSheet ? 'dialogsheet' : 'worksheet';
+  const folder = ws._isChartSheet ? 'chartsheets' : ws._isDialogSheet ? 'dialogsheets' : 'worksheets';
+  return `<Relationship Id="${ws.rId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/${type}" Target="${folder}/sheet${i+1}.xml"/>`;
+}).join('')}
 <Relationship Id="rIdStyles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
 <Relationship Id="rIdShared" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/>
 ${allPivotTables.map(p => `<Relationship Id="${p.cacheRId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/pivotCacheDefinition" Target="pivotCache/pivotCacheDefinition${p.pivotIdx}.xml"/>`).join('\n')}
@@ -646,7 +672,18 @@ ${pivotCachesXml}
       const tblEntries = allTables.filter(t => t.ws === ws);
       const tblRIds_ = sheetTableRIds.get(ws) ?? [];
 
-      entries.push({ name: `xl/worksheets/sheet${i+1}.xml`, data: strToBytes(ws.toXml(styles, shared)) });
+      // Determine sheet path based on type
+      const sheetFolder = ws._isChartSheet ? 'chartsheets' : ws._isDialogSheet ? 'dialogsheets' : 'worksheets';
+      const sheetPath = `xl/${sheetFolder}/sheet${i+1}.xml`;
+
+      // Generate appropriate XML based on sheet type
+      if (ws._isChartSheet) {
+        entries.push({ name: sheetPath, data: strToBytes(ws.toChartSheetXml()) });
+      } else if (ws._isDialogSheet) {
+        entries.push({ name: sheetPath, data: strToBytes(ws.toDialogSheetXml(styles, shared)) });
+      } else {
+        entries.push({ name: sheetPath, data: strToBytes(ws.toXml(styles, shared)) });
+      }
 
       const wsRels: string[] = [];
       if (ws.drawingRId) {
@@ -708,7 +745,7 @@ ${pivotCachesXml}
         }
       }
       if (wsRels.length) {
-        entries.push({ name: `xl/worksheets/_rels/sheet${i+1}.xml.rels`, data: strToBytes(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+        entries.push({ name: `xl/${sheetFolder}/_rels/sheet${i+1}.xml.rels`, data: strToBytes(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
 ${wsRels.join('\n')}
 </Relationships>`) });
@@ -795,7 +832,7 @@ ${cellImgRels.join('\n')}
       application: this.extendedProperties.application ?? 'ExcelForge',
       company:     this.extendedProperties.company ?? this.properties.company,
       titlesOfParts: this.sheets.map(s => s.name),
-      headingPairs:  [{ name: 'Worksheets', count: this.sheets.length }],
+      headingPairs:  this._headingPairs(),
     })) });
 
     if (hasCustom) entries.push({ name: 'docProps/custom.xml', data: strToBytes(buildCustomXml(this.customProperties)) });
@@ -804,6 +841,18 @@ ${cellImgRels.join('\n')}
   }
 
   // ─── Internal helpers ──────────────────────────────────────────────────────
+
+  private _headingPairs(): Array<{ name: string; count: number }> {
+    const normalCount = this.sheets.filter(ws => !ws._isChartSheet && !ws._isDialogSheet).length;
+    const chartCount  = this.sheets.filter(ws => ws._isChartSheet).length;
+    const dialogCount = this.sheets.filter(ws => ws._isDialogSheet).length;
+    const pairs: Array<{ name: string; count: number }> = [];
+    if (normalCount) pairs.push({ name: 'Worksheets', count: normalCount });
+    if (chartCount)  pairs.push({ name: 'Charts', count: chartCount });
+    if (dialogCount) pairs.push({ name: 'Dialogs', count: dialogCount });
+    if (!pairs.length) pairs.push({ name: 'Worksheets', count: 0 });
+    return pairs;
+  }
 
   private _syncLegacyProperties(): void {
     const p = this.properties;
@@ -963,6 +1012,12 @@ ${hasCustom ? `<Relationship Id="rId4" Type="http://schemas.openxmlformats.org/o
       xml = xml.replace(
         'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml',
         'application/vnd.ms-excel.sheet.macroEnabled.main+xml'
+      );
+    }
+    if (this.isTemplate && !this.vbaProject) {
+      xml = xml.replace(
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.template.main+xml'
       );
     }
     if (this.connections.length && !xml.includes('connections.xml'))

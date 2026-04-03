@@ -595,6 +595,30 @@ export interface PivotTable {
   rowGrandTotals?: boolean;
   /** Show grand totals for columns (default: true) */
   colGrandTotals?: boolean;
+  /** Calculated fields with formulas */
+  calculatedFields?: PivotCalculatedField[];
+  /** Field grouping (date or numeric) */
+  fieldGrouping?: PivotFieldGrouping[];
+}
+
+export interface PivotCalculatedField {
+  /** Display name */
+  name: string;
+  /** Formula using field names, e.g. "'Revenue' / 'Units'" */
+  formula: string;
+}
+
+export interface PivotFieldGrouping {
+  /** Source field name to group */
+  field: string;
+  /** Grouping type */
+  groupBy: 'days' | 'months' | 'quarters' | 'years' | 'numeric';
+  /** Start of numeric range */
+  start?: number;
+  /** End of numeric range */
+  end?: number;
+  /** Interval for numeric grouping */
+  interval?: number;
 }
 
 // ─── Form Controls ───────────────────────────────────────────────────────────

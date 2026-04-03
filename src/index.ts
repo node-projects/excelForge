@@ -44,8 +44,8 @@ export { worksheetToJson, workbookToJson } from './features/JsonModule.js';
 export type { JsonExportOptions } from './features/JsonModule.js';
 
 // ── HTML export module (tree-shakeable) ─────────────────────────────────────
-export { worksheetToHtml } from './features/HtmlModule.js';
-export type { HtmlExportOptions } from './features/HtmlModule.js';
+export { worksheetToHtml, workbookToHtml } from './features/HtmlModule.js';
+export type { HtmlExportOptions, WorkbookHtmlExportOptions } from './features/HtmlModule.js';
 
 // ── Formula Calculation Engine (tree-shakeable) ──────────────────────────────
 export { FormulaEngine } from './features/FormulaEngine.js';

@@ -80,11 +80,35 @@ export function buildPivotTableFiles(
   // ── Axis field set ────────────────────────────────────────────────────────
   const isAxisField = new Set([...rowFldIdxs, ...colFldIdxs]);
 
+  // ── Calculated fields ──────────────────────────────────────────────────────
+  const calcFields = pt.calculatedFields ?? [];
+  const calcFieldsXml = calcFields.map(cf => {
+    return `<cacheField name="${escapeXml(cf.name)}" numFmtId="0" formula="${escapeXml(cf.formula)}" databaseField="0"><sharedItems/></cacheField>`;
+  }).join('');
+  const totalFields = numFields + calcFields.length;
+
+  // ── Field grouping ────────────────────────────────────────────────────────
+  const groupingMap = new Map<number, typeof pt.fieldGrouping extends (infer T)[] ? T : never>();
+  for (const grp of (pt.fieldGrouping ?? [])) {
+    const fi = fieldIdx.get(grp.field);
+    if (fi !== undefined) groupingMap.set(fi, grp);
+  }
+
   // ── <cacheFields> ────────────────────────────────────────────────────────
   const cacheFieldsXml = headers.map((name, fi) => {
+    const grp = groupingMap.get(fi);
     if (isAxisField.has(fi)) {
       const items = uniqueVals[fi].map(v => `<s v="${escapeXml(v)}"/>`).join('');
-      return `<cacheField name="${escapeXml(name)}" numFmtId="0"><sharedItems count="${uniqueVals[fi].length}">${items}</sharedItems></cacheField>`;
+      let groupXml = '';
+      if (grp) {
+        if (grp.groupBy === 'numeric') {
+          groupXml = `<fieldGroup base="${fi}"><rangePr startNum="${grp.start ?? 0}" endNum="${grp.end ?? 100}" groupInterval="${grp.interval ?? 10}"/></fieldGroup>`;
+        } else {
+          const BY_MAP: Record<string, string> = { days: 'days', months: 'months', quarters: 'quarters', years: 'years' };
+          groupXml = `<fieldGroup base="${fi}"><rangePr groupBy="${BY_MAP[grp.groupBy] ?? 'months'}"/></fieldGroup>`;
+        }
+      }
+      return `<cacheField name="${escapeXml(name)}" numFmtId="0"><sharedItems count="${uniqueVals[fi].length}">${items}</sharedItems>${groupXml}</cacheField>`;
     }
     if (isNumeric[fi]) {
       const nums = dataRows.map(r => Number(r[fi])).filter(n => !isNaN(n));
@@ -93,7 +117,7 @@ export function buildPivotTableFiles(
       return `<cacheField name="${escapeXml(name)}" numFmtId="0"><sharedItems containsSemiMixedTypes="0" containsString="0" containsNumber="1" minValue="${min}" maxValue="${max}"/></cacheField>`;
     }
     return `<cacheField name="${escapeXml(name)}" numFmtId="0"><sharedItems/></cacheField>`;
-  }).join('');
+  }).join('') + calcFieldsXml;
 
   // ── <pivotCacheRecords> ───────────────────────────────────────────────────
   const recordsXml = dataRows.map(row => {
@@ -126,7 +150,7 @@ export function buildPivotTableFiles(
     }
     if (isData) return `<pivotField dataField="1" showAll="0"/>`;
     return `<pivotField showAll="0"/>`;
-  }).join('');
+  }).join('') + calcFields.map(() => `<pivotField dataField="1" showAll="0"/>`).join('');
 
   // ── <rowFields> / <rowItems> ─────────────────────────────────────────────
   let rowFieldsXml = '';
@@ -171,7 +195,7 @@ export function buildPivotTableFiles(
 `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <pivotTableDefinition xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" name="${escapeXml(pt.name)}" cacheId="${cacheId}" applyNumberFormats="0" applyBorderFormats="0" applyFontFormats="0" applyPatternFormats="0" applyAlignmentFormats="0" applyWidthHeightFormats="1" dataCaption="Values" updatedVersion="6" minRefreshableVersion="3" useAutoFormatting="1" itemPrintTitles="1" createdVersion="6" indent="2" outline="1" outlineData="1" multipleFieldFilters="0"${gtAttrStr}>
 <location ref="${locationRef}" firstHeaderRow="1" firstDataRow="2" firstDataCol="${firstDataCol}"/>
-<pivotFields count="${numFields}">${pivotFieldsXml}</pivotFields>
+<pivotFields count="${totalFields}">${pivotFieldsXml}</pivotFields>
 ${rowFieldsXml}${rowItemsXml}${colFieldsXml}${colItemsXml}${dataFieldsXml}
 <pivotTableStyleInfo name="${style}" showRowHeaders="1" showColHeaders="1" showRowStripes="0" showColStripes="0" showLastColumn="1"/>
 </pivotTableDefinition>`;
@@ -180,7 +204,7 @@ ${rowFieldsXml}${rowItemsXml}${colFieldsXml}${colItemsXml}${dataFieldsXml}
 `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <pivotCacheDefinition xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:id="rId1" refreshedBy="ExcelForge" refreshedDate="45000" createdVersion="6" refreshedVersion="6" minRefreshableVersion="3" recordCount="${dataRows.length}" saveData="1">
 <cacheSource type="worksheet"><worksheetSource ref="${pt.sourceRef}" sheet="${escapeXml(pt.sourceSheet)}"/></cacheSource>
-<cacheFields count="${numFields}">${cacheFieldsXml}</cacheFields>
+<cacheFields count="${totalFields}">${cacheFieldsXml}</cacheFields>
 </pivotCacheDefinition>`;
 
   const cacheRecordsXml =

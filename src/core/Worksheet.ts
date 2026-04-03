@@ -52,6 +52,8 @@ export class Worksheet {
   private colBreaks: PageBreak[] = [];
   /** Raw XML fragments for elements we don't parse */
   private preservedXml: string[] = [];
+  /** Counter for shared formula indices */
+  private _nextSharedIdx = 0;
 
   options: WorksheetOptions;
   view?: SheetView;
@@ -63,6 +65,10 @@ export class Worksheet {
   headerFooter?: HeaderFooter;
   printOptions?: PrintOptions;
   autoFilter?: AutoFilter;
+  /** True when this sheet is a chart sheet (entire sheet is a single chart) */
+  _isChartSheet = false;
+  /** True when this sheet is a dialog sheet (Excel 5 dialog) */
+  _isDialogSheet = false;
 
   // assigned by workbook
   sheetIndex = 0;
@@ -106,6 +112,33 @@ export class Worksheet {
 
   setFormula(row: number, col: number, formula: string): this {
     this.getCell(row, col).formula = formula;
+    return this;
+  }
+
+  /** Set a dynamic array formula (spill formula) on a cell. The formula will spill results automatically. */
+  setDynamicArrayFormula(row: number, col: number, formula: string): this {
+    const cell = this.getCell(row, col);
+    cell.arrayFormula = formula;
+    (cell as any)._dynamic = true;
+    return this;
+  }
+
+  /** Set a shared formula. The master cell defines the formula; dependent cells reference it by index. */
+  setSharedFormula(masterRow: number, masterCol: number, formula: string, rangeRef: string): this {
+    const si = this._nextSharedIdx++;
+    const master = this.getCell(masterRow, masterCol);
+    master.formula = formula;
+    (master as any)._sharedRef = rangeRef;
+    (master as any)._sharedIdx = si;
+    // Set dependent cells
+    const { startRow, startCol, endRow, endCol } = parseRange(rangeRef);
+    for (let r = startRow; r <= endRow; r++) {
+      for (let c = startCol; c <= endCol; c++) {
+        if (r === masterRow && c === masterCol) continue;
+        const dep = this.getCell(r, c);
+        (dep as any)._sharedIdx = si;
+      }
+    }
     return this;
   }
 
@@ -394,6 +427,44 @@ export class Worksheet {
     return this;
   }
 
+  // ─── Copy/Move Ranges ────────────────────────────────────────────────────────
+
+  /** Copy cells from a source range to a target position. */
+  copyRange(srcRef: string, targetRow: number, targetCol: number): this {
+    const { startRow, startCol, endRow, endCol } = parseRange(srcRef);
+    for (let r = startRow; r <= endRow; r++) {
+      for (let c = startCol; c <= endCol; c++) {
+        const src = this.getCell(r, c);
+        const dr = targetRow + (r - startRow);
+        const dc = targetCol + (c - startCol);
+        if (src.value != null) this.setValue(dr, dc, src.value as any);
+        if (src.formula) this.setFormula(dr, dc, src.formula);
+        if (src.style) this.setStyle(dr, dc, { ...src.style });
+      }
+    }
+    return this;
+  }
+
+  /** Move cells from a source range to a target position (clears source). */
+  moveRange(srcRef: string, targetRow: number, targetCol: number): this {
+    const { startRow, startCol, endRow, endCol } = parseRange(srcRef);
+    // Copy first
+    this.copyRange(srcRef, targetRow, targetCol);
+    // Clear source (only cells not overlapping with target)
+    const tEndRow = targetRow + (endRow - startRow);
+    const tEndCol = targetCol + (endCol - startCol);
+    for (let r = startRow; r <= endRow; r++) {
+      for (let c = startCol; c <= endCol; c++) {
+        const dr = targetRow + (r - startRow);
+        const dc = targetCol + (c - startCol);
+        if (dr === r && dc === c) continue; // same position
+        const rowMap = this.cells.get(r);
+        if (rowMap) rowMap.delete(c);
+      }
+    }
+    return this;
+  }
+
   // ─── Sort Ranges ─────────────────────────────────────────────────────────────
 
   /** Sort a range of cells by a column. `sortCol` is 1-based. */
@@ -567,6 +638,8 @@ export class Worksheet {
     return this;
   }
 
+  getSparklines(): readonly Sparkline[] { return this.sparklines; }
+
   // ─── Data Validation ─────────────────────────────────────────────────────────
 
   addDataValidation(sqref: string, dv: DataValidation): this {
@@ -664,7 +737,9 @@ export class Worksheet {
     const mergesXml    = this._mergesXml();
     const cfXml        = this._conditionalFormatXml(styles);
     const dvXml        = this._dataValidationsXml();
-    const autoFilterXml = this.autoFilter ? this._autoFilterXml() : '';
+    // Skip worksheet-level autoFilter if a table covers the same range (table has its own)
+    const autoFilterXml = this.autoFilter && !this.tables.some(t => t.ref === this.autoFilter!.ref)
+      ? this._autoFilterXml() : '';
     const tablePartsXml = this.tables.length
       ? `<tableParts count="${this.tables.length}">${
           this.tableRIds.map(rId => `<tablePart r:id="${rId}"/>`).join('')
@@ -717,6 +792,35 @@ ${sparklineXml}
 ${tablePartsXml}
 ${this.preservedXml.join('\n')}
 </worksheet>`;
+  }
+
+  /** Generate XML for a chart sheet (dedicated sheet = entire chart). */
+  toChartSheetXml(): string {
+    const pageMarginsXml = this._pageMarginsXml();
+    const pageSetupXml   = this._pageSetupXml();
+    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<chartsheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+  xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+<sheetViews><sheetView workbookViewId="0" zoomScale="100"/></sheetViews>
+${pageMarginsXml || '<pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/>'}
+${pageSetupXml}
+<drawing r:id="${this.drawingRId}"/>
+</chartsheet>`;
+  }
+
+  /** Generate XML for a dialog sheet (Excel 5 dialog). */
+  toDialogSheetXml(_styles: StyleRegistry, _shared: SharedStrings): string {
+    const pageMarginsXml = this._pageMarginsXml();
+    const legacyDrawingXml = this.legacyDrawingRId
+      ? `<legacyDrawing r:id="${this.legacyDrawingRId}"/>` : '';
+    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<dialogsheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+  xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+<sheetViews><sheetView workbookViewId="0"/></sheetViews>
+<sheetFormatPr defaultRowHeight="15"/>
+${pageMarginsXml || '<pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/>'}
+${legacyDrawingXml}
+</dialogsheet>`;
   }
 
   private _sheetViewXml(): string {
@@ -799,10 +903,23 @@ ${this.preservedXml.join('\n')}
     const vmIdx = this._cellImageVm.get(ref);
     const vmAttr = vmIdx !== undefined ? ` vm="${vmIdx}"` : '';
 
-    // Array formula
+    // Array formula (including dynamic)
     if (cell.arrayFormula) {
       const fml = `<f t="array" ref="${ref}">${escapeXml(cell.arrayFormula)}</f>`;
       return `<c r="${ref}"${sAttr}${vmAttr}>${fml}<v>0</v></c>`;
+    }
+
+    // Shared formula (master or dependent)
+    if ((cell as any)._sharedIdx !== undefined) {
+      const si = (cell as any)._sharedIdx;
+      const sharedRef = (cell as any)._sharedRef;
+      if (cell.formula && sharedRef) {
+        // Master cell
+        const fml = `<f t="shared" ref="${sharedRef}" si="${si}">${escapeXml(cell.formula)}</f>`;
+        return `<c r="${ref}"${sAttr}${vmAttr}>${fml}</c>`;
+      }
+      // Dependent cell
+      return `<c r="${ref}"${sAttr}${vmAttr}><f t="shared" si="${si}"/></c>`;
     }
 
     // Formula

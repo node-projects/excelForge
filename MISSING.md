@@ -17,10 +17,10 @@ Legend: **Y** = supported, **~** = partial, **-** = not supported, **P** = prese
 |---|---------|--------|-------------|---------|---------|------------|-------|
 | 1 | Read/write .xlsx | Y | Y | Y | Y | **Y** | |
 | 2 | Read/write .xlsm (VBA macros) | Y | Y | - | - | **Y** | ExcelForge: create/edit modules, full round-trip |
-| 3 | Read .xltx templates | Y | Y | - | - | **-** | |
+| 3 | Read .xltx templates | Y | Y | - | - | **Y** | isTemplate flag for write; reads natively |
 | 4 | Read/write CSV | Y | Y | Y | Y | **Y** | Tree-shakeable CSV module |
 | 5 | Export JSON | Y | Y | Y | - | **Y** | Tree-shakeable JSON module |
-| 6 | Export HTML/CSS | Y | Y | - | - | **Y** | Tree-shakeable HTML module with CSS |
+| 6 | Export HTML/CSS | Y | Y | - | - | **Y** | Enhanced: number fmts, CF viz, sparklines, charts, column widths, multi-sheet tabs |
 | 7 | Streaming read/write | Y (async) | Y | Y | Y | **-** | ExcelTS: WorkbookReader/WorkbookWriter |
 | 8 | Workbook encryption/decryption | Y | Y | - | - | **-** | EPPlus: Standard + Agile encryption |
 | 9 | Digital signatures | Y | - | - | - | **-** | EPPlus: 3 sig types, 5 hash algos |
@@ -34,8 +34,8 @@ Legend: **Y** = supported, **~** = partial, **-** = not supported, **P** = prese
 | 12 | Formulas (store & preserve) | Y | Y | Y | Y | **Y** | |
 | 13 | Formula calculation engine | Y (463 fns) | Y | - | - | **Y** | Tree-shakeable; 60+ functions |
 | 14 | Array formulas | Y | Y | Y | - | **Y** | |
-| 15 | Dynamic array formulas | Y | - | - | - | **P** | Preserved on round-trip |
-| 16 | Shared formulas | Y | Y | Y | - | **P** | Preserved on round-trip |
+| 15 | Dynamic array formulas | Y | - | - | - | **Y** | setDynamicArrayFormula API |
+| 16 | Shared formulas | Y | Y | Y | - | **Y** | setSharedFormula API |
 | 17 | R1C1 reference style | Y | - | - | - | **Y** | a1ToR1C1, r1c1ToA1, formula converters |
 | 18 | Hyperlinks | Y | Y | Y | Y | **Y** | |
 | 19 | Error values | Y | Y | Y | - | **Y** | CellError class with typed API |
@@ -65,7 +65,7 @@ Legend: **Y** = supported, **~** = partial, **-** = not supported, **P** = prese
 | 33 | Multiple sheets (hidden/veryHidden) | Y | Y | Y | Y | **Y** | |
 | 34 | Tab colors | Y | Y | Y | - | **Y** | |
 | 35 | Copy worksheets | Y | - | - | - | **Y** | Copies cells, styles, merges |
-| 36 | Copy/move ranges | Y | - | - | - | **-** | |
+| 36 | Copy/move ranges | Y | - | - | - | **Y** | copyRange, moveRange |
 | 37 | Insert/delete ranges (auto-shift) | Y | - | Y | - | **Y** | insertRows, deleteRows, insertColumns |
 | 38 | Sort ranges | Y | - | - | - | **Y** | sortRange with asc/desc |
 | 39 | Fill operations | Y | - | - | - | **Y** | fillNumber, fillDate, fillList |
@@ -108,8 +108,8 @@ Legend: **Y** = supported, **~** = partial, **-** = not supported, **P** = prese
 | 56 | Styles (84 presets) | Y | - | - | - | **~** | ExcelForge: built-in presets only |
 | 57 | Custom pivot styles | Y | - | - | - | **-** | |
 | 58 | Pivot table slicers | Y | - | - | - | **-** | |
-| 59 | Calculated fields | Y | - | - | - | **-** | |
-| 60 | Numeric/date grouping | Y | - | - | - | **-** | |
+| 59 | Calculated fields | Y | - | - | - | **Y** | calculatedFields on PivotTable |
+| 60 | Numeric/date grouping | Y | - | - | - | **Y** | fieldGrouping on PivotTable |
 | 61 | GETPIVOTDATA function | Y | - | - | - | **-** | |
 | 62 | Pivot area styling | Y | - | - | - | **-** | |
 
@@ -232,7 +232,7 @@ Legend: **Y** = supported, **~** = partial, **-** = not supported, **P** = prese
 | **SheetJS Pro** | 55 | 2 | 54 |
 | **ExcelJS** | 46 | 1 | 64 |
 | **ExcelTS** | 33 | 1 | 77 |
-| **ExcelForge** | 79 | 3 | 29 |
+| **ExcelForge** | 84 | 1 | 26 |
 
 ## ExcelForge Unique Advantages
 
@@ -242,6 +242,10 @@ Legend: **Y** = supported, **~** = partial, **-** = not supported, **P** = prese
 - **In-cell pictures** — only EPPlus and ExcelForge support this (Excel 365+)
 - **Form controls with all 9 types** — not available in ExcelJS/ExcelTS, limited in SheetJS
 - **Custom DEFLATE compression** — built-in, levels 0-9, no zlib dependency
+- **Real chart sheets** — proper `<chartsheet>` XML, not embedded in worksheets
+- **Dialog sheets** — Excel 5 dialog sheet support with form controls
+- **Multi-sheet HTML export** — tabbed workbook HTML with CF visualization, sparklines, charts
+- **.xltx template support** — read and write Excel template files
 
 ## Key Missing Features (prioritized)
 
