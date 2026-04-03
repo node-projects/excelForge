@@ -22,6 +22,13 @@ import {
  *  and eliminates string key allocation/parsing overhead. */
 type CellMap = Map<number, Map<number, Cell>>;
 
+/** Escape XML element content (only &, <, > — quotes are valid in element text) */
+const _xmlContentRe = /[&<>]/g;
+const _xmlContentEsc: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;' };
+function escapeXmlContent(s: string): string {
+  return _xmlContentRe.test(s) ? (_xmlContentRe.lastIndex = 0, s.replace(_xmlContentRe, ch => _xmlContentEsc[ch])) : s;
+}
+
 /** Emit a <color> element handling theme:X, #hex, and AARRGGBB formats */
 function colorEl(c: string): string {
   if (c.startsWith('theme:')) return `<color theme="${c.slice(6)}"/>`;
@@ -84,6 +91,9 @@ export class Worksheet {
   legacyDrawingRId = '';
   tableRIds: string[] = [];
   ctrlPropRIds: string[] = [];
+  slicerRId = '';
+  /** Slicer info for drawing XML generation — set by Workbook._buildFresh() */
+  _slicerDrawingInfo: Array<{ name: string; cell?: string }> = [];
 
   constructor(name: string, options: WorksheetOptions = {}) {
     this.name = name;
@@ -777,7 +787,7 @@ export class Worksheet {
           this.tableRIds.map(rId => `<tablePart r:id="${rId}"/>`).join('')
         }</tableParts>`
       : '';
-    const drawingXml = (this.images.length || this.charts.length || this.shapes.length || this.wordArt.length || this.mathEquations.length) && this.drawingRId
+    const drawingXml = this.drawingRId
       ? `<drawing r:id="${this.drawingRId}"/>`
       : '';
     const legacyDrawingXml = this.legacyDrawingRId
@@ -786,6 +796,9 @@ export class Worksheet {
     const controlsXml = this._formControlsXml();
     const sparklineXml = this._sparklineXml();
     const customIconExtXml = this._customIconExtXml();
+    const slicerExtXml = this.slicerRId
+      ? `<extLst><ext uri="{A8765BA9-456A-4dab-B4F3-ACF838C121DE}" xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main"><x14:slicerList><x14:slicer r:id="${this.slicerRId}"/></x14:slicerList></ext></extLst>`
+      : '';
     const ignoredErrorsXml = this._ignoredErrorsXml();
     const protectionXml = this._protectionXml();
     const pageSetupXml  = this._pageSetupXml();
@@ -824,6 +837,7 @@ ${controlsXml}
 ${sparklineXml}
 ${customIconExtXml}
 ${tablePartsXml}
+${slicerExtXml}
 ${this.preservedXml.join('\n')}
 </worksheet>`;
   }
@@ -941,7 +955,7 @@ ${legacyDrawingXml}
 
     // Array formula (including dynamic)
     if (cell.arrayFormula) {
-      const fml = `<f t="array" ref="${ref}">${escapeXml(cell.arrayFormula)}</f>`;
+      const fml = `<f t="array" ref="${ref}">${escapeXmlContent(cell.arrayFormula)}</f>`;
       return `<c r="${ref}"${sAttr}${vmAttr}>${fml}<v>0</v></c>`;
     }
 
@@ -951,7 +965,7 @@ ${legacyDrawingXml}
       const sharedRef = (cell as any)._sharedRef;
       if (cell.formula && sharedRef) {
         // Master cell
-        const fml = `<f t="shared" ref="${sharedRef}" si="${si}">${escapeXml(cell.formula)}</f>`;
+        const fml = `<f t="shared" ref="${sharedRef}" si="${si}">${escapeXmlContent(cell.formula)}</f>`;
         return `<c r="${ref}"${sAttr}${vmAttr}>${fml}</c>`;
       }
       // Dependent cell
@@ -960,7 +974,7 @@ ${legacyDrawingXml}
 
     // Formula
     if (cell.formula) {
-      const fml = `<f>${escapeXml(cell.formula)}</f>`;
+      const fml = `<f>${escapeXmlContent(cell.formula)}</f>`;
       return `<c r="${ref}"${sAttr}${vmAttr}>${fml}</c>`;
     }
 
@@ -1491,6 +1505,15 @@ ${legacyDrawingXml}
 
       parts.push(`<xdr:oneCellAnchor>${fromXml}${extXml}<mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"><mc:Choice xmlns:a14="http://schemas.microsoft.com/office/drawing/2010/main" Requires="a14"><xdr:sp macro="" textlink=""><xdr:nvSpPr><xdr:cNvPr id="${id}" name="MathEq ${id}"/><xdr:cNvSpPr txBox="1"/></xdr:nvSpPr><xdr:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${w}" cy="${h}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></xdr:spPr><xdr:txBody><a:bodyPr vertOverflow="clip" horzOverflow="clip" wrap="none" lIns="0" tIns="0" rIns="0" bIns="0" rtlCol="0" anchor="t"><a:spAutoFit/></a:bodyPr><a:lstStyle/><a:p><a14:m>${ommlXml}</a14:m><a:endParaRPr lang="en-US" sz="${fontSize}"/></a:p></xdr:txBody></xdr:sp></mc:Choice><mc:Fallback><xdr:sp macro="" textlink=""><xdr:nvSpPr><xdr:cNvPr id="${id}" name="MathEq ${id}"/><xdr:cNvSpPr txBox="1"/></xdr:nvSpPr><xdr:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${w}" cy="${h}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></xdr:spPr><xdr:txBody><a:bodyPr vertOverflow="clip" horzOverflow="clip" wrap="none" lIns="0" tIns="0" rIns="0" bIns="0" rtlCol="0" anchor="t"><a:spAutoFit/></a:bodyPr><a:lstStyle/><a:p><a:r><a:rPr lang="en-US" sz="${fontSize}" i="0"><a:latin typeface="${escapeXml(fontName)}" panose="02040503050406030204" pitchFamily="18" charset="0"/></a:rPr><a:t>${escapeXml(fallbackText)}</a:t></a:r><a:endParaRPr lang="en-US" sz="${fontSize}"/></a:p></xdr:txBody></xdr:sp></mc:Fallback></mc:AlternateContent><xdr:clientData/></xdr:oneCellAnchor>`);
     });
+
+    // ── Slicers ─────────────────────────────────────────────────────────────
+    for (const slicerInfo of this._slicerDrawingInfo) {
+      const id = shapeCounter++;
+      const { row: sRow, col: sCol } = slicerInfo.cell ? cellRefToIndices(slicerInfo.cell) : { row: 1, col: 6 };
+      const fromCol = sCol - 1, fromRow = sRow - 1;
+      const toCol = fromCol + 2, toRow = fromRow + 12;
+      parts.push(`<xdr:twoCellAnchor editAs="oneCell"><xdr:from><xdr:col>${fromCol}</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>${fromRow}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>${toCol}</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>${toRow}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to><mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"><mc:Choice xmlns:sle15="http://schemas.microsoft.com/office/drawing/2012/slicer" Requires="sle15"><xdr:graphicFrame macro=""><xdr:nvGraphicFramePr><xdr:cNvPr id="${id}" name="${escapeXml(slicerInfo.name)}"/><xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr><xdr:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/></xdr:xfrm><a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/drawing/2010/slicer"><sle:slicer xmlns:sle="http://schemas.microsoft.com/office/drawing/2010/slicer" name="${escapeXml(slicerInfo.name)}"/></a:graphicData></a:graphic></xdr:graphicFrame></mc:Choice><mc:Fallback/></mc:AlternateContent><xdr:clientData/></xdr:twoCellAnchor>`);
+    }
 
     return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing"

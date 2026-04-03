@@ -70,9 +70,10 @@ export function buildPivotTableFiles(
     : 1;
 
   const totalRows = 1 /* header */ + numDataRowsPT + (rowGT ? 1 : 0);
+  const numDataFields = pt.dataFields.length + (pt.calculatedFields ?? []).length;
   const totalCols = rowFldIdxs.length
-    + numColCombos * pt.dataFields.length
-    + (colGT ? pt.dataFields.length : 0);
+    + numColCombos * numDataFields
+    + (colGT ? numDataFields : 0);
 
   const locationRef  = `${indicesToCellRef(tRow, tCol)}:${indicesToCellRef(tRow + totalRows - 1, tCol + totalCols - 1)}`;
   const firstDataCol = rowFldIdxs.length + 1; // 1-based column within bounding box where data starts
@@ -172,17 +173,30 @@ export function buildPivotTableFiles(
     const items = uniqueVals[fi].map((_, vi) => `<i><x v="${vi}"/></i>`).join('');
     const grand = colGT ? '<i t="grand"><x/></i>' : '';
     colItemsXml = `<colItems count="${uniqueVals[fi].length + (colGT ? 1 : 0)}">${items}${grand}</colItems>`;
+  } else if (numDataFields > 1) {
+    // Multiple data fields with no explicit col fields — add "Values" pseudo-column
+    colFieldsXml = `<colFields count="1"><field x="-2"/></colFields>`;
+    const valItems = Array.from({ length: numDataFields }, (_, di) => `<i><x v="${di}"/></i>`).join('');
+    colItemsXml = `<colItems count="${numDataFields}">${valItems}</colItems>`;
   }
 
   // ── <dataFields> ─────────────────────────────────────────────────────────
-  const dataFieldsXml = `<dataFields count="${pt.dataFields.length}">${
-    pt.dataFields.map((df, i) => {
-      const fi   = dataFldIdxs[i];
-      const func = FUNC_MAP[df.func ?? 'sum'] ?? 'sum';
-      const name = df.name ?? `Sum of ${df.field}`;
-      return `<dataField name="${escapeXml(name)}" fld="${fi}" subtotal="${func}" showDataAs="normal" baseField="0" baseItem="0"/>`;
-    }).join('')
-  }</dataFields>`;
+  const allDataFieldEntries: string[] = [];
+  // User-defined data fields
+  for (let i = 0; i < pt.dataFields.length; i++) {
+    const df   = pt.dataFields[i];
+    const fi   = dataFldIdxs[i];
+    const func = FUNC_MAP[df.func ?? 'sum'] ?? 'sum';
+    const name = df.name ?? `Sum of ${df.field}`;
+    allDataFieldEntries.push(`<dataField name="${escapeXml(name)}" fld="${fi}" subtotal="${func}" showDataAs="normal" baseField="0" baseItem="0"/>`);
+  }
+  // Calculated fields are automatically added as data fields
+  for (let ci = 0; ci < calcFields.length; ci++) {
+    const cf = calcFields[ci];
+    const fi = numFields + ci; // calc field index follows source fields
+    allDataFieldEntries.push(`<dataField name="${escapeXml(cf.name)}" fld="${fi}" subtotal="sum" showDataAs="normal" baseField="0" baseItem="0"/>`);
+  }
+  const dataFieldsXml = `<dataFields count="${allDataFieldEntries.length}">${allDataFieldEntries.join('')}</dataFields>`;
 
   // ── Grand-total attrs ────────────────────────────────────────────────────
   const gtParts = [rowGT ? '' : 'rowGrandTotals="0"', colGT ? '' : 'colGrandTotals="0"'].filter(Boolean);
@@ -193,7 +207,7 @@ export function buildPivotTableFiles(
   // ── Assemble XMLs ─────────────────────────────────────────────────────────
   const pivotTableXml =
 `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<pivotTableDefinition xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" name="${escapeXml(pt.name)}" cacheId="${cacheId}" applyNumberFormats="0" applyBorderFormats="0" applyFontFormats="0" applyPatternFormats="0" applyAlignmentFormats="0" applyWidthHeightFormats="1" dataCaption="Values" updatedVersion="6" minRefreshableVersion="3" useAutoFormatting="1" itemPrintTitles="1" createdVersion="6" indent="2" outline="1" outlineData="1" multipleFieldFilters="0"${gtAttrStr}>
+<pivotTableDefinition xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" name="${escapeXml(pt.name)}" cacheId="${cacheId}" applyNumberFormats="0" applyBorderFormats="0" applyFontFormats="0" applyPatternFormats="0" applyAlignmentFormats="0" applyWidthHeightFormats="1" dataCaption="Values" updatedVersion="6" minRefreshableVersion="3" useAutoFormatting="1" itemPrintTitles="1" createdVersion="6" indent="0" outline="1" outlineData="1" multipleFieldFilters="0"${gtAttrStr}>
 <location ref="${locationRef}" firstHeaderRow="1" firstDataRow="2" firstDataCol="${firstDataCol}"/>
 <pivotFields count="${totalFields}">${pivotFieldsXml}</pivotFields>
 ${rowFieldsXml}${rowItemsXml}${colFieldsXml}${colItemsXml}${dataFieldsXml}

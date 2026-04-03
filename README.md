@@ -19,7 +19,7 @@ ExcelForge gives you the full power of the OOXML spec — including real DEFLATE
 | **Cell Values** | Strings, numbers, booleans, dates, formulas, array formulas, dynamic arrays, shared formulas, rich text |
 | **Styles** | Fonts, solid/pattern/gradient fills, all border styles, alignment, 30+ number format presets |
 | **Layout** | Merge cells, freeze/split panes, column widths, row heights, hide rows/cols, outline grouping |
-| **Charts** | Bar, column (stacked/100%), line, area, pie, doughnut, scatter, radar, bubble; chart sheets |
+| **Charts** | Bar, column (stacked/100%), line, area, pie, doughnut, scatter, radar, bubble; chart sheets; modern styling with 18 color palettes, gradients, data labels, shadows; chart templates |
 | **Images** | PNG, JPEG, GIF, BMP, SVG, WebP, ICO, EMF, WMF, TIFF — two-cell, one-cell, or absolute anchors |
 | **In-Cell Pictures** | Embed images directly inside cells via richData/metadata (Excel 365+) |
 | **Shapes** | 28 preset shapes (rect, ellipse, arrows, flowchart, etc.) with fill, line, text, rotation |
@@ -35,7 +35,7 @@ ExcelForge gives you the full power of the OOXML spec — including real DEFLATE
 | **Connections** | OLEDB, ODBC, text/CSV, web — create, read, round-trip; query tables |
 | **Power Query** | Read M formulas from DataMashup; full round-trip preservation |
 | **External Links** | Cross-workbook references with sheet names and defined names |
-| **VBA Macros** | Create/read `.xlsm` with standard modules, class modules, document modules; full round-trip |
+| **VBA Macros** | Create/read `.xlsm` with standard modules, class modules, document modules; code signing; full round-trip |
 | **Auto Filter** | Dropdown filters — value, date, custom, top-10, dynamic filters |
 | **Hyperlinks** | External URLs, mailto, internal navigation |
 | **Form Controls** | Button, checkbox, combobox, listbox, radio, groupbox, label, scrollbar, spinner — with macro assignment |
@@ -45,6 +45,8 @@ ExcelForge gives you the full power of the OOXML spec — including real DEFLATE
 | **Multiple Sheets** | Any number, hidden/veryHidden, tab colors |
 | **Formula Engine** | 60+ functions including GETPIVOTDATA — tree-shakeable |
 | **Export** | CSV, JSON, HTML (with CF visualization, sparklines, charts, shapes, form controls) |
+| **Encryption** | OOXML Agile Encryption with AES-256-CBC + SHA-512 via Web Crypto API |
+| **Digital Signatures** | Package signing (XML-DSig) + VBA code signing (PKCS#7/CMS, SHA-256) |
 | **Locale** | Configurable decimal/thousands separators, date format, currency symbol |
 | **Core Properties** | Title, author, subject, keywords, description, language, revision, category… |
 | **Extended Properties** | Company, manager, application, appVersion, hyperlinkBase, word/line/page counts… |
@@ -400,6 +402,43 @@ ws.addChart({
 
 Supported chart types: `bar`, `col`, `colStacked`, `col100`, `barStacked`, `bar100`, `line`, `lineStacked`, `area`, `pie`, `doughnut`, `scatter`, `radar`, `bubble`.
 
+**Modern chart styling (Excel 2019+):**
+
+```typescript
+ws.addChart({
+  type: 'column',
+  title: 'Styled Chart',
+  series: [{
+    name: 'Revenue', values: "'Sheet1'!$A$2:$D$2",
+    dataLabels: { showValue: true, position: 'outEnd' },
+    fillType: 'gradient',
+    gradientStops: [{ pos: 0, color: '4472C4' }, { pos: 100, color: 'B4C7E7' }],
+  }],
+  from: { col: 0, row: 5 }, to: { col: 8, row: 20 },
+  colorPalette: 'blue',    // 18 palettes: office, blue, orange, green, red, purple, teal...
+  shadow: true,
+  roundedCorners: true,
+  dataLabels: { showPercent: true },  // global data labels
+});
+```
+
+**Chart templates:**
+
+```typescript
+import { saveChartTemplate, applyChartTemplate, serializeChartTemplate, deserializeChartTemplate } from 'excelforge';
+
+// Save a chart's style as a template
+const template = saveChartTemplate(chart);
+const json = serializeChartTemplate(template);  // serialize to JSON string
+const restored = deserializeChartTemplate(json); // deserialize back
+
+// Apply template to a new chart
+const newChart = applyChartTemplate(template, {
+  series: [{ name: 'New', values: "'Sheet1'!$A$1:$A$5" }],
+  from: { col: 0, row: 0 }, to: { col: 5, row: 10 },
+});
+```
+
 ### Images
 
 Supported formats: `png`, `jpeg`, `gif`, `bmp`, `svg`, `webp`, `ico`, `emf`, `wmf`, `tiff`.
@@ -542,6 +581,34 @@ await wb.writeFile('./macros_updated.xlsm');
 ```
 
 > **Note:** Document modules for `ThisWorkbook` and each worksheet are automatically created if not explicitly provided. VBA code uses `\r\n` line endings.
+
+### Digital Signatures
+
+Sign OOXML packages and VBA projects using RSA with SHA-256 via Web Crypto API.
+
+```typescript
+import { signPackage, signVbaProject, signWorkbook } from 'excelforge';
+
+// Sign the entire package
+const parts = new Map<string, Uint8Array>();
+parts.set('xl/workbook.xml', workbookBytes);
+parts.set('xl/worksheets/sheet1.xml', sheetBytes);
+
+const sigEntries = await signPackage(parts, {
+  certificate: pemCertificate,   // PEM-encoded X.509 certificate
+  privateKey: pemPrivateKey,     // PEM-encoded PKCS#8 private key
+});
+// sigEntries contains _xmlsignatures/sig1.xml, origin.sigs, and rels
+
+// Sign a VBA project
+const vbaSignature = await signVbaProject(vbaProjectBin, {
+  certificate: pemCertificate,
+  privateKey: pemPrivateKey,
+});
+
+// Or sign both at once
+const result = await signWorkbook(parts, { certificate, privateKey }, vbaProjectBin);
+```
 
 ### Page setup
 
@@ -882,9 +949,11 @@ ExcelForge
 │   ├── StyleRegistry.ts    — interns fonts/fills/borders/xfs, emits styles.xml
 │   └── builders.ts         — fluent style() builder, Colors/NumFmt/Styles presets
 ├── features/
-│   ├── ChartBuilder.ts     — DrawingML chart XML for 15+ chart types
+│   ├── ChartBuilder.ts     — DrawingML chart XML for 15+ chart types, templates, modern styling
 │   ├── TableBuilder.ts     — Excel table XML
-│   └── PivotTableBuilder.ts — pivot table + cache XML
+│   ├── PivotTableBuilder.ts — pivot table + cache XML
+│   ├── Encryption.ts       — OOXML Agile Encryption (AES-256-CBC + SHA-512)
+│   └── Signing.ts          — Digital signatures (XML-DSig + VBA PKCS#7/CMS)
 ├── vba/
 │   ├── VbaProject.ts       — VBA project build/parse, module management
 │   ├── cfb.ts              — Compound Binary File (OLE2) reader & writer
@@ -944,6 +1013,10 @@ document.getElementById('file').addEventListener('change', async (e) => {
 
 ### v3.0 — More
 - **Form Controls** - create Form Controls
+- Wordart
+- Formula Objects
+- Chart Pages
+- Many more features....
 
 ### v2.4 — Pivot Tables & VBA Macros
 

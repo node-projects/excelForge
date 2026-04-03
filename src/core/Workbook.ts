@@ -546,7 +546,7 @@ export class Workbook {
       const tables = ws.getTables();
       const imgRIds: string[] = [], chartRIds: string[] = [], tblRIds: string[] = [];
 
-      if (imgs.length || charts.length || ws.getShapes().length || ws.getWordArt().length || ws.getMathEquations().length) ws.drawingRId = `rId${globalRId++}`;
+      if (imgs.length || charts.length || ws.getShapes().length || ws.getWordArt().length || ws.getMathEquations().length || ws.getTableSlicers().length) ws.drawingRId = `rId${globalRId++}`;
       const controls = ws.getFormControls();
       // legacyDrawing needed for comments OR form controls (they share VML)
       if (ws.getComments().length || controls.length) ws.legacyDrawingRId = `rId${globalRId++}`;
@@ -590,6 +590,100 @@ export class Workbook {
       }
     }
     const hasCellImages = allCellImages.length > 0;
+
+    // ── Slicer info collection ───────────────────────────────────────────
+    type SlicerCacheEntry = {
+      name: string; sourceName: string; type: 'table' | 'pivot';
+      rId: string; idx: number;
+      tableId?: number; columnIndex?: number; sortOrder?: string;
+      pivotTableName?: string; pivotCacheId?: number; tabId?: number; items?: string[];
+    };
+    type SheetSlicerEntry = {
+      tableSlicers: Array<{ slicer: import('../core/types.js').TableSlicer; tableId: number; columnIndex: number }>;
+      pivotSlicers: Array<{ slicer: PivotSlicer; pivotCacheId: number }>;
+      slicerDefRId: string; slicerDefIdx: number;
+    };
+    const sheetSlicerMap = new Map<Worksheet, SheetSlicerEntry>();
+    const allSlicerCaches: SlicerCacheEntry[] = [];
+    let slicerDefCtr = 0, slicerCacheCtr = 0;
+
+    // Collect table slicers per sheet
+    for (const ws of this.sheets) {
+      const tSlicers = ws.getTableSlicers();
+      if (tSlicers.length) {
+        sheetSlicerMap.set(ws, { tableSlicers: [], pivotSlicers: [], slicerDefRId: '', slicerDefIdx: 0 });
+      }
+    }
+
+    // Map pivot slicers to sheets via pivot table name
+    for (const ps of this.pivotSlicers) {
+      for (const ws of this.sheets) {
+        if (ws.getPivotTables().some(p => p.name === ps.pivotTableName)) {
+          if (!sheetSlicerMap.has(ws)) {
+            sheetSlicerMap.set(ws, { tableSlicers: [], pivotSlicers: [], slicerDefRId: '', slicerDefIdx: 0 });
+          }
+          break;
+        }
+      }
+    }
+
+    // Allocate rIds and populate slicer cache info
+    for (const [ws, info] of sheetSlicerMap) {
+      if (!ws.drawingRId) ws.drawingRId = `rId${globalRId++}`;
+      info.slicerDefRId = `rId${globalRId++}`;
+      info.slicerDefIdx = ++slicerDefCtr;
+      ws.slicerRId = info.slicerDefRId;
+
+      const drawingInfo: Array<{ name: string; cell?: string }> = [];
+
+      // Table slicers
+      for (const s of ws.getTableSlicers()) {
+        const table = ws.getTables().find(t => t.name === s.tableName);
+        const tableEntry = allTables.find(t => t.ws === ws && ws.getTables()[t.tableIdx] === table);
+        const tableId = tableEntry?.globalTableId ?? 1;
+        const columnIndex = table ? (table.columns?.findIndex(c => c.name === s.columnName) ?? 0) + 1 : 1;
+        info.tableSlicers.push({ slicer: s, tableId, columnIndex });
+        drawingInfo.push({ name: s.name, cell: s.cell });
+        allSlicerCaches.push({
+          name: s.name + '_cache', sourceName: s.columnName, type: 'table',
+          rId: `rId${globalRId++}`, idx: ++slicerCacheCtr,
+          tableId, columnIndex, sortOrder: s.sortOrder ?? 'ascending',
+        });
+      }
+
+      // Pivot slicers on this sheet
+      for (const ps of this.pivotSlicers) {
+        const pt = ws.getPivotTables().find(p => p.name === ps.pivotTableName);
+        if (!pt) continue;
+        const ptEntry = allPivotTables.find(p => p.ws === ws && p.pt === pt);
+        const sheetIdx = this.sheets.indexOf(ws) + 1;
+
+        // Get unique values for the slicer field from source data
+        let items: string[] = [];
+        const sourceWs = this.sheets.find(s => s.name === pt.sourceSheet);
+        if (sourceWs) {
+          const sourceData = sourceWs.readRange(pt.sourceRef);
+          const headers = (sourceData[0] ?? []).map(v => String(v ?? ''));
+          const fieldIdx = headers.indexOf(ps.fieldName);
+          if (fieldIdx >= 0) {
+            const uniqueSet = new Set<string>();
+            for (let r = 1; r < sourceData.length; r++) uniqueSet.add(String(sourceData[r][fieldIdx] ?? ''));
+            items = [...uniqueSet];
+          }
+        }
+        info.pivotSlicers.push({ slicer: ps, pivotCacheId: ptEntry?.cacheId ?? 0 });
+        drawingInfo.push({ name: ps.name, cell: ps.cell });
+        allSlicerCaches.push({
+          name: ps.name + '_cache', sourceName: ps.fieldName, type: 'pivot',
+          rId: `rId${globalRId++}`, idx: ++slicerCacheCtr,
+          pivotTableName: ps.pivotTableName, pivotCacheId: ptEntry?.cacheId ?? 0,
+          tabId: sheetIdx, items,
+        });
+      }
+
+      ws._slicerDrawingInfo = drawingInfo;
+    }
+    const hasSlicers = sheetSlicerMap.size > 0;
 
     const hasCustom = this.customProperties.length > 0;
     const hasVba    = !!this.vbaProject;
@@ -643,10 +737,8 @@ ${ctrlPropCTs.join('')}
 ${hasCustom ? '<Override PartName="/docProps/custom.xml" ContentType="application/vnd.openxmlformats-officedocument.custom-properties+xml"/>' : ''}
 ${this.connections.length ? '<Override PartName="/xl/connections.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.connections+xml"/>' : ''}
 ${this.externalLinks.map((_,i) => `<Override PartName="/xl/externalLinks/externalLink${i+1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.externalLink+xml"/>`).join('\n')}
-${this.sheets.flatMap(ws => ws.getTableSlicers()).length ? '<Override PartName="/xl/slicers/slicer1.xml" ContentType="application/vnd.ms-excel.slicer+xml"/>' : ''}
-${this.sheets.flatMap(ws => ws.getTableSlicers()).map((_,i) => `<Override PartName="/xl/slicerCaches/slicerCache${i+1}.xml" ContentType="application/vnd.ms-excel.slicerCache+xml"/>`).join('\n')}
-${this.pivotSlicers.length ? '<Override PartName="/xl/slicers/slicer2.xml" ContentType="application/vnd.ms-excel.slicer+xml"/>' : ''}
-${this.pivotSlicers.map((_,i) => `<Override PartName="/xl/slicerCaches/pivotSlicerCache${i+1}.xml" ContentType="application/vnd.ms-excel.slicerCache+xml"/>`).join('\n')}
+${[...sheetSlicerMap.values()].map(info => `<Override PartName="/xl/slicers/slicer${info.slicerDefIdx}.xml" ContentType="application/vnd.ms-excel.slicer+xml"/>`).join('\n')}
+${allSlicerCaches.map(sc => `<Override PartName="/xl/slicerCaches/slicerCache${sc.idx}.xml" ContentType="application/vnd.ms-excel.slicerCache+xml"/>`).join('\n')}
 ${this.sheets.flatMap(ws => ws.getQueryTables()).map((_,i) => `<Override PartName="/xl/queryTables/queryTable${i+1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.queryTable+xml"/>`).join('\n')}
 ${hasCellImages ? `<Override PartName="/xl/metadata.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheetMetadata+xml"/>
 <Override PartName="/xl/richData/rdrichvalue.xml" ContentType="application/vnd.ms-excel.rdrichvalue+xml"/>
@@ -669,6 +761,7 @@ ${this.sheets.map((ws,i) => {
 <Relationship Id="rIdShared" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/>
 <Relationship Id="rIdTheme" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" Target="theme/theme1.xml"/>
 ${allPivotTables.map(p => `<Relationship Id="${p.cacheRId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/pivotCacheDefinition" Target="pivotCache/pivotCacheDefinition${p.pivotIdx}.xml"/>`).join('\n')}
+${allSlicerCaches.map(sc => `<Relationship Id="${sc.rId}" Type="http://schemas.microsoft.com/office/2007/relationships/slicerCache" Target="slicerCaches/slicerCache${sc.idx}.xml"/>`).join('\n')}
 ${hasVba ? '<Relationship Id="rIdVBA" Type="http://schemas.microsoft.com/office/2006/relationships/vbaProject" Target="vbaProject.bin"/>' : ''}
 ${this.connections.length ? '<Relationship Id="rIdConns" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/connections" Target="connections.xml"/>' : ''}
 ${this.externalLinks.map((_,i) => `<Relationship Id="rIdExtLink${i+1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/externalLink" Target="externalLinks/externalLink${i+1}.xml"/>`).join('\n')}
@@ -704,6 +797,7 @@ ${date1904}
 ${namedRangesXml}
 <calcPr calcId="191028"/>
 ${pivotCachesXml}
+${hasSlicers ? `<extLst><ext uri="{BBE1A952-AA13-448e-AADC-164F8A28A991}" xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main"><x14:slicerCaches>${allSlicerCaches.map(sc => `<x14:slicerCache r:id="${sc.rId}"/>`).join('')}</x14:slicerCaches></ext></extLst>` : ''}
 </workbook>`) });
 
     // ── Connections ─────────────────────────────────────────────────────────
@@ -748,6 +842,11 @@ ${pivotCachesXml}
       const ptEntries = allPivotTables.filter(p => p.ws === ws);
       for (let j = 0; j < ptEntries.length; j++) {
         wsRels.push(`<Relationship Id="${ptRIds_[j]}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/pivotTable" Target="../pivotTables/pivotTable${ptEntries[j].pivotIdx}.xml"/>`);
+      }
+      // Slicer definition relationship
+      const slicerInfo = sheetSlicerMap.get(ws);
+      if (slicerInfo) {
+        wsRels.push(`<Relationship Id="${slicerInfo.slicerDefRId}" Type="http://schemas.microsoft.com/office/2007/relationships/slicer" Target="../slicers/slicer${slicerInfo.slicerDefIdx}.xml"/>`);
       }
       const sheetComments = ws.getComments();
       const sheetControls = ws.getFormControls();
@@ -897,46 +996,41 @@ ${cellImgRels.join('\n')}
 </Relationships>`) });
     }
 
-    // ── Table Slicers ───────────────────────────────────────────────────────
-    const allSlicers = this.sheets.flatMap(ws => ws.getTableSlicers());
-    if (allSlicers.length) {
-      const slicerItems = allSlicers.map((s, i) =>
-        `<slicer name="${escapeXml(s.name)}" cache="${escapeXml(s.name + '_cache')}" caption="${escapeXml(s.caption ?? s.columnName)}" columnCount="${s.columnCount ?? 1}" style="${s.style ?? 'SlicerStyleLight1'}"/>`
-      ).join('');
-      entries.push({ name: 'xl/slicers/slicer1.xml', data: strToBytes(
-        `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<slicers xmlns="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" mc:Ignorable="x">
-${slicerItems}
-</slicers>`) });
-      // Slicer caches
-      for (let i = 0; i < allSlicers.length; i++) {
-        const s = allSlicers[i];
-        entries.push({ name: `xl/slicerCaches/slicerCache${i + 1}.xml`, data: strToBytes(
-          `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<slicerCacheDefinition xmlns="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main" name="${escapeXml(s.name + '_cache')}" sourceName="${escapeXml(s.columnName)}">
-<extLst><ext uri="{03082B11-2C62-411c-B77F-237D8FCFBE4C}"><x15:tableSlicerCache xmlns:x15="http://schemas.microsoft.com/office/spreadsheetml/2010/11/main" tableId="1" column="1" sortOrder="${s.sortOrder ?? 'ascending'}"/></ext></extLst>
-</slicerCacheDefinition>`) });
+    // ── Slicers (per-sheet definitions + caches) ───────────────────────────
+    for (const [ws, info] of sheetSlicerMap) {
+      const allSheetSlicerItems: string[] = [];
+      // Table slicer items
+      for (const ts of info.tableSlicers) {
+        const s = ts.slicer;
+        allSheetSlicerItems.push(`<slicer name="${escapeXml(s.name)}" cache="${escapeXml(s.name + '_cache')}" caption="${escapeXml(s.caption ?? s.columnName)}" rowHeight="241300" columnCount="${s.columnCount ?? 1}" style="${s.style ?? 'SlicerStyleLight1'}"/>`);
       }
+      // Pivot slicer items
+      for (const ps of info.pivotSlicers) {
+        const s = ps.slicer;
+        allSheetSlicerItems.push(`<slicer name="${escapeXml(s.name)}" cache="${escapeXml(s.name + '_cache')}" caption="${escapeXml(s.caption ?? s.fieldName)}" rowHeight="241300" columnCount="${s.columnCount ?? 1}" style="${s.style ?? 'SlicerStyleLight1'}"/>`);
+      }
+      entries.push({ name: `xl/slicers/slicer${info.slicerDefIdx}.xml`, data: strToBytes(
+        `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<slicers xmlns="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:x="http://schemas.openxmlformats.org/spreadsheetml/2006/main" mc:Ignorable="x">
+${allSheetSlicerItems.join('\n')}
+</slicers>`) });
     }
 
-    // ── Pivot Slicers ───────────────────────────────────────────────────────
-    if (this.pivotSlicers.length) {
-      const pivSlicerItems = this.pivotSlicers.map(s =>
-        `<slicer name="${escapeXml(s.name)}" cache="${escapeXml(s.name + '_cache')}" caption="${escapeXml(s.caption ?? s.fieldName)}" columnCount="${s.columnCount ?? 1}" style="${s.style ?? 'SlicerStyleLight1'}"/>`
-      ).join('');
-      entries.push({ name: 'xl/slicers/slicer2.xml', data: strToBytes(
-        `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<slicers xmlns="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" mc:Ignorable="x">
-${pivSlicerItems}
-</slicers>`) });
-      for (let i = 0; i < this.pivotSlicers.length; i++) {
-        const s = this.pivotSlicers[i];
-        entries.push({ name: `xl/slicerCaches/pivotSlicerCache${i + 1}.xml`, data: strToBytes(
-          `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<slicerCacheDefinition xmlns="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main" name="${escapeXml(s.name + '_cache')}" sourceName="${escapeXml(s.fieldName)}">
-<pivotTables><pivotTable tabId="1" name="${escapeXml(s.pivotTableName)}"/></pivotTables>
-</slicerCacheDefinition>`) });
+    // Slicer caches (all types unified)
+    for (const sc of allSlicerCaches) {
+      let cacheBody: string;
+      if (sc.type === 'table') {
+        cacheBody = `<extLst><ext xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" uri="{2F2917AC-EB37-4324-AD4E-5DD8C200BD13}" xmlns:x15="http://schemas.microsoft.com/office/spreadsheetml/2010/11/main"><x15:tableSlicerCache tableId="${sc.tableId}" column="${sc.columnIndex}" sortOrder="${sc.sortOrder ?? 'ascending'}"/></ext></extLst>`;
+      } else {
+        const itemsXml = (sc.items ?? []).map((_, xi) => `<i x="${xi}" s="1"/>`).join('');
+        cacheBody = `<pivotTables><pivotTable tabId="${sc.tabId}" name="${escapeXml(sc.pivotTableName ?? '')}"/></pivotTables>` +
+          (sc.items?.length ? `<data><tabular pivotCacheId="${sc.pivotCacheId}"><items count="${sc.items.length}">${itemsXml}</items></tabular></data>` : '');
       }
+      entries.push({ name: `xl/slicerCaches/slicerCache${sc.idx}.xml`, data: strToBytes(
+        `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<slicerCacheDefinition xmlns="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main" name="${escapeXml(sc.name)}" sourceName="${escapeXml(sc.sourceName)}">
+${cacheBody}
+</slicerCacheDefinition>`) });
     }
 
     // ── Query Tables ────────────────────────────────────────────────────────

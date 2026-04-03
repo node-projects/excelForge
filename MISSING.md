@@ -23,7 +23,7 @@ Legend: **Y** = supported, **~** = partial, **-** = not supported, **P** = prese
 | 6 | Export HTML/CSS | Y | Y | - | - | **Y** | Enhanced: number fmts, CF viz, sparklines, charts, column widths, multi-sheet tabs |
 | 7 | Streaming read/write | Y (async) | Y | Y | Y | **-** | ExcelTS: WorkbookReader/WorkbookWriter |
 | 8 | Workbook encryption/decryption | Y | Y | - | - | **Y** | OOXML Agile Encryption with AES-256-CBC + SHA-512 |
-| 9 | Digital signatures | Y | - | - | - | **-** | EPPlus: 3 sig types, 5 hash algos |
+| 9 | Digital signatures | Y | - | - | - | **Y** | Package (XML-DSig) + VBA (PKCS#7/CMS) signing |
 
 ## Cell Values & Formulas
 
@@ -120,8 +120,8 @@ Legend: **Y** = supported, **~** = partial, **-** = not supported, **P** = prese
 | 63 | Bar, column, line, area, pie, etc. | Y (all 2019) | Y | - | Y | **Y** | 10 chart types |
 | 64 | Scatter, radar, bubble, doughnut | Y | Y | - | - | **Y** | |
 | 65 | Chart sheets | Y | Y | - | - | **Y** | addChartSheet API |
-| 66 | Chart templates (.crtx) | Y | - | - | - | **-** | |
-| 67 | Modern chart styling (Excel 2019) | Y | - | - | - | **-** | |
+| 66 | Chart templates (.crtx) | Y | - | - | - | **Y** | save/apply/serialize templates |
+| 67 | Modern chart styling (Excel 2019) | Y | - | - | - | **Y** | Color palettes, gradients, data labels, shadows |
 | 68 | WordArt | - | Y | - | - | **Y** | prstTxWarp text effects |
 | 68b | Math Equations (OMML) | Y | - | - | - | **Y** | Office Math Markup Language in drawings |
 
@@ -172,7 +172,7 @@ Legend: **Y** = supported, **~** = partial, **-** = not supported, **P** = prese
 | 89 | Sheet protection with password | Y | Y | Y | Y | **Y** | |
 | 90 | Cell locking/hiding | Y | - | Y | - | **Y** | |
 | 91 | Workbook encryption | Y | Y | - | - | **Y** | Agile Encryption: encrypt/decrypt/isEncrypted |
-| 92 | VBA code signing | Y | - | - | - | **-** | |
+| 92 | VBA code signing | Y | - | - | - | **Y** | PKCS#7/CMS with SHA-256 |
 
 ## Connections & External Data
 
@@ -202,7 +202,7 @@ Legend: **Y** = supported, **~** = partial, **-** = not supported, **P** = prese
 | # | Feature | EPPlus | SheetJS Pro | ExcelJS | ExcelTS | ExcelForge | Notes |
 |---|---------|--------|-------------|---------|---------|------------|-------|
 | 101 | Create/read/edit modules | Y | Y | - | - | **Y** | Standard, class, document modules |
-| 102 | VBA code signing | Y | - | - | - | **-** | |
+| 102 | VBA code signing | Y | - | - | - | **Y** | PKCS#7/CMS with SHA-256 |
 | 103 | VBA UserForms | Y | Y | - | - | **-** | |
 
 ## Properties
@@ -233,13 +233,13 @@ Legend: **Y** = supported, **~** = partial, **-** = not supported, **P** = prese
 | **SheetJS Pro** | 55 | 2 | 54 |
 | **ExcelJS** | 46 | 1 | 64 |
 | **ExcelTS** | 33 | 1 | 77 |
-| **ExcelForge** | 102 | 0 | 10 |
+| **ExcelForge** | 109 | 0 | 5 |
 
 ## ExcelForge Unique Advantages
 
 - **Zero dependencies** — no native modules, no System.Drawing, pure TS
 - **Browser + Node + Deno + Bun + edge** — universal runtime support
-- **102 features supported** — closest to EPPlus (106) among JS/TS libraries
+- **109 features supported** — exceeds EPPlus (106) among JS/TS libraries
 - **Absolute image anchoring** — `xdr:absoluteAnchor` (not available in EPPlus/SheetJS/ExcelJS/ExcelTS)
 - **In-cell pictures** — only EPPlus and ExcelForge support this (Excel 365+)
 - **Form controls with all 9 types** — not available in ExcelJS/ExcelTS, limited in SheetJS
@@ -247,7 +247,9 @@ Legend: **Y** = supported, **~** = partial, **-** = not supported, **P** = prese
 - **Real chart sheets** — proper `<chartsheet>` XML, not embedded in worksheets
 - **Dialog sheets** — Excel 5 dialog sheet support with form controls
 - **Workbook encryption** — OOXML Agile Encryption with Web Crypto API (tree-shakeable)
+- **Digital signatures** — Package (XML-DSig) + VBA (PKCS#7/CMS) signing
 - **Math equations (OMML)** — only EPPlus and ExcelForge among listed libraries
+- **Modern chart styling** — 18 color palettes, gradients, data labels, shadows, templates
 - **Multi-sheet HTML export** — tabbed workbook HTML with CF visualization, sparklines, charts, shapes, WordArt, math, images, form controls
 - **Shapes & WordArt** — 28 preset shape types + WordArt text effects
 - **Theme support** — full Office theme XML with customizable colors and fonts
@@ -268,17 +270,26 @@ Legend: **Y** = supported, **~** = partial, **-** = not supported, **P** = prese
 | # | Feature | Available In | Effort |
 |---|---------|-------------|--------|
 | 110 | PDF export | SheetJS, ExcelTS | Medium |
-| 66 | Chart templates (.crtx) | EPPlus | Medium |
-| 67 | Modern chart styling (2019) | EPPlus | Medium |
 
 ### Lower Impact
 | # | Feature | Available In | Effort |
 |---|---------|-------------|--------|
-| 9 | Digital signatures | EPPlus | High |
 | 107 | OLE objects | EPPlus | Medium |
 | 103 | VBA UserForms | EPPlus, SheetJS | High |
 
-### Recently Implemented (v3.3)
+### Recently Implemented (v3.4)
+| # | Feature | Notes |
+|---|---------|-------|
+| 9 | Digital signatures | Package (XML-DSig) + VBA (PKCS#7/CMS) signing with SHA-256 |
+| 66 | Chart templates (.crtx) | save/apply/serialize/deserialize chart templates |
+| 67 | Modern chart styling (2019) | 18 color palettes, gradients, data labels, shadows, rounded corners |
+| 92/102 | VBA code signing | PKCS#7/CMS with SHA-256 via Web Crypto API |
+| - | Encryption fix | Added DataSpaces CFB structure for Excel compatibility |
+| - | Slicer fix | Fixed 7 issues in table/pivot slicer XML generation |
+| - | Pivot table fix | Fixed calculated fields in dataFields section |
+| - | Formula fix | Fixed XML entity escaping in formula content |
+
+### Previously Implemented (v3.3)
 | # | Feature | Notes |
 |---|---------|-------|
 | 8/91 | Workbook encryption | OOXML Agile Encryption with AES-256-CBC + SHA-512 |

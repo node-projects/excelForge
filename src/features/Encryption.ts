@@ -603,6 +603,248 @@ export interface EncryptionOptions {
   spinCount?: number;
 }
 
+// ── DataSpaces binary stream builders (MS-OFFCRYPTO §2.3.1) ──────────────────
+
+/** Build a length-prefixed UTF-16LE string (uint32 byte-count + string data + padding to 4 bytes) */
+function buildPrefixedUtf16(s: string): Uint8Array {
+  const byteLen = s.length * 2;
+  const padLen = (4 - (byteLen % 4)) % 4;
+  const buf = new Uint8Array(4 + byteLen + padLen);
+  setU32(buf, 0, byteLen);
+  for (let i = 0; i < s.length; i++) setU16(buf, 4 + i * 2, s.charCodeAt(i));
+  return buf;
+}
+
+function buildDataSpacesVersion(): Uint8Array {
+  const feature = 'Microsoft.Container.DataSpaces';
+  const strBytes = feature.length * 2; // 60
+  const buf = new Uint8Array(4 + strBytes + 12); // length prefix + string + 3 version pairs
+  setU32(buf, 0, strBytes);
+  for (let i = 0; i < feature.length; i++) setU16(buf, 4 + i * 2, feature.charCodeAt(i));
+  const off = 4 + strBytes;
+  setU16(buf, off, 1); setU16(buf, off + 2, 0);     // reader 1.0
+  setU16(buf, off + 4, 1); setU16(buf, off + 6, 0);  // updater 1.0
+  setU16(buf, off + 8, 1); setU16(buf, off + 10, 0);  // writer 1.0
+  return buf;
+}
+
+function buildDataSpaceMap(): Uint8Array {
+  const refName = buildPrefixedUtf16('EncryptedPackage');
+  const dsName = buildPrefixedUtf16('StrongEncryptionDataSpace');
+  const entryLen = 4 /* refCompCount */ + 4 /* type */ + refName.length + dsName.length;
+  const buf = new Uint8Array(8 + 4 + entryLen);
+  setU32(buf, 0, 8);  // header length
+  setU32(buf, 4, 1);  // entry count
+  setU32(buf, 8, entryLen); // entry length
+  let off = 12;
+  setU32(buf, off, 1); off += 4; // reference component count
+  setU32(buf, off, 0); off += 4; // type = stream
+  buf.set(refName, off); off += refName.length;
+  buf.set(dsName, off);
+  return buf;
+}
+
+function buildStrongEncryptionDataSpace(): Uint8Array {
+  const refName = buildPrefixedUtf16('StrongEncryptionTransform');
+  const buf = new Uint8Array(8 + refName.length);
+  setU32(buf, 0, 8);  // header length
+  setU32(buf, 4, 1);  // transform reference count
+  buf.set(refName, 8);
+  return buf;
+}
+
+function buildPrimaryTransform(): Uint8Array {
+  const id = buildPrefixedUtf16('{FF9A3F03-56EF-4613-BDD5-5A41C1D07246}');
+  const name = buildPrefixedUtf16('Microsoft.Container.EncryptionTransform');
+  const contentLen = 4 /* type */ + id.length + name.length + 12 /* 3 version pairs */;
+  const buf = new Uint8Array(4 + contentLen);
+  setU32(buf, 0, contentLen); // transform length
+  let off = 4;
+  setU32(buf, off, 1); off += 4; // type = password
+  buf.set(id, off); off += id.length;
+  buf.set(name, off); off += name.length;
+  // Versions: reader, updater, writer — each major.minor uint16 pairs
+  setU16(buf, off, 1); setU16(buf, off + 2, 0); off += 4;
+  setU16(buf, off, 1); setU16(buf, off + 2, 0); off += 4;
+  setU16(buf, off, 1); setU16(buf, off + 2, 0);
+  return buf;
+}
+
+/**
+ * Build a CFB file with the DataSpaces structure required by MS-OFFCRYPTO.
+ * Directory layout:
+ *   Root → \x06DataSpaces (storage), EncryptionInfo (stream), EncryptedPackage (stream)
+ *   \x06DataSpaces → Version, DataSpaceMap, DataSpaceInfo (storage), TransformInfo (storage)
+ *   DataSpaceInfo → StrongEncryptionDataSpace
+ *   TransformInfo → StrongEncryptionTransform (storage)
+ *   StrongEncryptionTransform → \x06Primary
+ */
+function buildEncryptionCfb(encryptionInfo: Uint8Array, encryptedPackage: Uint8Array): Uint8Array {
+  // Directory entries: [0]=Root, [1]=\x06DataSpaces, [2]=EncryptionInfo,
+  // [3]=EncryptedPackage, [4]=Version, [5]=DataSpaceMap,
+  // [6]=DataSpaceInfo, [7]=TransformInfo, [8]=StrongEncryptionDataSpace,
+  // [9]=StrongEncryptionTransform, [10]=\x06Primary
+  const versionData = buildDataSpacesVersion();
+  const dsmData = buildDataSpaceMap();
+  const sedsData = buildStrongEncryptionDataSpace();
+  const primaryData = buildPrimaryTransform();
+
+  interface DirEntry {
+    name: string; type: number; /* 1=storage, 2=stream, 5=root */
+    childId: number; leftId: number; rightId: number;
+    data?: Uint8Array; startSector?: number; size: number;
+  }
+
+  const dirs: DirEntry[] = [
+    { name: 'Root Entry', type: 5, childId: 2, leftId: -1, rightId: -1, size: 0 },
+    // Children of root are sorted by name: \x06DataSpaces (0x06...) < EncryptedPackage < EncryptionInfo
+    // EncryptedPackage as root of sibling tree:
+    { name: '\x06DataSpaces', type: 1, childId: 5, leftId: -1, rightId: -1, size: 0 },
+    { name: 'EncryptionInfo', type: 2, childId: -1, leftId: 1, rightId: 3, data: encryptionInfo, size: encryptionInfo.length },
+    { name: 'EncryptedPackage', type: 2, childId: -1, leftId: -1, rightId: -1, data: encryptedPackage, size: encryptedPackage.length },
+    // Children of \x06DataSpaces: DataSpaceInfo, DataSpaceMap, TransformInfo, Version
+    // Sorted: DataSpaceInfo < DataSpaceMap < TransformInfo < Version
+    // Use DataSpaceMap as root (middle-ish):
+    { name: 'Version', type: 2, childId: -1, leftId: -1, rightId: -1, data: versionData, size: versionData.length },
+    { name: 'DataSpaceMap', type: 2, childId: -1, leftId: -1, rightId: 4, data: dsmData, size: dsmData.length },
+    { name: 'DataSpaceInfo', type: 1, childId: 8, leftId: -1, rightId: 7, size: 0 },
+    { name: 'TransformInfo', type: 1, childId: 9, leftId: -1, rightId: -1, size: 0 },
+    // Child of DataSpaceInfo:
+    { name: 'StrongEncryptionDataSpace', type: 2, childId: -1, leftId: -1, rightId: -1, data: sedsData, size: sedsData.length },
+    // Child of TransformInfo:
+    { name: 'StrongEncryptionTransform', type: 1, childId: 10, leftId: -1, rightId: -1, size: 0 },
+    // Child of StrongEncryptionTransform:
+    { name: '\x06Primary', type: 2, childId: -1, leftId: -1, rightId: -1, data: primaryData, size: primaryData.length },
+  ];
+
+  // Build mini-stream for small streams (< 4096 bytes), regular for large
+  let miniData = new Uint8Array(0);
+  let miniOffset = 0;
+  type StreamInfo = { inMini: boolean; miniStart: number; regularStart: number };
+  const streamInfo: StreamInfo[] = [];
+  const regularStreams: { data: Uint8Array; startSector: number }[] = [];
+
+  for (const d of dirs) {
+    if (!d.data) { streamInfo.push({ inMini: false, miniStart: 0, regularStart: 0 }); continue; }
+    if (d.data.length < MINI_CUT) {
+      const padLen = Math.ceil(d.data.length / MINI_SZ) * MINI_SZ;
+      const newMini = new Uint8Array(miniData.length + padLen);
+      newMini.set(miniData); newMini.set(d.data, miniData.length);
+      streamInfo.push({ inMini: true, miniStart: miniOffset / MINI_SZ, regularStart: 0 });
+      miniOffset += padLen; miniData = newMini;
+    } else {
+      streamInfo.push({ inMini: false, miniStart: 0, regularStart: 0 });
+    }
+  }
+
+  const dirCount = dirs.length;
+  const dirSectors = Math.ceil((dirCount * DIR_SZ) / SECTOR_SZ);
+  const miniStreamSectors = Math.ceil(miniData.length / SECTOR_SZ);
+  let nextSector = 1 + dirSectors + miniStreamSectors; // FAT + dir + mini-stream
+
+  for (let i = 0; i < dirs.length; i++) {
+    if (dirs[i].data && !streamInfo[i].inMini) {
+      streamInfo[i].regularStart = nextSector;
+      regularStreams.push({ data: dirs[i].data!, startSector: nextSector });
+      nextSector += Math.ceil(dirs[i].data!.length / SECTOR_SZ);
+    }
+  }
+
+  // Build FAT
+  const totalSectors = nextSector + 1; // +1 for mini-FAT sector
+  const fatEntries = new Uint32Array(Math.max(totalSectors + 8, 128));
+  fatEntries.fill(FREESECT);
+  fatEntries[0] = FATSECT;
+  for (let i = 1; i < 1 + dirSectors; i++)
+    fatEntries[i] = i < dirSectors ? i + 1 : ENDOFCHAIN;
+  for (let i = 1 + dirSectors; i < 1 + dirSectors + miniStreamSectors; i++)
+    fatEntries[i] = i < dirSectors + miniStreamSectors ? i + 1 : ENDOFCHAIN;
+  for (const rb of regularStreams) {
+    const sects = Math.ceil(rb.data.length / SECTOR_SZ);
+    for (let j = 0; j < sects; j++)
+      fatEntries[rb.startSector + j] = j < sects - 1 ? rb.startSector + j + 1 : ENDOFCHAIN;
+  }
+
+  // Mini-FAT
+  const miniSectorCount = Math.max(Math.ceil(miniData.length / MINI_SZ), 1);
+  const miniFat = new Uint32Array(Math.max(miniSectorCount, 128));
+  miniFat.fill(FREESECT);
+  for (let i = 0; i < dirs.length; i++) {
+    if (dirs[i].data && streamInfo[i].inMini) {
+      const msects = Math.ceil(dirs[i].data!.length / MINI_SZ);
+      const start = streamInfo[i].miniStart;
+      for (let j = 0; j < msects; j++)
+        miniFat[start + j] = j < msects - 1 ? start + j + 1 : ENDOFCHAIN;
+    }
+  }
+  const miniFatSector = nextSector;
+  fatEntries[miniFatSector] = ENDOFCHAIN;
+
+  const fileSize = (1 + miniFatSector + 1) * SECTOR_SZ;
+  const out = new Uint8Array(fileSize);
+
+  // Header
+  out.set(CFB_SIG, 0);
+  setU16(out, 0x18, 0x003E); setU16(out, 0x1A, 0x0003);
+  setU16(out, 0x1C, 0xFFFE); setU16(out, 0x1E, 9); setU16(out, 0x20, 6);
+  setU32(out, 0x2C, 1); // FAT sectors
+  setU32(out, 0x30, 1); // first dir sector
+  setU32(out, 0x38, MINI_CUT);
+  setU32(out, 0x3C, miniFatSector); setU32(out, 0x40, 1);
+  setU32(out, 0x44, ENDOFCHAIN); setU32(out, 0x48, 0);
+  for (let i = 0; i < 109; i++) setU32(out, 0x4C + i * 4, FREESECT);
+  setU32(out, 0x4C, 0);
+
+  // FAT sector
+  const fatOff = SECTOR_SZ;
+  for (let i = 0; i < 128; i++) setU32(out, fatOff + i * 4, fatEntries[i]);
+
+  // Directory sectors
+  const dirOff = SECTOR_SZ * 2;
+  for (let i = 0; i < dirs.length; i++) {
+    const d = dirs[i];
+    const eOff = dirOff + i * DIR_SZ;
+    const eName = encUtf16(d.name);
+    out.set(eName.bytes, eOff);
+    setU16(out, eOff + 0x40, eName.size);
+    out[eOff + 0x42] = d.type;
+    out[eOff + 0x43] = 1; // red
+    setU32(out, eOff + 0x44, d.leftId >= 0 ? d.leftId : FREESECT);
+    setU32(out, eOff + 0x48, d.rightId >= 0 ? d.rightId : FREESECT);
+    setU32(out, eOff + 0x4C, d.childId >= 0 ? d.childId : FREESECT);
+
+    if (d.type === 5) {
+      // Root: mini-stream start sector + size
+      setU32(out, eOff + 0x74, miniStreamSectors > 0 ? 1 + dirSectors : ENDOFCHAIN);
+      setU32(out, eOff + 0x78, miniData.length);
+    } else if (d.data) {
+      if (streamInfo[i].inMini) {
+        setU32(out, eOff + 0x74, streamInfo[i].miniStart);
+      } else {
+        setU32(out, eOff + 0x74, streamInfo[i].regularStart);
+      }
+      setU32(out, eOff + 0x78, d.data.length);
+    } else {
+      setU32(out, eOff + 0x74, ENDOFCHAIN);
+      setU32(out, eOff + 0x78, 0);
+    }
+  }
+
+  // Mini-stream data
+  const miniOff = SECTOR_SZ * (1 + 1 + dirSectors);
+  out.set(miniData, miniOff);
+
+  // Regular streams
+  for (const rb of regularStreams)
+    out.set(rb.data, SECTOR_SZ * (1 + rb.startSector));
+
+  // Mini-FAT sector
+  const mfOff = SECTOR_SZ * (1 + miniFatSector);
+  for (let i = 0; i < 128; i++) setU32(out, mfOff + i * 4, miniFat[i]);
+
+  return out;
+}
+
 /**
  * Encrypt an XLSX/XLSM file with a password using OOXML Agile Encryption.
  * Returns a CFB binary container (.xlsx extension still works in Excel).
@@ -693,11 +935,8 @@ export async function encryptWorkbook(xlsxData: Uint8Array, password: string, op
   setU32(infoHeader, 4, 0x00040); // flags = agile
   const encryptionInfo = concat(infoHeader, xmlBytes);
 
-  // 7. Build CFB container
-  return buildCfb([
-    { name: 'EncryptionInfo', data: encryptionInfo },
-    { name: 'EncryptedPackage', data: encryptedPackage },
-  ]);
+  // 7. Build CFB container with DataSpaces
+  return buildEncryptionCfb(encryptionInfo, encryptedPackage);
 }
 
 /**

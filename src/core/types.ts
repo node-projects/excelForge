@@ -260,6 +260,23 @@ export interface ChartSeries {
   /** Category ref */
   categories?: string;
   color?:   Color;
+  /** Data labels for this series */
+  dataLabels?: ChartDataLabels;
+  /** Line/border width in pt */
+  lineWidth?: number;
+  /** Fill: 'gradient' for gradient fill */
+  fillType?: 'solid' | 'gradient';
+  /** Gradient stops [{pos:0,color:'FF4472C4'},{pos:100,color:'FFB4C7E7'}] */
+  gradientStops?: { pos: number; color: Color }[];
+}
+
+export interface ChartDataLabels {
+  showValue?: boolean;
+  showCategory?: boolean;
+  showPercent?: boolean;
+  showSeriesName?: boolean;
+  position?: 'outEnd' | 'inEnd' | 'ctr' | 'inBase' | 'bestFit' | 't' | 'b' | 'l' | 'r';
+  numFmt?: string;
 }
 
 export interface ChartAxis {
@@ -287,6 +304,49 @@ export interface Chart {
   style?:    number;   // built-in chart style 1-48
   varyColors?: boolean;
   grouping?:  string;
+  /** Modern chart style name (Excel 2019+) */
+  modernStyle?: ChartModernStyle;
+  /** Theme color palette */
+  colorPalette?: ChartColorPalette;
+  /** Global data labels (applies to all series without their own) */
+  dataLabels?: ChartDataLabels;
+  /** Chart-level fill */
+  chartFill?: 'none' | 'white' | 'gradient';
+  /** Rounded corners */
+  roundedCorners?: boolean;
+  /** Drop shadow on chart area */
+  shadow?: boolean;
+}
+
+/** Modern Excel 2019+ chart style presets */
+export type ChartModernStyle =
+  | 'colorful1' | 'colorful2' | 'colorful3' | 'colorful4'
+  | 'monochromatic1' | 'monochromatic2' | 'monochromatic3' | 'monochromatic4'
+  | 'monochromatic5' | 'monochromatic6' | 'monochromatic7' | 'monochromatic8'
+  | 'monochromatic9' | 'monochromatic10' | 'monochromatic11' | 'monochromatic12';
+
+/** Office theme color palettes */
+export type ChartColorPalette =
+  | 'office' | 'blue' | 'orange' | 'green' | 'red' | 'purple'
+  | 'teal' | 'gray' | 'gold' | 'blueWarm' | 'blueGreen'
+  | 'greenYellow' | 'redOrange' | 'redViolet' | 'yellowOrange'
+  | 'slipstream' | 'marquee' | 'aspect';
+
+/** Chart template that can be saved/loaded as .crtx */
+export interface ChartTemplate {
+  type: ChartType;
+  style?: number;
+  modernStyle?: ChartModernStyle;
+  colorPalette?: ChartColorPalette;
+  legend?: Chart['legend'];
+  xAxis?: ChartAxis;
+  yAxis?: ChartAxis;
+  dataLabels?: ChartDataLabels;
+  chartFill?: Chart['chartFill'];
+  roundedCorners?: boolean;
+  shadow?: boolean;
+  varyColors?: boolean;
+  grouping?: string;
 }
 
 // ─── Conditional Formatting ───────────────────────────────────────────────────

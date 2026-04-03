@@ -54,6 +54,13 @@ export { FormulaEngine } from './features/FormulaEngine.js';
 export { encryptWorkbook, decryptWorkbook, isEncrypted } from './features/Encryption.js';
 export type { EncryptionOptions } from './features/Encryption.js';
 
+// ── Chart templates & modern styling ────────────────────────────────────────
+export { saveChartTemplate, applyChartTemplate, serializeChartTemplate, deserializeChartTemplate } from './features/ChartBuilder.js';
+
+// ── Digital Signing ─────────────────────────────────────────────────────────
+export { signPackage, signVbaProject, signWorkbook } from './features/Signing.js';
+export type { SigningOptions, SignResult } from './features/Signing.js';
+
 // ── Types ───────────────────────────────────────────────────────────────────
 export type {
   // Values
@@ -90,6 +97,10 @@ export type {
   ChartSeries,
   ChartAxis,
   ChartPosition,
+  ChartDataLabels,
+  ChartTemplate,
+  ChartModernStyle,
+  ChartColorPalette,
   ConditionalFormat,
   CFType,
   CFColorScale,
