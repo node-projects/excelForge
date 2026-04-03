@@ -16,6 +16,7 @@
   "main": "./dist/index.js",
   "scripts": {
     "test": "node ./dist/test/examples.js",
+    "test2": "node ./dist/test/test_features",
     "build": "tsc",
     "prepublishOnly": "npm run build && npm run bundle",
     "bundle": "esbuild ./dist/index.js --format=esm --minify --external:fs/promises --external:zlib --platform=neutral --bundle --outfile=./dist/index-min.js"

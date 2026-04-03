@@ -21,7 +21,8 @@ import type {
   AutoFilter, ConditionalFormat, DataValidation, Cell, CellValue,
   RichTextRun, Comment, Hyperlink, Table, TableColumn, ValidationType,
   NamedRange, Connection, PowerQuery, ConnectionType, CommandType,
-  FormControl, FormControlType, FormControlAnchor,
+  FormControl, FormControlType, FormControlAnchor, Image, ImageFormat, ImagePosition,
+  MathEquation, MathElement, MathElementType, ChartPosition,
 } from './types.js';
 import { Worksheet } from './Worksheet.js';
 import { SharedStrings } from './SharedStrings.js';
@@ -314,14 +315,31 @@ function parseAlignment(node: XmlNode): Alignment {
 
 // ─── Shared strings parsing ───────────────────────────────────────────────────
 
-function parseSharedStrings(xml: string): string[] {
+interface SharedStringEntry {
+  text: string;
+  richText?: RichTextRun[];
+}
+
+function parseSharedStrings(xml: string): SharedStringEntry[] {
   const root = parseXml(xml);
   return children(root, 'si').map(si => {
-    // Simple string
+    // Simple string (no rich text runs)
     const t = child(si, 't');
-    if (t && !child(si, 'r')) return t.text ?? '';
-    // Rich text — concatenate all runs
-    return children(si, 'r').map(r => child(r, 't')?.text ?? '').join('');
+    const runs = children(si, 'r');
+    if (t && !runs.length) return { text: t.text ?? '' };
+    // Rich text — parse each run with font info
+    const richRuns: RichTextRun[] = runs.map(r => {
+      const runText = child(r, 't')?.text ?? '';
+      const rPr = child(r, 'rPr');
+      const run: RichTextRun = { text: runText };
+      if (rPr) run.font = parseFont(rPr);
+      return run;
+    });
+    const plainText = richRuns.map(r => r.text).join('');
+    // Only set richText if runs have formatting; otherwise just return plain text
+    const hasFormatting = richRuns.some(r => r.font && Object.keys(r.font).length > 0);
+    if (hasFormatting) return { text: plainText, richText: richRuns };
+    return { text: plainText };
   });
 }
 
@@ -339,20 +357,26 @@ interface ParsedSheet {
   legacyDrawingRId: string;
   /** ctrlProp relationship IDs parsed from <controls> inside mc:AlternateContent */
   ctrlPropRIds: string[];
+  /** Drawing relationship ID (for images, charts, shapes) */
+  drawingRId: string;
+  /** Cells with vm (value metadata) attributes: cellRef → vm index (1-based) */
+  vmCells: Map<string, number>;
 }
 
 function parseWorksheet(
   xml: string,
   name: string,
   styles: ParsedStyles,
-  sharedStrings: string[],
+  sharedStrings: SharedStringEntry[],
 ): ParsedSheet {
   const ws = new Worksheet(name);
   const root = parseXml(xml);
   const unknownParts: string[] = [];
   const tableRIds: string[] = [];
   let legacyDrawingRId = '';
+  let drawingRId = '';
   const ctrlPropRIds: string[] = [];
+  const vmCells = new Map<string, number>();
 
   const knownTags = new Set([
     'sheetPr','dimension','sheetViews','sheetFormatPr','cols',
@@ -368,7 +392,7 @@ function parseWorksheet(
     switch (tag) {
       case 'sheetViews':    parseSheetViews(node, ws);   break;
       case 'cols':          parseCols(node, ws, styles); break;
-      case 'sheetData':     parseSheetData(node, ws, styles, sharedStrings); break;
+      case 'sheetData':     parseSheetData(node, ws, styles, sharedStrings, vmCells); break;
       case 'mergeCells':    parseMerges(node, ws);       break;
       case 'autoFilter':    ws.autoFilter = { ref: node.attrs['ref'] ?? '' }; break;
       case 'tableParts':
@@ -399,6 +423,9 @@ function parseWorksheet(
           const id = parseInt(brk.attrs['id'] ?? '0', 10);
           if (id > 0) ws.addColBreak(id, brk.attrs['man'] === '1');
         }
+        break;
+      case 'drawing':
+        drawingRId = node.attrs['r:id'] ?? '';
         break;
       case 'legacyDrawing':
         legacyDrawingRId = node.attrs['r:id'] ?? '';
@@ -441,7 +468,7 @@ function parseWorksheet(
     }
   }
 
-  return { ws, originalXml: xml, unknownParts, tableRIds, legacyDrawingRId, ctrlPropRIds };
+  return { ws, originalXml: xml, unknownParts, tableRIds, legacyDrawingRId, ctrlPropRIds, drawingRId, vmCells };
 }
 
 function parseSheetViews(node: XmlNode, ws: Worksheet): void {
@@ -485,7 +512,8 @@ function parseSheetData(
   node: XmlNode,
   ws: Worksheet,
   styles: ParsedStyles,
-  sharedStrings: string[],
+  sharedStrings: SharedStringEntry[],
+  vmCells?: Map<string, number>,
 ): void {
   for (const rowNode of children(node, 'row')) {
     const rowIdx = parseInt(rowNode.attrs['r'] ?? '0', 10);
@@ -512,6 +540,12 @@ function parseSheetData(
       const cell: Cell = {};
       if (cellStyle) cell.style = cellStyle;
 
+      // Track value metadata (used for in-cell images / rich values)
+      const vmAttr = cNode.attrs['vm'];
+      if (vmAttr && vmCells) {
+        vmCells.set(ref, parseInt(vmAttr, 10));
+      }
+
       if (fNode) {
         if (fNode.attrs['t'] === 'array') {
           cell.arrayFormula = fNode.text ?? '';
@@ -523,7 +557,13 @@ function parseSheetData(
         switch (t) {
           case 's': {
             const idx = parseInt(raw, 10);
-            cell.value = sharedStrings[idx] ?? '';
+            const ss = sharedStrings[idx];
+            if (ss) {
+              cell.value = ss.text;
+              if (ss.richText) cell.richText = ss.richText;
+            } else {
+              cell.value = '';
+            }
             break;
           }
           case 'b':
@@ -782,6 +822,439 @@ function parseTableXml(xml: string): Table | null {
 }
 
 /** Resolve a relative path (e.g. "../tables/table1.xml") against a base directory */
+// ─── Drawing / Image parsing ──────────────────────────────────────────────────
+
+const EMU_PX = 9525; // 1 px = 9525 EMU
+
+function parseAnchorPos(node: XmlNode): ImagePosition {
+  return {
+    col: parseInt(child(node, 'col')?.text ?? '0', 10),
+    row: parseInt(child(node, 'row')?.text ?? '0', 10),
+    colOff: parseInt(child(node, 'colOff')?.text ?? '0', 10),
+    rowOff: parseInt(child(node, 'rowOff')?.text ?? '0', 10),
+  };
+}
+
+function extToFormat(ext: string): ImageFormat {
+  const map: Record<string, ImageFormat> = {
+    png: 'png', jpg: 'jpeg', jpeg: 'jpeg', gif: 'gif',
+    emf: 'emf', wmf: 'wmf', tiff: 'tiff', tif: 'tiff',
+    svg: 'svg', ico: 'ico', webp: 'webp', bmp: 'bmp',
+  };
+  return map[ext.toLowerCase()] ?? 'png';
+}
+
+function parseDrawingObjects(
+  drawXml: string,
+  drawRels: RelMap | undefined,
+  drawDir: string,
+  getEntry: (path: string) => { data: Uint8Array } | undefined,
+  ws: Worksheet,
+): void {
+  const root = parseXml(drawXml);
+  for (const anchor of root.children) {
+    if (typeof anchor === 'string') continue;
+    const tag = localName(anchor.tag);
+    if (tag !== 'twoCellAnchor' && tag !== 'oneCellAnchor' && tag !== 'absoluteAnchor') continue;
+
+    // Parse anchor position
+    const anchorFrom = parseDrawingAnchorFrom(anchor, tag);
+
+    // Try image first: find <pic> element
+    const pic = findDescendant(anchor, 'pic');
+    if (pic) {
+      parseDrawingImage(pic, anchor, tag, anchorFrom, drawRels, drawDir, getEntry, ws);
+      continue;
+    }
+
+    // Try math equation: find <m:oMath> inside shape text body
+    const oMath = findDescendant(anchor, 'oMath');
+    if (oMath) {
+      parseDrawingMathEquation(oMath, anchor, tag, anchorFrom, ws);
+      continue;
+    }
+  }
+}
+
+function parseDrawingAnchorFrom(anchor: XmlNode, tag: string): { from?: ChartPosition; width?: number; height?: number } {
+  const result: { from?: ChartPosition; width?: number; height?: number } = {};
+  if (tag === 'twoCellAnchor' || tag === 'oneCellAnchor') {
+    const fromNode = child(anchor, 'from');
+    if (fromNode) {
+      result.from = {
+        col: parseInt(child(fromNode, 'col')?.text ?? '0', 10),
+        row: parseInt(child(fromNode, 'row')?.text ?? '0', 10),
+        colOff: parseInt(child(fromNode, 'colOff')?.text ?? '0', 10),
+        rowOff: parseInt(child(fromNode, 'rowOff')?.text ?? '0', 10),
+      };
+    }
+  }
+  if (tag === 'oneCellAnchor') {
+    const ext2 = findDescendant(anchor, 'ext');
+    if (ext2) {
+      result.width = parseInt(ext2.attrs['cx'] ?? '0', 10);
+      result.height = parseInt(ext2.attrs['cy'] ?? '0', 10);
+    }
+  }
+  return result;
+}
+
+function parseDrawingImage(
+  pic: XmlNode, anchor: XmlNode, tag: string,
+  anchorInfo: { from?: ChartPosition; width?: number; height?: number },
+  drawRels: RelMap | undefined, drawDir: string,
+  getEntry: (path: string) => { data: Uint8Array } | undefined,
+  ws: Worksheet,
+): void {
+  const blipFill = findDescendant(pic, 'blipFill');
+  const blip = blipFill ? findDescendant(blipFill, 'blip') : undefined;
+  const embedId = blip?.attrs['r:embed'] ?? blip?.attrs['embed'] ?? '';
+  if (!embedId || !drawRels) return;
+
+  const imgRel = drawRels.get(embedId);
+  if (!imgRel) return;
+
+  const imgPath = imgRel.target.startsWith('/')
+    ? imgRel.target.slice(1)
+    : resolvePath(drawDir, imgRel.target);
+  const imgEntry = getEntry(imgPath);
+  if (!imgEntry) return;
+
+  const ext = imgPath.split('.').pop() ?? 'png';
+  const format = extToFormat(ext);
+  const cNvPr = findDescendant(pic, 'cNvPr');
+  const altText = cNvPr?.attrs['descr'] || undefined;
+
+  const img: Image = { data: imgEntry.data, format };
+  if (altText) img.altText = altText;
+
+  if (tag === 'twoCellAnchor') {
+    const fromNode = child(anchor, 'from');
+    const toNode = child(anchor, 'to');
+    if (fromNode) img.from = parseAnchorPos(fromNode);
+    if (toNode) img.to = parseAnchorPos(toNode);
+  } else if (tag === 'oneCellAnchor') {
+    if (anchorInfo.from) img.from = anchorInfo.from as ImagePosition;
+    if (anchorInfo.width) img.width = Math.round(anchorInfo.width / EMU_PX);
+    if (anchorInfo.height) img.height = Math.round(anchorInfo.height / EMU_PX);
+  } else {
+    const posNode = child(anchor, 'pos');
+    const ext2 = child(anchor, 'ext');
+    if (posNode) {
+      img.position = {
+        x: Math.round(parseInt(posNode.attrs['x'] ?? '0', 10) / EMU_PX),
+        y: Math.round(parseInt(posNode.attrs['y'] ?? '0', 10) / EMU_PX),
+      };
+    }
+    if (ext2) {
+      img.width = Math.round(parseInt(ext2.attrs['cx'] ?? '0', 10) / EMU_PX);
+      img.height = Math.round(parseInt(ext2.attrs['cy'] ?? '0', 10) / EMU_PX);
+    }
+  }
+  ws.addImage(img);
+}
+
+function parseDrawingMathEquation(
+  oMath: XmlNode, anchor: XmlNode, tag: string,
+  anchorInfo: { from?: ChartPosition; width?: number; height?: number },
+  ws: Worksheet,
+): void {
+  const elements = parseOmmlChildren(oMath);
+  if (!elements.length) return;
+
+  const from = anchorInfo.from ?? { col: 0, row: 0 };
+  const eq: MathEquation = { elements, from };
+  if (anchorInfo.width) eq.width = anchorInfo.width;
+  if (anchorInfo.height) eq.height = anchorInfo.height;
+
+  // Try to get font size from first run's rPr
+  const firstRPr = findDescendant(oMath, 'rPr');
+  if (firstRPr) {
+    const szAttr = firstRPr.attrs['sz'];
+    if (szAttr) eq.fontSize = parseInt(szAttr, 10) / 100;
+    const latin = findDescendant(firstRPr, 'latin');
+    if (latin?.attrs['typeface']) eq.fontName = latin.attrs['typeface'];
+  }
+
+  ws.addMathEquation(eq);
+}
+
+/** Parse OMML children into MathElement[] */
+function parseOmmlChildren(node: XmlNode): MathElement[] {
+  const elements: MathElement[] = [];
+  for (const c of node.children) {
+    if (typeof c === 'string') continue;
+    const el = parseOmmlElement(c);
+    if (el) elements.push(el);
+  }
+  return elements;
+}
+
+function parseOmmlElement(node: XmlNode): MathElement | null {
+  const tag = localName(node.tag);
+  switch (tag) {
+    case 'r': {
+      // Run: <m:r><m:t>text</m:t></m:r>
+      const t = findDescendant(node, 't');
+      return { type: 'text', text: t?.text ?? '' };
+    }
+    case 'f': {
+      // Fraction: <m:f><m:num>...</m:num><m:den>...</m:den></m:f>
+      const num = child(node, 'num');
+      const den = child(node, 'den');
+      return {
+        type: 'frac',
+        base: num ? parseOmmlChildren(num) : [],
+        argument: den ? parseOmmlChildren(den) : [],
+      };
+    }
+    case 'sSup': {
+      const e = child(node, 'e');
+      const sup = child(node, 'sup');
+      return {
+        type: 'sup',
+        base: e ? parseOmmlChildren(e) : [],
+        argument: sup ? parseOmmlChildren(sup) : [],
+      };
+    }
+    case 'sSub': {
+      const e = child(node, 'e');
+      const sub = child(node, 'sub');
+      return {
+        type: 'sub',
+        base: e ? parseOmmlChildren(e) : [],
+        argument: sub ? parseOmmlChildren(sub) : [],
+      };
+    }
+    case 'sSubSup': {
+      const e = child(node, 'e');
+      const sub = child(node, 'sub');
+      const sup = child(node, 'sup');
+      return {
+        type: 'subSup',
+        base: e ? parseOmmlChildren(e) : [],
+        subscript: sub ? parseOmmlChildren(sub) : [],
+        superscript: sup ? parseOmmlChildren(sup) : [],
+      };
+    }
+    case 'nary': {
+      const naryPr = child(node, 'naryPr');
+      const chrNode = naryPr ? child(naryPr, 'chr') : undefined;
+      const operator = chrNode?.attrs['m:val'] ?? chrNode?.attrs['val'] ?? '∑';
+      const sub = child(node, 'sub');
+      const sup = child(node, 'sup');
+      const e = child(node, 'e');
+      return {
+        type: 'nary',
+        operator,
+        lower: sub ? parseOmmlChildren(sub) : [],
+        upper: sup ? parseOmmlChildren(sup) : [],
+        body: e ? parseOmmlChildren(e) : [],
+      };
+    }
+    case 'rad': {
+      const radPr = child(node, 'radPr');
+      const degHide = radPr ? child(radPr, 'degHide') : undefined;
+      const hideDegree = degHide?.attrs['m:val'] === '1' || degHide?.attrs['val'] === '1';
+      const deg = child(node, 'deg');
+      const e = child(node, 'e');
+      return {
+        type: 'rad',
+        hideDegree,
+        degree: deg ? parseOmmlChildren(deg) : [],
+        body: e ? parseOmmlChildren(e) : [],
+      };
+    }
+    case 'd': {
+      const dPr = child(node, 'dPr');
+      const begChr = dPr ? child(dPr, 'begChr') : undefined;
+      const endChr = dPr ? child(dPr, 'endChr') : undefined;
+      const e = child(node, 'e');
+      return {
+        type: 'delim',
+        open: begChr?.attrs['m:val'] ?? begChr?.attrs['val'] ?? '(',
+        close: endChr?.attrs['m:val'] ?? endChr?.attrs['val'] ?? ')',
+        body: e ? parseOmmlChildren(e) : [],
+      };
+    }
+    case 'func': {
+      const fName = child(node, 'fName');
+      const e = child(node, 'e');
+      return {
+        type: 'func',
+        base: fName ? parseOmmlChildren(fName) : [],
+        argument: e ? parseOmmlChildren(e) : [],
+      };
+    }
+    case 'groupChr': {
+      const groupChrPr = child(node, 'groupChrPr');
+      const chrNode = groupChrPr ? child(groupChrPr, 'chr') : undefined;
+      const e = child(node, 'e');
+      return {
+        type: 'groupChar',
+        operator: chrNode?.attrs['m:val'] ?? chrNode?.attrs['val'] ?? '⏟',
+        base: e ? parseOmmlChildren(e) : [],
+      };
+    }
+    case 'acc': {
+      const accPr = child(node, 'accPr');
+      const chrNode = accPr ? child(accPr, 'chr') : undefined;
+      const e = child(node, 'e');
+      return {
+        type: 'accent',
+        operator: chrNode?.attrs['m:val'] ?? chrNode?.attrs['val'] ?? '̂',
+        base: e ? parseOmmlChildren(e) : [],
+      };
+    }
+    case 'bar': {
+      const e = child(node, 'e');
+      return {
+        type: 'bar',
+        base: e ? parseOmmlChildren(e) : [],
+      };
+    }
+    case 'limLow': {
+      const e = child(node, 'e');
+      const lim = child(node, 'lim');
+      return {
+        type: 'limLow',
+        base: e ? parseOmmlChildren(e) : [],
+        argument: lim ? parseOmmlChildren(lim) : [],
+      };
+    }
+    case 'limUpp': {
+      const e = child(node, 'e');
+      const lim = child(node, 'lim');
+      return {
+        type: 'limUpp',
+        base: e ? parseOmmlChildren(e) : [],
+        argument: lim ? parseOmmlChildren(lim) : [],
+      };
+    }
+    case 'm': {
+      // Matrix: <m:m><m:mr><m:e>...</m:e></m:mr></m:m>
+      const rows: MathElement[][] = [];
+      for (const mr of children(node, 'mr')) {
+        const row: MathElement[] = [];
+        for (const e of children(mr, 'e')) {
+          // Each cell can have multiple children, wrap in a container
+          const cellElements = parseOmmlChildren(e);
+          if (cellElements.length === 1) row.push(cellElements[0]);
+          else row.push({ type: 'text', text: cellElements.map(el => el.text ?? '').join('') });
+        }
+        rows.push(row);
+      }
+      return { type: 'matrix', rows };
+    }
+    case 'eqArr': {
+      const rows: MathElement[][] = [];
+      for (const e of children(node, 'e')) {
+        rows.push(parseOmmlChildren(e));
+      }
+      return { type: 'eqArr', rows };
+    }
+    default:
+      return null;
+  }
+}
+
+// ─── Cell images from richData (value metadata) ──────────────────────────────
+
+function parseCellImagesFromRichData(
+  vmCells: Map<string, number>,
+  getText: (path: string) => string | undefined,
+  getEntry: (path: string) => { data: Uint8Array } | undefined,
+  ws: Worksheet,
+): void {
+  // Parse metadata.xml to get value metadata → rich value index mapping
+  const metaXml = getText('xl/metadata.xml');
+  if (!metaXml) return;
+  const metaRoot = parseXml(metaXml);
+
+  // valueMetadata → list of bk nodes, each with rc element
+  const valueMeta = child(metaRoot, 'valueMetadata');
+  if (!valueMeta) return;
+  const vmBks = children(valueMeta, 'bk');
+
+  // futureMetadata → list of bk nodes with rvb i="N"
+  const futureMeta = metaRoot.children.find((c): c is XmlNode =>
+    typeof c !== 'string' && localName(c.tag) === 'futureMetadata');
+  const fmBks = futureMeta ? children(futureMeta, 'bk') : [];
+
+  // Parse rdrichvalue.xml
+  const rvXml = getText('xl/richData/rdrichvalue.xml');
+  if (!rvXml) return;
+  const rvRoot = parseXml(rvXml);
+  const rvEntries = children(rvRoot, 'rv');
+
+  // Parse richValueRel.xml rels
+  const rvRelRelsXml = getText('xl/richData/_rels/richValueRel.xml.rels');
+  if (!rvRelRelsXml) return;
+  const rvRelRels = parseRels(rvRelRelsXml);
+
+  // Parse richValueRel.xml to get ordered rel rIds
+  const rvRelXml = getText('xl/richData/richValueRel.xml');
+  if (!rvRelXml) return;
+  const rvRelRoot = parseXml(rvRelXml);
+  const relEntries = children(rvRelRoot, 'rel');
+  // relEntries[i] has r:id → maps to image via rvRelRels
+
+  for (const [cellRef, vmIdx] of vmCells) {
+    // vm is 1-based
+    const vmBk = vmBks[vmIdx - 1];
+    if (!vmBk) continue;
+
+    // Get rc element → v = futureMetadata index
+    const rc = vmBk.children.find((c): c is XmlNode =>
+      typeof c !== 'string' && localName(c.tag) === 'rc');
+    if (!rc) continue;
+    const fmIdx = parseInt(rc.attrs['v'] ?? '-1', 10);
+    if (fmIdx < 0) continue;
+
+    // futureMetadata bk → rvb i="N" (rich value index)
+    const fmBk = fmBks[fmIdx];
+    if (!fmBk) continue;
+    const rvb = findDescendant(fmBk, 'rvb');
+    const rvIdx = parseInt(rvb?.attrs['i'] ?? '-1', 10);
+    if (rvIdx < 0) continue;
+
+    // rv entry → first v = richValueRel index
+    const rv = rvEntries[rvIdx];
+    if (!rv) continue;
+    const vNodes = children(rv, 'v');
+    const relIdx = parseInt(vNodes[0]?.text ?? '-1', 10);
+    if (relIdx < 0) continue;
+
+    // Resolve rel → image path
+    const relEntry = relEntries[relIdx];
+    if (!relEntry) continue;
+    const rId = relEntry.attrs['r:id'] ?? '';
+    const imgRel = rvRelRels.get(rId);
+    if (!imgRel) continue;
+
+    const imgPath = imgRel.target.startsWith('/')
+      ? imgRel.target.slice(1)
+      : `xl/richData/${imgRel.target}`;
+    const imgEntry = getEntry(imgPath);
+    if (!imgEntry) continue;
+
+    const ext = imgPath.split('.').pop() ?? 'png';
+    const format = extToFormat(ext);
+    ws.addCellImage({ data: imgEntry.data, format, cell: cellRef });
+  }
+}
+
+/** Recursively find a descendant node by local tag name */
+function findDescendant(node: XmlNode, tagName: string): XmlNode | undefined {
+  for (const c of node.children) {
+    if (typeof c === 'string') continue;
+    if (localName(c.tag) === tagName) return c;
+    const found = findDescendant(c, tagName);
+    if (found) return found;
+  }
+  return undefined;
+}
+
 function resolvePath(base: string, relative: string): string {
   const parts = base.replace(/\/$/, '').split('/');
   for (const seg of relative.split('/')) {
@@ -807,7 +1280,7 @@ export interface ReadResult {
   }>;
   styles:         ParsedStyles;
   stylesXml:      string;       // original — for patching
-  sharedStrings:  string[];
+  sharedStrings:  SharedStringEntry[];
   sharedXml:      string;       // original
   workbookXml:    string;       // original
   workbookRels:   RelMap;
@@ -926,7 +1399,7 @@ export async function readWorkbook(data: Uint8Array): Promise<ReadResult> {
     const sheetXml = getText(target) ?? '';
     if (!sheetXml) continue;
 
-    const { ws, originalXml, unknownParts: sheetUnknown, tableRIds, legacyDrawingRId, ctrlPropRIds } = parseWorksheet(
+    const { ws, originalXml, unknownParts: sheetUnknown, tableRIds, legacyDrawingRId, ctrlPropRIds, drawingRId, vmCells } = parseWorksheet(
       sheetXml, name, styles, sharedStrings,
     );
     ws.sheetIndex = sheets.length + 1;
@@ -1048,6 +1521,36 @@ export async function readWorkbook(data: Uint8Array): Promise<ReadResult> {
         ws.legacyDrawingRId = legacyDrawingRId;
         ws.ctrlPropRIds = ctrlPropRIds;
       }
+    }
+
+    // ── Parse images from drawing XML ────────────────────────────────────
+    if (drawingRId) {
+      const sheetFileName = target.split('/').pop() ?? '';
+      const sheetDir = target.substring(0, target.lastIndexOf('/') + 1);
+      const sheetRelsPath = `${sheetDir}_rels/${sheetFileName}.rels`;
+      const sheetRels = allRels.get(sheetRelsPath);
+      if (sheetRels) {
+        const drawRel = sheetRels.get(drawingRId);
+        if (drawRel) {
+          const drawPath = drawRel.target.startsWith('/')
+            ? drawRel.target.slice(1)
+            : resolvePath(sheetDir, drawRel.target);
+          const drawXml = getText(drawPath);
+          if (drawXml) {
+            // Parse drawing rels for image references
+            const drawDir = drawPath.substring(0, drawPath.lastIndexOf('/') + 1);
+            const drawFileName = drawPath.split('/').pop() ?? '';
+            const drawRelsPath = `${drawDir}_rels/${drawFileName}.rels`;
+            const drawRels = allRels.get(drawRelsPath);
+            parseDrawingObjects(drawXml, drawRels, drawDir, get, ws);
+          }
+        }
+      }
+    }
+
+    // ── Parse cell images from richData (vm references) ──────────────────
+    if (vmCells.size > 0) {
+      parseCellImagesFromRichData(vmCells, getText, get, ws);
     }
 
     sheets.push({ ws, sheetId, rId, originalXml, unknownParts: sheetUnknown, tablePaths, tableXmls });

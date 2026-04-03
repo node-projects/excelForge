@@ -2,14 +2,15 @@
  * ExcelForge — Enhanced HTML/CSS Export Module (tree-shakeable).
  * Converts worksheets to rich HTML tables with inline CSS styling,
  * number formatting, conditional formatting visualization, charts,
- * column widths, row heights, and multi-sheet workbook export.
+ * column widths, row heights, images at cell anchors, form controls,
+ * rich text with superscript/subscript, and MathML formula objects.
  */
 
 import type { Worksheet } from '../core/Worksheet.js';
 import type { Workbook } from '../core/Workbook.js';
 import type {
   CellStyle, Font, Fill, PatternFill, GradientFill, Border, BorderSide, Alignment,
-  ConditionalFormat, Chart, Sparkline, MathElement,
+  ConditionalFormat, Chart, Sparkline, MathElement, Image, CellImage, FormControl,
 } from '../core/types.js';
 import { escapeXml, colIndexToLetter } from '../utils/helpers.js';
 
@@ -89,6 +90,8 @@ function fontToCSS(f: Font): string {
   if (f.size) parts.push(`font-size:${f.size}pt`);
   if (f.color) parts.push(`color:${colorToCSS(f.color)}`);
   if (f.name) parts.push(`font-family:'${f.name}',sans-serif`);
+  if (f.vertAlign === 'superscript') parts.push('vertical-align:super;font-size:smaller');
+  else if (f.vertAlign === 'subscript') parts.push('vertical-align:sub;font-size:smaller');
   return parts.join(';');
 }
 
@@ -361,29 +364,42 @@ function wordArtPresetCSS(preset?: string): string {
 
 /* ─── Image rendering ──────────────────────────────────────────────────────── */
 
-function imageToHtml(img: { data: string | Uint8Array; format?: string; altText?: string }): string {
-  let src: string;
-  if (typeof img.data === 'string') {
-    // Already base64
-    const mime = formatToMime(img.format);
-    src = `data:${mime};base64,${img.data}`;
-  } else {
-    // Uint8Array → base64
-    const mime = formatToMime(img.format);
-    let b64 = '';
-    const bytes = img.data;
-    for (let i = 0; i < bytes.length; i += 3) {
-      const b0 = bytes[i], b1 = bytes[i + 1] ?? 0, b2 = bytes[i + 2] ?? 0;
-      const n = (b0 << 16) | (b1 << 8) | b2;
-      const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-      b64 += chars[(n >> 18) & 63] + chars[(n >> 12) & 63];
-      b64 += i + 1 < bytes.length ? chars[(n >> 6) & 63] : '=';
-      b64 += i + 2 < bytes.length ? chars[n & 63] : '=';
-    }
-    src = `data:${mime};base64,${b64}`;
+function toBase64(bytes: Uint8Array): string {
+  let b64 = '';
+  for (let i = 0; i < bytes.length; i += 3) {
+    const b0 = bytes[i], b1 = bytes[i + 1] ?? 0, b2 = bytes[i + 2] ?? 0;
+    const n = (b0 << 16) | (b1 << 8) | b2;
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+    b64 += chars[(n >> 18) & 63] + chars[(n >> 12) & 63];
+    b64 += i + 1 < bytes.length ? chars[(n >> 6) & 63] : '=';
+    b64 += i + 2 < bytes.length ? chars[n & 63] : '=';
   }
+  return b64;
+}
+
+function imageDataUri(data: string | Uint8Array, format?: string): string {
+  const mime = formatToMime(format);
+  const b64 = typeof data === 'string' ? data : toBase64(data);
+  return `data:${mime};base64,${b64}`;
+}
+
+/** Render a floating image at its cell anchor position */
+function imageToPositionedHtml(img: Image): string {
+  const src = imageDataUri(img.data, img.format);
   const alt = img.altText ? ` alt="${escapeXml(img.altText)}"` : '';
-  return `<img src="${src}"${alt} style="max-width:400px;max-height:300px;margin:4px;border:1px solid #ddd;border-radius:4px"/>`;
+  const w = img.width ? `width:${img.width}px;` : 'max-width:400px;';
+  const h = img.height ? `height:${img.height}px;` : 'max-height:300px;';
+  // Position via data attributes — resolved to CSS in the overlay container
+  const fromCol = img.from?.col ?? 0;
+  const fromRow = img.from?.row ?? 0;
+  return `<img src="${src}"${alt} class="xl-img" data-from-col="${fromCol}" data-from-row="${fromRow}" style="${w}${h}border:1px solid #ddd;border-radius:4px"/>`;
+}
+
+/** Render a cell image inline (for in-cell pictures) */
+function cellImageToHtml(ci: CellImage): string {
+  const src = imageDataUri(ci.data, ci.format);
+  const alt = ci.altText ? ` alt="${escapeXml(ci.altText)}"` : '';
+  return `<img src="${src}"${alt} style="max-width:100%;max-height:100%;object-fit:contain"/>`;
 }
 
 function formatToMime(fmt?: string): string {
@@ -397,66 +413,129 @@ function formatToMime(fmt?: string): string {
   }
 }
 
-/* ─── Math equation rendering ──────────────────────────────────────────────── */
+/* ─── Math equation rendering (MathML) ────────────────────────────────────── */
 
-function mathElementToHtml(el: MathElement): string {
+function mathElementToMathML(el: MathElement): string {
   switch (el.type) {
-    case 'text':
-      return `<span style="font-style:italic">${escapeXml(el.text ?? '')}</span>`;
+    case 'text': {
+      const text = escapeXml(el.text ?? '');
+      // If the text is a known function name or plain text, use <mo> or <mi>
+      if (el.font === 'normal' || /^[a-zA-Z]{2,}$/.test(el.text ?? ''))
+        return `<mi mathvariant="normal">${text}</mi>`;
+      if (/^[0-9.]+$/.test(el.text ?? ''))
+        return `<mn>${text}</mn>`;
+      if (el.text && el.text.length === 1 && /[+\-*/=<>±×÷≤≥≠∞∈∉∪∩⊂⊃∧∨¬→←↔∀∃∑∏∫]/.test(el.text))
+        return `<mo>${text}</mo>`;
+      return `<mi>${text}</mi>`;
+    }
     case 'frac':
-      return `<span style="display:inline-flex;flex-direction:column;align-items:center;vertical-align:middle"><span style="border-bottom:1px solid #333;padding:0 4px">${(el.base ?? []).map(mathElementToHtml).join('')}</span><span style="padding:0 4px">${(el.argument ?? []).map(mathElementToHtml).join('')}</span></span>`;
+      return `<mfrac><mrow>${(el.base ?? []).map(mathElementToMathML).join('')}</mrow><mrow>${(el.argument ?? []).map(mathElementToMathML).join('')}</mrow></mfrac>`;
     case 'sup':
-      return `<span>${(el.base ?? []).map(mathElementToHtml).join('')}<sup>${(el.argument ?? []).map(mathElementToHtml).join('')}</sup></span>`;
+      return `<msup><mrow>${(el.base ?? []).map(mathElementToMathML).join('')}</mrow><mrow>${(el.argument ?? []).map(mathElementToMathML).join('')}</mrow></msup>`;
     case 'sub':
-      return `<span>${(el.base ?? []).map(mathElementToHtml).join('')}<sub>${(el.argument ?? []).map(mathElementToHtml).join('')}</sub></span>`;
+      return `<msub><mrow>${(el.base ?? []).map(mathElementToMathML).join('')}</mrow><mrow>${(el.argument ?? []).map(mathElementToMathML).join('')}</mrow></msub>`;
     case 'subSup':
-      return `<span>${(el.base ?? []).map(mathElementToHtml).join('')}<sub>${(el.subscript ?? []).map(mathElementToHtml).join('')}</sub><sup>${(el.superscript ?? []).map(mathElementToHtml).join('')}</sup></span>`;
+      return `<msubsup><mrow>${(el.base ?? []).map(mathElementToMathML).join('')}</mrow><mrow>${(el.subscript ?? []).map(mathElementToMathML).join('')}</mrow><mrow>${(el.superscript ?? []).map(mathElementToMathML).join('')}</mrow></msubsup>`;
     case 'nary':
-      return `<span style="display:inline-flex;align-items:center;vertical-align:middle"><span style="display:inline-flex;flex-direction:column;align-items:center;font-size:0.7em"><span>${(el.upper ?? []).map(mathElementToHtml).join('')}</span><span style="font-size:2em">${escapeXml(el.operator ?? '∑')}</span><span>${(el.lower ?? []).map(mathElementToHtml).join('')}</span></span>${(el.body ?? []).map(mathElementToHtml).join('')}</span>`;
+      return `<munderover><mo>${escapeXml(el.operator ?? '∑')}</mo><mrow>${(el.lower ?? []).map(mathElementToMathML).join('')}</mrow><mrow>${(el.upper ?? []).map(mathElementToMathML).join('')}</mrow></munderover><mrow>${(el.body ?? []).map(mathElementToMathML).join('')}</mrow>`;
     case 'rad':
-      return `<span style="display:inline-flex;align-items:baseline;vertical-align:middle">${!el.hideDegree && el.degree?.length ? `<sup style="font-size:0.65em">${el.degree.map(mathElementToHtml).join('')}</sup>` : ''}√<span style="border-top:1px solid #333;padding:0 2px">${(el.body ?? []).map(mathElementToHtml).join('')}</span></span>`;
+      if (!el.hideDegree && el.degree?.length)
+        return `<mroot><mrow>${(el.body ?? []).map(mathElementToMathML).join('')}</mrow><mrow>${el.degree.map(mathElementToMathML).join('')}</mrow></mroot>`;
+      return `<msqrt><mrow>${(el.body ?? []).map(mathElementToMathML).join('')}</mrow></msqrt>`;
     case 'delim':
-      return `<span>${escapeXml(el.open ?? '(')}${(el.body ?? []).map(mathElementToHtml).join('')}${escapeXml(el.close ?? ')')}</span>`;
+      return `<mrow><mo>${escapeXml(el.open ?? '(')}</mo>${(el.body ?? []).map(mathElementToMathML).join('')}<mo>${escapeXml(el.close ?? ')')}</mo></mrow>`;
     case 'func':
-      return `<span><span style="font-style:normal">${(el.base ?? []).map(mathElementToHtml).join('')}</span>${(el.argument ?? []).map(mathElementToHtml).join('')}</span>`;
+      return `<mrow><mi mathvariant="normal">${(el.base ?? []).map(e => escapeXml(e.text ?? '')).join('')}</mi><mo>&#x2061;</mo>${(el.argument ?? []).map(mathElementToMathML).join('')}</mrow>`;
+    case 'groupChar':
+      return `<munder><mrow>${(el.base ?? []).map(mathElementToMathML).join('')}</mrow><mo>${escapeXml(el.operator ?? '⏟')}</mo></munder>`;
+    case 'accent':
+      return `<mover accent="true"><mrow>${(el.base ?? []).map(mathElementToMathML).join('')}</mrow><mo>${escapeXml(el.operator ?? '̂')}</mo></mover>`;
+    case 'bar':
+      return `<mover><mrow>${(el.base ?? []).map(mathElementToMathML).join('')}</mrow><mo>¯</mo></mover>`;
+    case 'limLow':
+      return `<munder><mrow>${(el.base ?? []).map(mathElementToMathML).join('')}</mrow><mrow>${(el.argument ?? []).map(mathElementToMathML).join('')}</mrow></munder>`;
+    case 'limUpp':
+      return `<mover><mrow>${(el.base ?? []).map(mathElementToMathML).join('')}</mrow><mrow>${(el.argument ?? []).map(mathElementToMathML).join('')}</mrow></mover>`;
+    case 'eqArr':
+      return `<mtable>${(el.rows ?? []).map(row => `<mtr><mtd>${row.map(mathElementToMathML).join('')}</mtd></mtr>`).join('')}</mtable>`;
     case 'matrix':
-      return `<table style="display:inline-table;border-collapse:collapse;vertical-align:middle;margin:0 4px">${(el.rows ?? []).map(row => `<tr>${row.map(c => `<td style="padding:2px 6px;text-align:center">${mathElementToHtml(c)}</td>`).join('')}</tr>`).join('')}</table>`;
+      return `<mrow><mo>(</mo><mtable>${(el.rows ?? []).map(row => `<mtr>${row.map(c => `<mtd>${mathElementToMathML(c)}</mtd>`).join('')}</mtr>`).join('')}</mtable><mo>)</mo></mrow>`;
     default:
-      return `<span>${escapeXml(el.text ?? '')}</span>`;
+      return el.text ? `<mi>${escapeXml(el.text)}</mi>` : '<mrow></mrow>';
   }
 }
 
-function mathEquationToHtml(eq: { elements: MathElement[]; fontSize?: number; fontName?: string }): string {
+function mathEquationToMathML(eq: { elements: MathElement[]; fontSize?: number; fontName?: string }): string {
   const size = eq.fontSize ?? 11;
   const font = eq.fontName ?? 'Cambria Math';
-  return `<div style="display:inline-block;font-family:'${escapeXml(font)}',serif;font-size:${size}pt;margin:8px;padding:4px">${eq.elements.map(mathElementToHtml).join('')}</div>`;
+  return `<div style="display:inline-block;font-family:'${escapeXml(font)}',serif;font-size:${size}pt;margin:8px;padding:4px"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow>${eq.elements.map(mathElementToMathML).join('')}</mrow></math></div>`;
 }
 
-/* ─── Form control (dialog) rendering ──────────────────────────────────────── */
+/* ─── Form control rendering ──────────────────────────────────────────────── */
 
-function formControlToHtml(fc: { type: string; text?: string }): string {
+function formControlToPositionedHtml(fc: FormControl): string {
+  const fromCol = fc.from.col;
+  const fromRow = fc.from.row;
+  const w = fc.width ? `width:${fc.width}px;` : '';
+  const h = fc.height ? `height:${fc.height}px;` : '';
+  const linked = fc.linkedCell ? ` data-linked-cell="${escapeXml(fc.linkedCell)}"` : '';
+  const inputRange = fc.inputRange ? ` data-input-range="${escapeXml(fc.inputRange)}"` : '';
+  const macro = fc.macro ? ` data-macro="${escapeXml(fc.macro)}"` : '';
+  let inner = '';
   switch (fc.type) {
     case 'button':
     case 'dialog':
-      return `<button style="padding:6px 16px;margin:4px;font-size:13px;border:1px solid #999;background:#f0f0f0;cursor:pointer">${escapeXml(fc.text ?? fc.type)}</button>`;
-    case 'checkbox':
-      return `<label style="margin:4px;font-size:13px"><input type="checkbox"${fc.text ? '' : ' checked'}/> ${escapeXml(fc.text ?? 'Checkbox')}</label>`;
-    case 'radio':
-      return `<label style="margin:4px;font-size:13px"><input type="radio" name="group"/> ${escapeXml(fc.text ?? 'Radio')}</label>`;
-    case 'dropdown':
-    case 'combobox':
-      return `<select style="padding:4px;margin:4px;font-size:13px"><option>${escapeXml(fc.text ?? 'Select...')}</option></select>`;
-    case 'spinner':
-      return `<input type="number" value="0" style="width:60px;padding:4px;margin:4px;font-size:13px"/>`;
-    case 'scrollbar':
-      return `<input type="range" style="width:120px;margin:4px"/>`;
+      inner = `<button style="padding:6px 16px;font-size:13px;border:1px solid #999;background:#f0f0f0;cursor:pointer;${w}${h}"${macro}>${escapeXml(fc.text ?? fc.type)}</button>`;
+      break;
+    case 'checkBox': {
+      const checked = fc.checked === 'checked' ? ' checked' : '';
+      const indeterminate = fc.checked === 'mixed' ? ' data-indeterminate="true"' : '';
+      inner = `<label style="font-size:13px;display:inline-flex;align-items:center;gap:4px;${w}"><input type="checkbox"${checked}${indeterminate}${linked}/> ${escapeXml(fc.text ?? 'Checkbox')}</label>`;
+      break;
+    }
+    case 'optionButton': {
+      const checked = fc.checked === 'checked' ? ' checked' : '';
+      inner = `<label style="font-size:13px;display:inline-flex;align-items:center;gap:4px;${w}"><input type="radio" name="group"${checked}${linked}/> ${escapeXml(fc.text ?? 'Option')}</label>`;
+      break;
+    }
+    case 'comboBox': {
+      const lines = fc.dropLines ?? 8;
+      inner = `<select style="padding:4px;font-size:13px;${w}"${linked}${inputRange} size="1" data-drop-lines="${lines}"><option>${escapeXml(fc.text ?? 'Select...')}</option></select>`;
+      break;
+    }
+    case 'listBox': {
+      const size = fc.dropLines ?? 5;
+      const sel = fc.selType ?? 'single';
+      const multi = sel === 'multi' || sel === 'extend' ? ' multiple' : '';
+      inner = `<select style="padding:4px;font-size:13px;${w}${h}"${linked}${inputRange} size="${size}"${multi}><option>${escapeXml(fc.text ?? 'Item')}</option></select>`;
+      break;
+    }
+    case 'spinner': {
+      const min = fc.min ?? 0;
+      const max = fc.max ?? 100;
+      const step = fc.inc ?? 1;
+      const val = fc.val ?? min;
+      inner = `<input type="number" value="${val}" min="${min}" max="${max}" step="${step}" style="width:60px;padding:4px;font-size:13px;${h}"${linked}/>`;
+      break;
+    }
+    case 'scrollBar': {
+      const min = fc.min ?? 0;
+      const max = fc.max ?? 100;
+      const step = fc.inc ?? 1;
+      const val = fc.val ?? min;
+      inner = `<input type="range" value="${val}" min="${min}" max="${max}" step="${step}" style="${w || 'width:120px;'}${h}"${linked}/>`;
+      break;
+    }
     case 'label':
-      return `<span style="margin:4px;font-size:13px">${escapeXml(fc.text ?? 'Label')}</span>`;
+      inner = `<span style="font-size:13px;${w}">${escapeXml(fc.text ?? 'Label')}</span>`;
+      break;
     case 'groupBox':
-      return `<fieldset style="margin:4px;padding:8px;border:1px solid #999;font-size:13px"><legend>${escapeXml(fc.text ?? 'Group')}</legend></fieldset>`;
+      inner = `<fieldset style="padding:8px;border:1px solid #999;font-size:13px;${w}${h}"><legend>${escapeXml(fc.text ?? 'Group')}</legend></fieldset>`;
+      break;
     default:
-      return `<span style="margin:4px;font-size:13px">[${escapeXml(fc.type)}]</span>`;
+      inner = `<span style="font-size:13px">[${escapeXml(fc.type)}]</span>`;
   }
+  return `<div class="xl-fc" data-from-col="${fromCol}" data-from-row="${fromRow}" style="position:absolute;margin:4px">${inner}</div>`;
 }
 
 /* ─── Column letter → 0-based index ───────────────────────────────────────── */
@@ -569,6 +648,13 @@ export function worksheetToHtml(ws: Worksheet, options: HtmlExportOptions = {}):
     }
   }
 
+  // Build cell image map: "B2" → CellImage
+  const cellImageMap = new Map<string, CellImage>();
+  const cellImages = ws.getCellImages?.();
+  if (cellImages) {
+    for (const ci of cellImages) cellImageMap.set(ci.cell, ci);
+  }
+
   const rows: string[] = [];
   for (let r = startRow; r <= endRow; r++) {
     const rowDef = ws.getRow(r);
@@ -586,7 +672,12 @@ export function worksheetToHtml(ws: Worksheet, options: HtmlExportOptions = {}):
 
       const cell = ws.getCell(r, c);
       let val = '';
-      if (cell.richText) {
+      // Cell image (in-cell picture) takes priority
+      const cellRef = `${colIndexToLetter(c)}${r}`;
+      const ci = cellImageMap.get(cellRef);
+      if (ci) {
+        val = cellImageToHtml(ci);
+      } else if (cell.richText) {
         val = cell.richText.map(run => {
           const s = run.font ? fontToCSS(run.font) : '';
           return s ? `<span style="${s}">${escapeXml(run.text)}</span>` : escapeXml(run.text);
@@ -596,6 +687,21 @@ export function worksheetToHtml(ws: Worksheet, options: HtmlExportOptions = {}):
           ? formatNumber(cell.value, cell.style.numberFormat.formatCode)
           : String(cell.value);
         val = escapeXml(formatted);
+      }
+
+      // Hyperlink
+      if (cell.hyperlink) {
+        const href = escapeXml(cell.hyperlink.href ?? '');
+        const tip = cell.hyperlink.tooltip ? ` title="${escapeXml(cell.hyperlink.tooltip)}"` : '';
+        val = `<a href="${href}"${tip} style="color:#0563C1;text-decoration:underline">${val}</a>`;
+      }
+
+      // Comment tooltip
+      if (cell.comment) {
+        const commentText = cell.comment.richText
+          ? cell.comment.richText.map(run => run.text).join('')
+          : cell.comment.text;
+        val = `<span title="${escapeXml(commentText)}" style="cursor:help">${val}</span>`;
       }
 
       const attrs: string[] = [];
@@ -632,14 +738,13 @@ export function worksheetToHtml(ws: Worksheet, options: HtmlExportOptions = {}):
       if (sp) val += sparklineToSvg(sp, []); // values would need parsing from dataRange
 
       const attrStr = attrs.length ? ' ' + attrs.join(' ') : '';
-      const tag = r === startRow ? 'th' : 'td';
-      cells.push(`<${tag}${attrStr}${iconAttr}>${val}</${tag}>`);
+      cells.push(`<td${attrStr}${iconAttr}>${val}</td>`);
     }
     rows.push(`<tr${rowStyle}>${cells.join('')}</tr>`);
   }
 
   const colGroup = colWidths.length ? `<colgroup>${colWidths.join('')}</colgroup>` : '';
-  const tableHtml = `<table border="0" cellpadding="4" cellspacing="0">\n${colGroup}\n${rows.join('\n')}\n</table>`;
+  const tableHtml = `<div class="xl-sheet-wrapper" style="position:relative;display:inline-block"><table border="0" cellpadding="4" cellspacing="0">\n${colGroup}\n${rows.join('\n')}\n</table>`;
 
   // Charts below table
   let chartsHtml = '';
@@ -648,10 +753,10 @@ export function worksheetToHtml(ws: Worksheet, options: HtmlExportOptions = {}):
     if (charts.length) chartsHtml = '\n' + charts.map(chartToHtml).join('\n');
   }
 
-  // Images
+  // Images — positioned as overlays on a wrapper container
   let imagesHtml = '';
   const images = ws.getImages?.();
-  if (images?.length) imagesHtml = '\n<div class="images">' + images.map(imageToHtml).join('\n') + '</div>';
+  if (images?.length) imagesHtml = '\n<div class="xl-images">' + images.map(imageToPositionedHtml).join('\n') + '</div>';
 
   // Shapes
   let shapesHtml = '';
@@ -663,15 +768,15 @@ export function worksheetToHtml(ws: Worksheet, options: HtmlExportOptions = {}):
   const wordArts = ws.getWordArt?.();
   if (wordArts?.length) wordArtHtml = '\n<div class="wordart">' + wordArts.map(wordArtToHtml).join('\n') + '</div>';
 
-  // Math equations
+  // Math equations (MathML)
   let mathHtml = '';
   const mathEqs = ws.getMathEquations?.();
-  if (mathEqs?.length) mathHtml = '\n<div class="math-equations">' + mathEqs.map(mathEquationToHtml).join('\n') + '</div>';
+  if (mathEqs?.length) mathHtml = '\n<div class="math-equations">' + mathEqs.map(mathEquationToMathML).join('\n') + '</div>';
 
-  // Form controls (dialog elements)
+  // Form controls — positioned as overlays
   let formControlsHtml = '';
   const fcs = ws.getFormControls?.();
-  if (fcs?.length) formControlsHtml = '\n<div class="form-controls" style="padding:8px;background:#f0f0f0;border:1px solid #ccc;margin:8px 0">' + fcs.map(formControlToHtml).join('\n') + '</div>';
+  if (fcs?.length) formControlsHtml = '\n<div class="xl-form-controls">' + fcs.map(formControlToPositionedHtml).join('\n') + '</div>';
 
   // Sparklines rendered inline
   let sparklinesHtml = '';
@@ -679,7 +784,6 @@ export function worksheetToHtml(ws: Worksheet, options: HtmlExportOptions = {}):
     const spks = ws.getSparklines();
     if (spks.length) {
       const spkItems = spks.map(sp => {
-        // Try to resolve data range to values
         const vals = resolveSparklineData(ws, sp.dataRange);
         return sparklineToSvg(sp, vals);
       }).filter(Boolean);
@@ -689,19 +793,44 @@ export function worksheetToHtml(ws: Worksheet, options: HtmlExportOptions = {}):
 
   const extraHtml = chartsHtml + imagesHtml + shapesHtml + wordArtHtml + mathHtml + formControlsHtml + sparklinesHtml;
 
-  if (options.fullDocument === false) return tableHtml + extraHtml;
+  const wrapperClose = '</div>'; // close xl-sheet-wrapper
+  if (options.fullDocument === false) return tableHtml + extraHtml + wrapperClose;
 
   const title = escapeXml(options.title ?? options.sheetName ?? 'Export');
   const css = `<style>
   * { box-sizing: border-box; }
   body { font-family: 'Segoe UI', Calibri, sans-serif; margin: 20px; background: #f5f6fa; }
+  .xl-sheet-wrapper { position: relative; display: inline-block; }
   table { border-collapse: collapse; background: white; box-shadow: 0 1px 4px rgba(0,0,0,.1); }
-  th, td { padding: 4px 8px; border: 1px solid #d4d4d4; vertical-align: bottom; }
-  th { background: #4472C4; color: white; font-weight: 600; position: sticky; top: 0; z-index: 1; }
-  tr:nth-child(even) { background: #f8f9fc; }
-  tr:hover td { background: rgba(68,114,196,.06); }
+  td { padding: 4px 8px; border: 1px solid #d4d4d4; vertical-align: bottom; }
   td[data-icon]::before { content: attr(data-icon); margin-right: 4px; }
+  .xl-images { position: absolute; top: 0; left: 0; pointer-events: none; }
+  .xl-images .xl-img { pointer-events: auto; position: absolute; z-index: 2; }
+  .xl-form-controls { position: absolute; top: 0; left: 0; pointer-events: none; }
+  .xl-form-controls .xl-fc { pointer-events: auto; z-index: 3; }
+  a { color: #0563C1; }
 </style>`;
+
+  const positionScript = `<script>
+(function(){
+  document.querySelectorAll('.xl-sheet-wrapper').forEach(function(wrapper){
+    var table = wrapper.querySelector('table');
+    if (!table) return;
+    function cellPos(row, col) {
+      var tr = table.rows[row]; if (!tr) return {x:0,y:0};
+      var td = tr.cells[col]; if (!td) return {x:0,y:0};
+      return {x: td.offsetLeft, y: td.offsetTop};
+    }
+    wrapper.querySelectorAll('[data-from-col][data-from-row]').forEach(function(el){
+      var c = parseInt(el.getAttribute('data-from-col'),10);
+      var r = parseInt(el.getAttribute('data-from-row'),10);
+      var p = cellPos(r, c);
+      el.style.left = p.x + 'px';
+      el.style.top = p.y + 'px';
+    });
+  });
+})();
+</script>`;
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -711,7 +840,8 @@ export function worksheetToHtml(ws: Worksheet, options: HtmlExportOptions = {}):
 ${css}
 </head>
 <body>
-${tableHtml}${extraHtml}
+${tableHtml}${extraHtml}${wrapperClose}
+${positionScript}
 </body>
 </html>`;
 }
@@ -763,12 +893,15 @@ export function workbookToHtml(wb: Workbook, options: WorkbookHtmlExportOptions 
   .tab.active { background: white; color: #2b579a; font-weight: 600; }
   .panel { display: none; padding: 20px; overflow: auto; }
   .panel.active { display: block; }
+  .xl-sheet-wrapper { position: relative; display: inline-block; }
   table { border-collapse: collapse; background: white; box-shadow: 0 1px 4px rgba(0,0,0,.1); }
-  th, td { padding: 4px 8px; border: 1px solid #d4d4d4; vertical-align: bottom; }
-  th { background: #4472C4; color: white; font-weight: 600; position: sticky; top: 40px; z-index: 1; }
-  tr:nth-child(even) { background: #f8f9fc; }
-  tr:hover td { background: rgba(68,114,196,.06); }
+  td { padding: 4px 8px; border: 1px solid #d4d4d4; vertical-align: bottom; }
   td[data-icon]::before { content: attr(data-icon); margin-right: 4px; }
+  .xl-images { position: absolute; top: 0; left: 0; pointer-events: none; }
+  .xl-images .xl-img { pointer-events: auto; position: absolute; z-index: 2; }
+  .xl-form-controls { position: absolute; top: 0; left: 0; pointer-events: none; }
+  .xl-form-controls .xl-fc { pointer-events: auto; z-index: 3; }
+  a { color: #0563C1; }
 </style>
 </head>
 <body>
@@ -779,6 +912,24 @@ function switchTab(idx) {
   document.querySelectorAll('.tab').forEach((t,i) => t.classList.toggle('active', i===idx));
   document.querySelectorAll('.panel').forEach((p,i) => p.classList.toggle('active', i===idx));
 }
+(function(){
+  document.querySelectorAll('.xl-sheet-wrapper').forEach(function(wrapper){
+    var table = wrapper.querySelector('table');
+    if (!table) return;
+    function cellPos(row, col) {
+      var tr = table.rows[row]; if (!tr) return {x:0,y:0};
+      var td = tr.cells[col]; if (!td) return {x:0,y:0};
+      return {x: td.offsetLeft, y: td.offsetTop};
+    }
+    wrapper.querySelectorAll('[data-from-col][data-from-row]').forEach(function(el){
+      var c = parseInt(el.getAttribute('data-from-col'),10);
+      var r = parseInt(el.getAttribute('data-from-row'),10);
+      var p = cellPos(r, c);
+      el.style.left = p.x + 'px';
+      el.style.top = p.y + 'px';
+    });
+  });
+})();
 </script>
 </body>
 </html>`;
