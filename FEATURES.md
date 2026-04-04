@@ -277,7 +277,7 @@ Legend: **Y** = supported, **~** = partial, **-** = not supported, **P** = prese
 | 107 | OLE objects | EPPlus | Medium |
 | 103 | VBA UserForms | EPPlus, SheetJS | High |
 
-### Recently Implemented (v3.4)
+### Recently Implemented (v3.0)
 | # | Feature | Notes |
 |---|---------|-------|
 | 9 | Digital signatures | Package (XML-DSig) + VBA (PKCS#7/CMS) signing with SHA-256 |
@@ -288,16 +288,8 @@ Legend: **Y** = supported, **~** = partial, **-** = not supported, **P** = prese
 | - | Slicer fix | Fixed 7 issues in table/pivot slicer XML generation |
 | - | Pivot table fix | Fixed calculated fields in dataFields section |
 | - | Formula fix | Fixed XML entity escaping in formula content |
-
-### Previously Implemented (v3.3)
-| # | Feature | Notes |
-|---|---------|-------|
 | 8/91 | Workbook encryption | OOXML Agile Encryption with AES-256-CBC + SHA-512 |
 | 68b | Math Equations (OMML) | 16 element types: fractions, superscripts, radicals, matrices, etc. |
-
-### Previously Implemented (v3.2)
-| # | Feature | Notes |
-|---|---------|-------|
 | 26 | Themes | Full Office theme XML with custom colors/fonts |
 | 45 | Table slicers | addTableSlicer API with slicer caches |
 | 50 | Custom icon sets | x14 extension-based custom CF icons |
@@ -311,10 +303,6 @@ Legend: **Y** = supported, **~** = partial, **-** = not supported, **P** = prese
 | 95 | Query tables | addQueryTable API |
 | 96 | External links | addExternalLink for cross-workbook refs |
 | 109 | Locale support | Configurable date/number/currency formatting |
-
-### Previously Implemented (v3.1)
-| # | Feature | Notes |
-|---|---------|-------|
 | 4 | CSV read/write | Tree-shakeable module |
 | 5 | JSON export | Tree-shakeable module |
 | 6 | HTML/CSS export | Tree-shakeable module |
