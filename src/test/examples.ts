@@ -2207,12 +2207,96 @@ async function example_absolute_and_sizing() {
     const out = execSync('dotnet run validatorEpplus.cs output/31_absolute_and_sizing.xlsx', {
       encoding: 'utf-8', timeout: 60000, stdio: ['pipe', 'pipe', 'pipe'],
     }).trim();
-    if (!out.includes('OK')) throw new Error('EPPlus: absolute positioning validation failed');
+    if (!out.includes('successfully')) throw new Error('EPPlus: absolute positioning validation failed');
     console.log('  EPPlus validation: OK');
   } catch (e: any) {
     if (e.message?.includes('EPPlus:')) throw e;
     console.log('  EPPlus validation skipped:', e.message?.split('\n')[0]);
   }
+}
+
+// ============================================================
+// 32. DIGITAL SIGNING EXAMPLES
+// ============================================================
+
+async function example_signing() {
+  const { signPackage, signWorkbook, generateTestCertificate } = await import('../features/Signing.js');
+  //@ts-ignore
+  const { writeFileSync: wf, readFileSync: rf } = await import('fs');
+  const { readZip } = await import('../utils/zipReader.js');
+  const { buildZip } = await import('../utils/zip.js');
+
+  // Generate RSA-2048 key pair
+  const keyPair = await crypto.subtle.generateKey(
+    { name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' },
+    true, ['sign', 'verify']
+  );
+  const privDer = new Uint8Array(await crypto.subtle.exportKey('pkcs8', keyPair.privateKey));
+  let b64 = '';
+  for (let i = 0; i < privDer.length; i++) b64 += String.fromCharCode(privDer[i]);
+  b64 = btoa(b64);
+  const privateKeyPem = `-----BEGIN PRIVATE KEY-----\n${b64.match(/.{1,64}/g)!.join('\n')}\n-----END PRIVATE KEY-----`;
+
+  // Export public key as SPKI DER for certificate
+  const spkiDer = new Uint8Array(await crypto.subtle.exportKey('spki', keyPair.publicKey));
+
+  // Generate self-signed test certificate
+  const certPem = await generateTestCertificate('ExcelForge Test Signer', privateKeyPem, spkiDer);
+  console.log('  Certificate generated');
+
+  // ── Sample 1: Package-signed workbook ──
+
+  const wb1 = new Workbook();
+  const ws1 = wb1.addSheet('Signed');
+  ws1.setValue(1, 1, 'This workbook has a package digital signature');
+  ws1.setStyle(1, 1, style().bold().build());
+  ws1.setValue(2, 1, 'Signed at: ' + new Date().toISOString());
+
+  const xlsxBytes1 = await wb1.build();
+  const parts1 = await readZip(xlsxBytes1);
+  const partsMap1 = new Map<string, Uint8Array>();
+  for (const [name, entry] of parts1) partsMap1.set(name, entry.data);
+
+  const sigEntries = await signPackage(partsMap1, { certificate: certPem, privateKey: privateKeyPem });
+  console.log(`  Package signature entries: ${sigEntries.size}`);
+
+  // Merge signature entries into ZIP
+  const allEntries1: Array<{ name: string; data: Uint8Array }> = [];
+  for (const [name, entry] of parts1) allEntries1.push({ name, data: entry.data });
+  for (const [name, data] of sigEntries) allEntries1.push({ name, data });
+  const signed1 = buildZip(allEntries1);
+  wf('./output/32_signed_package.xlsx', signed1);
+  console.log('  Written: 32_signed_package.xlsx');
+
+  // ── Sample 2: VBA workbook with both package + VBA signature ──
+
+  const wb2 = new Workbook();
+  const ws2 = wb2.addSheet('SignedVBA');
+  ws2.setValue(1, 1, 'This workbook has package + VBA signatures');
+  ws2.setStyle(1, 1, style().bold().build());
+
+  const vba = new VbaProject();
+  vba.addModule({ name: 'Module1', type: 'standard', code: 'Sub Hello()\n  MsgBox "Signed VBA"\nEnd Sub' });
+  wb2.vbaProject = vba;
+
+  const xlsmBytes = await wb2.build();
+  const parts2 = await readZip(xlsmBytes);
+  const partsMap2 = new Map<string, Uint8Array>();
+  let vbaProjectBin: Uint8Array | undefined;
+  for (const [name, entry] of parts2) {
+    partsMap2.set(name, entry.data);
+    if (name === 'xl/vbaProject.bin') vbaProjectBin = entry.data;
+  }
+
+  const result = await signWorkbook(partsMap2, { certificate: certPem, privateKey: privateKeyPem }, vbaProjectBin);
+  console.log(`  signWorkbook: ${result.packageSignatureEntries.size} package entries, VBA sig: ${result.vbaSignature ? result.vbaSignature.length + ' bytes' : 'none'}`);
+
+  const allEntries2: Array<{ name: string; data: Uint8Array }> = [];
+  for (const [name, entry] of parts2) allEntries2.push({ name, data: entry.data });
+  for (const [name, data] of result.packageSignatureEntries) allEntries2.push({ name, data });
+  const signed2 = buildZip(allEntries2);
+  wf('./output/32_signed_vba.xlsm', signed2);
+  console.log('  Written: 32_signed_vba.xlsm');
 }
 
 // Run all examples
@@ -2253,6 +2337,7 @@ async function runAll() {
     ['Cell Images',            example_cell_images],
     ['New Image Formats',      example_new_image_formats],
     ['Absolute & Sizing',      example_absolute_and_sizing],
+    ['Signing',                 example_signing],
   ] as const;
 
   for (const [name, fn] of examples) {
@@ -2263,6 +2348,25 @@ async function runAll() {
       console.error(`❌ ${name}: ${e}`);
     }
   }
+
+  // Export every generated xlsx as HTML
+  console.log('\n── HTML Export ──');
+  // @ts-ignore
+  const { readdirSync, writeFileSync } = await import('fs');
+  const { workbookToHtml } = await import('../features/HtmlModule.js');
+  const xlsxFiles = (readdirSync('./output') as string[]).filter((f: string) => f.endsWith('.xlsx'));
+  let htmlOk = 0;
+  for (const file of xlsxFiles) {
+    try {
+      const wb2 = await Workbook.fromFile(`./output/${file}`);
+      const html = workbookToHtml(wb2, { title: file.replace(/\.[^.]+$/, ''), includeTabs: true });
+      writeFileSync(`./output/${file.replace(/\.[^.]+$/, '.html')}`, html, 'utf-8');
+      htmlOk++;
+    } catch (e: any) {
+      console.error(`  ❌ HTML ${file}: ${e.message?.slice(0, 120)}`);
+    }
+  }
+  console.log(`  ✅ Exported ${htmlOk}/${xlsxFiles.length} files as HTML`);
 }
 
 runAll().catch(console.error);

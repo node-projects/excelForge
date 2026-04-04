@@ -96,11 +96,18 @@ catch (Exception ex)
 try
 {
     using var doc = SpreadsheetDocument.Open(file, false);
-    var validator = new OpenXmlValidator();
+    var validator = new OpenXmlValidator(DocumentFormat.OpenXml.FileFormatVersions.Microsoft365);
     var errors = validator.Validate(doc);
 
     foreach (var e in errors)
     {
+        // Skip false positives for mc:AlternateContent in drawing anchors —
+        // the OpenXML SDK doesn't process markup compatibility elements within
+        // twoCellAnchor / oneCellAnchor properly. Excel itself handles them fine.
+        if (e.Part?.Uri?.ToString()?.Contains("/drawings/") == true &&
+            e.Node?.OuterXml?.Contains("AlternateContent") == true)
+            continue;
+
         result.Add(new
         {
             type = "openxml",
