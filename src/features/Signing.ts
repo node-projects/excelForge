@@ -371,9 +371,9 @@ export async function signPackage(
 ${refXmls.join('\n')}
 </SignedInfo>`;
 
-  // Sign the SignedInfo
+  // Sign the SignedInfo (rsaSign uses RSASSA-PKCS1-v1_5 which hashes internally)
   const signedInfoBytes = enc.encode(signedInfoXml);
-  const signature = await rsaSign(privateKey, await sha256(signedInfoBytes));
+  const signature = await rsaSign(privateKey, signedInfoBytes);
   const b64Sig = base64Encode(signature);
   const b64Cert = base64Encode(certDer);
 
@@ -407,6 +407,17 @@ ${signedInfoXml}
   <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/package/2006/relationships/digital-signature/signature" Target="sig1.xml"/>
 </Relationships>`
   ));
+
+  // Update root _rels/.rels to include digital signature origin relationship
+  const existingRels = partsToSign.get('_rels/.rels');
+  if (existingRels) {
+    let relsXml = new TextDecoder().decode(existingRels);
+    if (!relsXml.includes('digital-signature/origin')) {
+      relsXml = relsXml.replace('</Relationships>',
+        '  <Relationship Id="rIdSig" Type="http://schemas.openxmlformats.org/package/2006/relationships/digital-signature/origin" Target="_xmlsignatures/origin.sigs"/>\n</Relationships>');
+      result.set('_rels/.rels', enc.encode(relsXml));
+    }
+  }
 
   return result;
 }

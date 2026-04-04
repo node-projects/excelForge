@@ -44,7 +44,7 @@ ExcelForge gives you the full power of the OOXML spec — including real DEFLATE
 | **Themes** | Full Office theme XML with customizable colors and fonts |
 | **Multiple Sheets** | Any number, hidden/veryHidden, tab colors |
 | **Formula Engine** | 60+ functions including GETPIVOTDATA — tree-shakeable |
-| **Export** | CSV, JSON, HTML (with CF visualization, sparklines, charts, shapes, form controls) |
+| **Export** | CSV, JSON, HTML (with CF visualization, sparklines, charts, shapes, form controls), PDF (styled, paginated) |
 | **Encryption** | OOXML Agile Encryption with AES-256-CBC + SHA-512 via Web Crypto API |
 | **Digital Signatures** | Package signing (XML-DSig) + VBA code signing (PKCS#7/CMS, SHA-256) |
 | **Locale** | Configurable decimal/thousands separators, date format, currency symbol |
@@ -582,6 +582,148 @@ await wb.writeFile('./macros_updated.xlsm');
 
 > **Note:** Document modules for `ThisWorkbook` and each worksheet are automatically created if not explicitly provided. VBA code uses `\r\n` line endings.
 
+### VBA UserForms
+
+ExcelForge supports creating VBA UserForm modules with form controls. UserForms are embedded in the VBA project with their designer data and can be viewed/edited in the VBA editor.
+
+```typescript
+import { Workbook, VbaProject } from 'excelforge';
+
+const wb = new Workbook();
+wb.addSheet('Sheet1').setValue(1, 1, 'UserForm Demo');
+
+const vba = new VbaProject();
+
+// Standard module to show the form
+vba.addModule({
+  name: 'Module1',
+  type: 'standard',
+  code: 'Sub ShowForm()\n  MyForm.Show\nEnd Sub',
+});
+
+// UserForm with controls
+vba.addModule({
+  name: 'MyForm',
+  type: 'userform',
+  controls: [
+    { type: 'Label', name: 'Label1', caption: 'Enter name:', left: 10, top: 10, width: 100, height: 18 },
+    { type: 'TextBox', name: 'TextBox1', caption: '', left: 10, top: 32, width: 160, height: 22 },
+    { type: 'CommandButton', name: 'btnOK', caption: 'OK', left: 50, top: 64, width: 72, height: 26 },
+  ],
+  code: [
+    'Private Sub btnOK_Click()',
+    '  MsgBox "Hello, " & TextBox1.Text',
+    '  Unload Me',
+    'End Sub',
+  ].join('\n'),
+});
+
+wb.vbaProject = vba;
+await wb.writeFile('./userform_demo.xlsm');
+```
+
+Supported control types: `CommandButton`, `TextBox`, `Label`, `CheckBox`, `OptionButton`, `ComboBox`, `ListBox`, `Frame`, `Image`, `ScrollBar`, `SpinButton`.
+
+### Workbook Calc Settings
+
+Control how Excel recalculates formulas when the workbook is opened.
+
+```typescript
+const wb = new Workbook();
+
+wb.calcSettings = {
+  calcMode: 'manual',       // 'auto' | 'manual' | 'autoNoTable'
+  iterate: true,             // enable iterative calculation
+  iterateCount: 200,         // max iterations
+  iterateDelta: 0.0001,      // convergence threshold
+  fullCalcOnLoad: false,     // don't force full recalc on open
+  calcOnSave: true,          // recalculate before saving
+  fullPrecision: true,       // use full 15-digit precision
+  concurrentCalc: false,     // disable multi-threaded calc
+};
+```
+
+Settings are preserved during round-trip editing. When reading an existing file, `wb.calcSettings` reflects the workbook's current calculation configuration.
+
+### OLE Objects
+
+Embed binary OLE objects (files, packages) into worksheets.
+
+```typescript
+const wb = new Workbook();
+const ws = wb.addSheet('Sheet1');
+
+ws.addOleObject({
+  name: 'EmbeddedFile',
+  progId: 'Package',           // OLE program ID
+  fileName: 'data.bin',        // display name
+  data: fileBytes,             // Uint8Array of the embedded content
+  from: { col: 1, row: 3 },   // top-left anchor
+  to: { col: 5, row: 10 },    // bottom-right anchor
+});
+
+await wb.writeFile('./with_ole.xlsx');
+```
+
+### Encryption
+
+Encrypt workbooks with a password using OOXML Agile Encryption (AES-256 + SHA-512).
+
+```typescript
+import { Workbook, encryptWorkbook, decryptWorkbook, isEncrypted } from 'excelforge';
+
+const wb = new Workbook();
+wb.addSheet('Secret').setValue(1, 1, 'Confidential');
+const xlsxData = await wb.build();
+
+// Encrypt
+const encrypted = await encryptWorkbook(xlsxData, 'myPassword');
+
+// Save encrypted file (still uses .xlsx extension)
+import { writeFileSync } from 'fs';
+writeFileSync('./protected.xlsx', encrypted);
+
+// Check if a file is encrypted
+console.log(isEncrypted(encrypted));  // true
+
+// Decrypt
+const decrypted = await decryptWorkbook(encrypted, 'myPassword');
+const wb2 = await Workbook.fromBytes(decrypted);
+```
+
+### PDF Export
+
+Export worksheets and workbooks as PDF documents with cell styling, pagination, and fit-to-width.
+
+```typescript
+import { Workbook, worksheetToPdf, workbookToPdf } from 'excelforge';
+
+const wb = new Workbook();
+const ws = wb.addSheet('Report');
+// ... populate cells with styles ...
+
+// Single worksheet PDF
+const pdf = worksheetToPdf(ws, {
+  paperSize: 'a4',
+  orientation: 'portrait',
+  fitToWidth: true,          // auto-scale to fit page width
+  gridLines: true,           // draw cell grid lines
+  headings: false,           // row/column headings
+  repeatRows: 1,             // repeat header row on each page
+  headerText: 'Sales Report',
+  footerText: 'Page &P of &N',
+  title: 'Sales Report',
+  author: 'ExcelForge',
+});
+
+import { writeFileSync } from 'fs';
+writeFileSync('./report.pdf', pdf);
+
+// Multi-sheet workbook PDF
+const wbPdf = workbookToPdf(wb, { footerText: 'Page &P / &N' });
+writeFileSync('./workbook.pdf', wbPdf);
+```
+
 ### Digital Signatures
 
 Sign OOXML packages and VBA projects using RSA with SHA-256 via Web Crypto API.
@@ -952,6 +1094,8 @@ ExcelForge
 │   ├── ChartBuilder.ts     — DrawingML chart XML for 15+ chart types, templates, modern styling
 │   ├── TableBuilder.ts     — Excel table XML
 │   ├── PivotTableBuilder.ts — pivot table + cache XML
+│   ├── HtmlModule.ts       — HTML/CSS export with charts, images, sparklines, shapes
+│   ├── PdfModule.ts        — PDF export with cell styles, pagination, images
 │   ├── Encryption.ts       — OOXML Agile Encryption (AES-256-CBC + SHA-512)
 │   └── Signing.ts          — Digital signatures (XML-DSig + VBA PKCS#7/CMS)
 ├── vba/

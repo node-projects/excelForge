@@ -215,7 +215,7 @@ Methodology note: support levels for added libraries are based on public docs an
 |---|---------|--------|-------------|---------|---------|---------------|-----------|----------|------------|------------|------|--------------|-----------|-------------------|------------|-------|
 | 101 | Create/read/edit modules | Y | Y | - | - | - | - | - | ~ | ~ | ~ | Y | ~ | ~ | **Y** | Standard, class, document modules |
 | 102 | VBA code signing | Y | - | - | - | - | - | - | - | - | - | - | - | - | **Y** | PKCS#7/CMS with SHA-256 |
-| 103 | VBA UserForms | Y | Y | - | - | - | - | - | - | - | - | - | - | - | **-** |  |
+| 103 | VBA UserForms | Y | Y | - | - | - | - | - | - | - | - | - | - | - | **Y** | UserForm modules with controls |
 
 ## Properties
 
@@ -229,12 +229,12 @@ Methodology note: support levels for added libraries are based on public docs an
 
 | # | Feature | EPPlus | SheetJS Pro | ExcelJS | ExcelTS | xlsx-populate | ClosedXML | openpyxl | Apache POI | XlsxWriter | NPOI | Aspose.Cells | Spire.XLS | GrapeCity DsExcel | ExcelForge | Notes |
 |---|---------|--------|-------------|---------|---------|---------------|-----------|----------|------------|------------|------|--------------|-----------|-------------------|------------|-------|
-| 107 | OLE objects | Y | - | - | - | - | - | - | Y | - | ~ | Y | - | - | **-** |  |
+| 107 | OLE objects | Y | - | - | - | - | - | - | Y | - | ~ | Y | - | - | **Y** | Embedded binary OLE objects |
 | 108 | Ignore error rules | Y | - | - | - | - | - | - | - | - | - | Y | - | ~ | **Y** | addIgnoredError API |
 | 109 | Locale/international support | - | Y | - | - | - | ~ | ~ | ~ | - | - | Y | - | ~ | **Y** | LocaleSettings on workbook |
-| 110 | PDF/Canvas/SVG rendering | - | Y | - | Y | - | - | - | - | - | - | Y | Y | Y | **-** | ExcelTS: PDF export module |
+| 110 | PDF/Canvas/SVG rendering | - | Y | - | Y | - | - | - | - | - | - | Y | Y | Y | **Y** | Zero-dep PDF export: styles, borders, fills, merges, pagination, images, headers/footers |
 | 111 | Row duplicate/splice | - | - | Y | - | - | Y | Y | Y | - | Y | Y | Y | Y | **Y** | duplicateRow, spliceRows |
-| 112 | Workbook calc settings (auto/manual/iterative) | Y | - | - | - | - | Y | - | Y | - | ~ | Y | ~ | Y | **-** | calc mode, iterative calc, full-calc-on-load |
+| 112 | Workbook calc settings (auto/manual/iterative) | Y | - | - | - | - | Y | - | Y | - | ~ | Y | ~ | Y | **Y** | calc mode, iterative calc, full-calc-on-load |
 | 113 | Advanced chart options (combo/secondary axis/trendlines/error bars) | Y | - | - | - | - | ~ | Y | Y | ~ | ~ | Y | ~ | Y | **Y** | |
 | 114 | Pivot cache management (refreshOnLoad, source updates) | Y | - | - | - | - | ~ | ~ | Y | - | ~ | Y | ~ | Y | **Y** | |
 | 115 | Structured references in formulas | Y | Y | Y | - | - | Y | Y | Y | - | Y | Y | Y | Y | **Y** | |
@@ -266,7 +266,7 @@ Methodology note: support levels for added libraries are based on public docs an
 | **Aspose.Cells** | 111 | 8 | 5 |
 | **Spire.XLS** | 65 | 25 | 34 |
 | **GrapeCity DsExcel** | 84 | 20 | 20 |
-| **ExcelForge** | 119 | 0 | 5 |
+| **ExcelForge** | 122 | 0 | 2 |
 
 ## ExcelForge Unique Advantages
 
@@ -284,6 +284,7 @@ Methodology note: support levels for added libraries are based on public docs an
 - **Math equations (OMML)** — only EPPlus and ExcelForge among listed libraries
 - **Modern chart styling** — 18 color palettes, gradients, data labels, shadows, templates
 - **Multi-sheet HTML export** — tabbed workbook HTML with CF visualization, sparklines, charts, shapes, WordArt, math, images, form controls
+- **PDF export** — zero-dependency PDF generation with cell styles, borders, fills, merged cells, number formatting, auto-pagination, fit-to-width, images (JPEG/PNG), headers/footers, page setup
 - **Shapes & WordArt** — 28 preset shape types + WordArt text effects
 - **Theme support** — full Office theme XML with customizable colors and fonts
 - **Table & pivot slicers** — slicer UI elements with cache definitions

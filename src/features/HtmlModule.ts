@@ -14,6 +14,7 @@ import type {
   Shape, WordArt, ChartPosition,
 } from '../core/types.js';
 import { escapeXml, colIndexToLetter } from '../utils/helpers.js';
+import { FormulaEngine } from './FormulaEngine.js';
 
 export interface HtmlExportOptions {
   /** Include inline CSS styles (default true) */
@@ -38,6 +39,8 @@ export interface HtmlExportOptions {
   printAreaOnly?: boolean;
   /** Sheet name for multi-sheet context */
   sheetName?: string;
+  /** Evaluate formulas before export so calculated cells have values (default false) */
+  evaluateFormulas?: boolean;
 }
 
 export interface WorkbookHtmlExportOptions extends HtmlExportOptions {
@@ -1160,6 +1163,11 @@ function resolveSparklineData(ws: Worksheet, dataRange: string): number[] {
  * Convert a worksheet to an HTML table string with rich formatting.
  */
 export function worksheetToHtml(ws: Worksheet, options: HtmlExportOptions = {}): string {
+  // Evaluate formulas if requested
+  if (options.evaluateFormulas) {
+    new FormulaEngine().calculateSheet(ws);
+  }
+
   const range = ws.getUsedRange();
   if (!range) {
     return options.fullDocument !== false
@@ -1463,10 +1471,34 @@ export function workbookToHtml(wb: Workbook, options: WorkbookHtmlExportOptions 
   const selected = options.sheets ?? names;
   const includeTabs = options.includeTabs !== false;
 
+  // Evaluate formulas across workbook if requested
+  if (options.evaluateFormulas) {
+    new FormulaEngine().calculateWorkbook(wb);
+  }
+
   const sheetHtmls: { name: string; html: string }[] = [];
   for (let i = 0; i < sheets.length; i++) {
     if (!selected.includes(names[i])) continue;
-    if (sheets[i]._isChartSheet || sheets[i]._isDialogSheet) continue;
+    if (sheets[i]._isChartSheet) {
+      // Render chart sheet as SVG chart
+      const charts = sheets[i].getCharts();
+      if (charts.length) {
+        const chartHtml = chartToSvg(charts[0], sheets[i]);
+        sheetHtmls.push({ name: names[i], html: `<div class="xl-sheet-wrapper" style="position:relative;display:inline-block">${chartHtml}</div>` });
+      }
+      continue;
+    }
+    if (sheets[i]._isDialogSheet) {
+      // Render dialog sheet with form controls
+      const fcs = sheets[i].getFormControls?.() ?? [];
+      if (fcs.length) {
+        const fcHtml = fcs.map(formControlToPositionedHtml).join('\n');
+        sheetHtmls.push({ name: names[i], html: `<div class="xl-sheet-wrapper" style="position:relative;display:inline-block;min-width:400px;min-height:300px"><div class="xl-form-controls">${fcHtml}</div></div>` });
+      } else {
+        sheetHtmls.push({ name: names[i], html: '<div class="xl-sheet-wrapper"><p>Dialog Sheet</p></div>' });
+      }
+      continue;
+    }
     const html = worksheetToHtml(sheets[i], { ...options, fullDocument: false, sheetName: names[i] });
     sheetHtmls.push({ name: names[i], html });
   }

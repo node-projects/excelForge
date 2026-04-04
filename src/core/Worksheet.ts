@@ -8,7 +8,7 @@ import type {
   SheetView, ColumnDef, RowDef, Sparkline, DataValidation,
   WorksheetOptions, PivotTable, PageBreak, FormControl,
   Shape, WordArt, QueryTable, TableSlicer, CFCustomIconSet,
-  MathEquation, MathElement,
+  MathEquation, MathElement, OleObject,
 } from '../core/types.js';
 import type { SharedStrings } from '../core/SharedStrings.js';
 import type { StyleRegistry } from '../styles/StyleRegistry.js';
@@ -59,6 +59,7 @@ export class Worksheet {
   private queryTables: QueryTable[] = [];
   private tableSlicers: TableSlicer[] = [];
   private mathEquations: MathEquation[] = [];
+  private oleObjects: OleObject[] = [];
   private colDefs: Map<number, ColumnDef> = new Map();
   private rowDefs: Map<number, RowDef>    = new Map();
   private dataValidations: Map<string, DataValidation> = new Map();
@@ -706,6 +707,11 @@ export class Worksheet {
   addShape(shape: Shape): this { this.shapes.push(shape); return this; }
   getShapes(): Shape[] { return this.shapes; }
 
+  // ─── OLE Objects ─────────────────────────────────────────────────────────────
+
+  addOleObject(obj: OleObject): this { this.oleObjects.push(obj); return this; }
+  getOleObjects(): OleObject[] { return this.oleObjects; }
+
   // ─── WordArt ─────────────────────────────────────────────────────────────────
 
   addWordArt(wa: WordArt): this { this.wordArt.push(wa); return this; }
@@ -794,6 +800,7 @@ export class Worksheet {
       ? `<legacyDrawing r:id="${this.legacyDrawingRId}"/>`
       : '';
     const controlsXml = this._formControlsXml();
+    const oleObjectsXml = this._oleObjectsXml();
     const sparklineXml = this._sparklineXml();
     const customIconExtXml = this._customIconExtXml();
     const slicerExtXml = this.slicerRId
@@ -833,6 +840,7 @@ ${colBreaksXml}
 ${ignoredErrorsXml}
 ${drawingXml}
 ${legacyDrawingXml}
+${oleObjectsXml}
 ${controlsXml}
 ${sparklineXml}
 ${customIconExtXml}
@@ -1190,6 +1198,20 @@ ${legacyDrawingXml}
     return `<mc:AlternateContent><mc:Choice Requires="x14"><controls>${controls}</controls></mc:Choice></mc:AlternateContent>`;
   }
 
+  /** Generate OLE objects XML for the sheet */
+  private _oleObjectsXml(): string {
+    if (!this.oleObjects.length || !this.oleRIds.length) return '';
+    const baseShapeId = 2025 + this.sheetIndex * 1000;
+    const items = this.oleObjects.map((ole, i) => {
+      const shapeId = baseShapeId + i;
+      const rId = this.oleRIds[i];
+      const progId = ole.progId ?? 'Package';
+      const link = ole.linkToFile && ole.linkPath ? ` link="${escapeXml(ole.linkPath)}"` : '';
+      return `<oleObject progId="${escapeXml(progId)}" shapeId="${shapeId}" r:id="${rId}"${link}/>`;
+    }).join('');
+    return `<oleObjects>${items}</oleObjects>`;
+  }
+
   private _sparklineXml(): string {
     if (!this.sparklines.length) return '';
     const colorEl = (name: string, c?: string) => {
@@ -1303,6 +1325,11 @@ ${legacyDrawingXml}
     });
     return `<ignoredErrors>${items.join('')}</ignoredErrors>`;
   }
+
+  /** OLE object rIds — set by Workbook during build */
+  oleRIds: string[] = [];
+  /** OLE icon image rIds — set by Workbook during build */
+  oleIconRIds: string[] = [];
 
   /** Drawing XML (images + charts) — returned separately for the drawing part */
   toDrawingXml(imageRIds: string[], chartRIds: string[]): string {
@@ -1504,6 +1531,29 @@ ${legacyDrawingXml}
       const fallbackText = eq.elements.map(flattenText).join('');
 
       parts.push(`<xdr:oneCellAnchor>${fromXml}${extXml}<mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"><mc:Choice xmlns:a14="http://schemas.microsoft.com/office/drawing/2010/main" Requires="a14"><xdr:sp macro="" textlink=""><xdr:nvSpPr><xdr:cNvPr id="${id}" name="MathEq ${id}"/><xdr:cNvSpPr txBox="1"/></xdr:nvSpPr><xdr:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${w}" cy="${h}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></xdr:spPr><xdr:txBody><a:bodyPr vertOverflow="clip" horzOverflow="clip" wrap="none" lIns="0" tIns="0" rIns="0" bIns="0" rtlCol="0" anchor="t"><a:spAutoFit/></a:bodyPr><a:lstStyle/><a:p><a14:m>${ommlXml}</a14:m><a:endParaRPr lang="en-US" sz="${fontSize}"/></a:p></xdr:txBody></xdr:sp></mc:Choice><mc:Fallback><xdr:sp macro="" textlink=""><xdr:nvSpPr><xdr:cNvPr id="${id}" name="MathEq ${id}"/><xdr:cNvSpPr txBox="1"/></xdr:nvSpPr><xdr:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${w}" cy="${h}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></xdr:spPr><xdr:txBody><a:bodyPr vertOverflow="clip" horzOverflow="clip" wrap="none" lIns="0" tIns="0" rIns="0" bIns="0" rtlCol="0" anchor="t"><a:spAutoFit/></a:bodyPr><a:lstStyle/><a:p><a:r><a:rPr lang="en-US" sz="${fontSize}" i="0"><a:latin typeface="${escapeXml(fontName)}" panose="02040503050406030204" pitchFamily="18" charset="0"/></a:rPr><a:t>${escapeXml(fallbackText)}</a:t></a:r><a:endParaRPr lang="en-US" sz="${fontSize}"/></a:p></xdr:txBody></xdr:sp></mc:Fallback></mc:AlternateContent><xdr:clientData/></xdr:oneCellAnchor>`);
+    });
+
+    // ── OLE Objects ──────────────────────────────────────────────────────────
+    this.oleObjects.forEach((ole, i) => {
+      const id = shapeCounter++;
+      const from = ole.from;
+      const to = ole.to;
+      const fromXml = `<xdr:from><xdr:col>${from.col}</xdr:col><xdr:colOff>${from.colOff ?? 0}</xdr:colOff><xdr:row>${from.row}</xdr:row><xdr:rowOff>${from.rowOff ?? 0}</xdr:rowOff></xdr:from>`;
+      const toXml = `<xdr:to><xdr:col>${to.col}</xdr:col><xdr:colOff>${to.colOff ?? 0}</xdr:colOff><xdr:row>${to.row}</xdr:row><xdr:rowOff>${to.rowOff ?? 0}</xdr:rowOff></xdr:to>`;
+      const oleRId = this.oleRIds[i] ?? '';
+      const iconRId = this.oleIconRIds[i] ?? '';
+      const progId = ole.progId ?? 'Package';
+      const displayAsIcon = ole.displayAsIcon ? ' showAsIcon="1"' : '';
+      const linkAttr = ole.linkToFile && ole.linkPath ? ` link="${escapeXml(ole.linkPath)}"` : '';
+
+      // Icon image reference for the shape preview
+      const blipRef = iconRId
+        ? `<a:blip r:embed="${iconRId}"/><a:stretch><a:fillRect/></a:stretch>`
+        : `<a:blip/><a:stretch><a:fillRect/></a:stretch>`;
+
+      parts.push(`<xdr:twoCellAnchor editAs="oneCell">${fromXml}${toXml}<xdr:sp macro=""><xdr:nvSpPr><xdr:cNvPr id="${id}" name="${escapeXml(ole.name)}" hidden="1"/><xdr:cNvSpPr/></xdr:nvSpPr><xdr:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr></xdr:sp><xdr:clientData/></xdr:twoCellAnchor>`);
+
+      // The actual OLE embedding reference goes in the sheet rels via oleObjects, not in drawing XML directly
     });
 
     // ── Slicers ─────────────────────────────────────────────────────────────

@@ -802,6 +802,59 @@ export interface PowerQuery {
   formula: string;
 }
 
+// ─── Calc Settings ────────────────────────────────────────────────────────────
+
+/** Workbook calculation mode */
+export type CalcMode = 'auto' | 'manual' | 'autoNoTable';
+
+/** Workbook calculation settings — maps to `<calcPr>` in workbook.xml */
+export interface CalcSettings {
+  /** Calculation mode: 'auto' (default), 'manual', or 'autoNoTable' */
+  calcMode?: CalcMode;
+  /** Force full calculation on load? */
+  fullCalcOnLoad?: boolean;
+  /** Enable iterative calculation? */
+  iterate?: boolean;
+  /** Maximum number of iterations (default 100) */
+  iterateCount?: number;
+  /** Maximum change between iterations (default 0.001) */
+  iterateDelta?: number;
+  /** Full precision for calculated results? */
+  fullPrecision?: boolean;
+  /** Calculate before saving? (only when calcMode is 'manual') */
+  calcOnSave?: boolean;
+  /** Concurrent calculation? */
+  concurrentCalc?: boolean;
+}
+
+// ─── OLE Objects ──────────────────────────────────────────────────────────────
+
+/** OLE Object — embedded or linked external file within a worksheet */
+export interface OleObject {
+  /** Display name of the OLE object */
+  name: string;
+  /** The file data (Uint8Array or base64 string) for embedded objects */
+  data?: Uint8Array | string;
+  /** File name of the embedded object (e.g. 'document.pdf') */
+  fileName?: string;
+  /** ProgId for the OLE Object (e.g. 'Package', 'AcroExch.Document', 'Word.Document.12') */
+  progId?: string;
+  /** If true, link to an external file instead of embedding */
+  linkToFile?: boolean;
+  /** External file path when linkToFile is true */
+  linkPath?: string;
+  /** Display as icon? */
+  displayAsIcon?: boolean;
+  /** Position anchor: from cell */
+  from: ChartPosition;
+  /** Position anchor: to cell */
+  to: ChartPosition;
+  /** Icon image data (Uint8Array or base64, BMP/EMF format) */
+  iconData?: Uint8Array | string;
+  /** Icon image format */
+  iconFormat?: 'emf' | 'bmp' | 'png';
+}
+
 // ─── Workbook Options ─────────────────────────────────────────────────────────
 
 export interface WorkbookProperties {

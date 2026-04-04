@@ -1,6 +1,6 @@
 import type {
   WorkbookProperties, NamedRange, WorksheetOptions, Image, CellImage, Comment, PivotTable,
-  Connection, PowerQuery, ConnectionType,
+  Connection, PowerQuery, ConnectionType, CalcSettings, OleObject,
   Theme, ExternalLink, CustomPivotStyle, LocaleSettings, PivotSlicer,
 } from '../core/types.js';
 import { Worksheet } from './Worksheet.js';
@@ -31,6 +31,8 @@ export class Workbook {
   theme?: Theme;
   /** Locale settings for number/date formatting */
   locale?: LocaleSettings;
+  /** Workbook calculation settings (auto/manual/iterative) */
+  calcSettings?: CalcSettings;
   properties: WorkbookProperties = {};
 
   /**
@@ -111,6 +113,29 @@ export class Workbook {
     const vbaData = result.unknownParts.get('xl/vbaProject.bin');
     if (vbaData) {
       try { wb.vbaProject = VbaProject.fromBytes(vbaData); } catch { /* not fatal */ }
+    }
+
+    // Parse calcPr from workbook XML
+    const calcPrMatch = result.workbookXml.match(/<calcPr([^>]*)\/?>/);
+    if (calcPrMatch) {
+      const a = calcPrMatch[1];
+      const cs: CalcSettings = {};
+      const modeMatch = a.match(/calcMode="([^"]+)"/);
+      if (modeMatch) cs.calcMode = modeMatch[1] as CalcSettings['calcMode'];
+      if (/fullCalcOnLoad="1"/.test(a)) cs.fullCalcOnLoad = true;
+      else if (/fullCalcOnLoad="0"/.test(a)) cs.fullCalcOnLoad = false;
+      if (/iterate="1"/.test(a)) cs.iterate = true;
+      const icMatch = a.match(/iterateCount="(\d+)"/);
+      if (icMatch) cs.iterateCount = parseInt(icMatch[1], 10);
+      const idMatch = a.match(/iterateDelta="([^"]+)"/);
+      if (idMatch) cs.iterateDelta = parseFloat(idMatch[1]);
+      if (/fullPrecision="1"/.test(a)) cs.fullPrecision = true;
+      else if (/fullPrecision="0"/.test(a)) cs.fullPrecision = false;
+      if (/calcOnSave="1"/.test(a)) cs.calcOnSave = true;
+      else if (/calcOnSave="0"/.test(a)) cs.calcOnSave = false;
+      if (/concurrentCalc="1"/.test(a)) cs.concurrentCalc = true;
+      else if (/concurrentCalc="0"/.test(a)) cs.concurrentCalc = false;
+      if (Object.keys(cs).length > 0) wb.calcSettings = cs;
     }
 
     return wb;
@@ -538,7 +563,7 @@ export class Workbook {
     const sheetChartRIds  = new Map<Worksheet, string[]>();
     const sheetTableRIds  = new Map<Worksheet, string[]>();
     const sheetPivotRIds  = new Map<Worksheet, string[]>();
-    let imgCtr = 1, chartCtr = 1, tableCtr = 1, vmlCtr = 1, pivotCtr = 1, pivotCacheIdCtr = 0, ctrlPropGlobal = 0;
+    let imgCtr = 1, chartCtr = 1, tableCtr = 1, vmlCtr = 1, pivotCtr = 1, pivotCacheIdCtr = 0, ctrlPropGlobal = 0, oleObjGlobal = 0;
 
     for (const ws of this.sheets) {
       const imgs = ws.getImages() as Image[];
@@ -546,7 +571,7 @@ export class Workbook {
       const tables = ws.getTables();
       const imgRIds: string[] = [], chartRIds: string[] = [], tblRIds: string[] = [];
 
-      if (imgs.length || charts.length || ws.getShapes().length || ws.getWordArt().length || ws.getMathEquations().length || ws.getTableSlicers().length) ws.drawingRId = `rId${globalRId++}`;
+      if (imgs.length || charts.length || ws.getShapes().length || ws.getWordArt().length || ws.getMathEquations().length || ws.getTableSlicers().length || ws.getOleObjects().length) ws.drawingRId = `rId${globalRId++}`;
       const controls = ws.getFormControls();
       // legacyDrawing needed for comments OR form controls (they share VML)
       if (ws.getComments().length || controls.length) ws.legacyDrawingRId = `rId${globalRId++}`;
@@ -554,6 +579,17 @@ export class Workbook {
       for (const img of imgs)    { const r = `rId${globalRId++}`; imgRIds.push(r);   allImages.push({ ws, img, ext: imageExt(img.format), idx: imgCtr++ }); }
       for (let i=0;i<charts.length;i++) { const r = `rId${globalRId++}`; chartRIds.push(r); allCharts.push({ ws, chartIdx: i, globalIdx: chartCtr++ }); }
       for (let i=0;i<tables.length;i++) { const r = `rId${globalRId++}`; tblRIds.push(r);   allTables.push({ ws, tableIdx: i, globalTableId: tableCtr++ }); }
+
+      // Allocate OLE object rIds
+      const oleRIds: string[] = [];
+      const oleIconRIds: string[] = [];
+      for (const ole of ws.getOleObjects()) {
+        oleRIds.push(`rId${globalRId++}`);
+        if (ole.iconData) oleIconRIds.push(`rId${globalRId++}`);
+        else oleIconRIds.push('');
+      }
+      ws.oleRIds = oleRIds;
+      ws.oleIconRIds = oleIconRIds;
 
       // Allocate ctrlProp rIds for each form control
       const ctrlPropRIds: string[] = [];
@@ -710,11 +746,16 @@ export class Workbook {
         ctrlPropCTs.push(`<Override PartName="/xl/ctrlProps/ctrlProp${++ctrlPropCtr}.xml" ContentType="application/vnd.ms-excel.controlproperties+xml"/>`);
       }
     }
+    // OLE embeddings content type
+    const hasOleObjects = this.sheets.some(ws => ws.getOleObjects().length > 0);
+    const oleCT = hasOleObjects ? '<Default Extension="bin" ContentType="application/vnd.openxmlformats-officedocument.oleObject"/>' : '';
+
     entries.push({ name: '[Content_Types].xml', data: strToBytes(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
 <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
 <Default Extension="xml" ContentType="application/xml"/>
 ${vmlCT}
+${oleCT}
 ${[...imgCTs].join('')}
 <Override PartName="/xl/workbook.xml" ContentType="${hasVba ? 'application/vnd.ms-excel.sheet.macroEnabled.main+xml' : this.isTemplate ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.template.main+xml' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml'}"/>
 ${hasVba ? '<Override PartName="/xl/vbaProject.bin" ContentType="application/vnd.ms-office.vbaProject"/>' : ''}
@@ -795,7 +836,7 @@ ${date1904}
 <bookViews><workbookView xWindow="0" yWindow="0" windowWidth="14400" windowHeight="8260"/></bookViews>
 <sheets>${this.sheets.map((ws,i) => `<sheet name="${escapeXml(ws.name)}" sheetId="${i+1}" r:id="${ws.rId}"${ws.options?.state && ws.options.state !== 'visible' ? ` state="${ws.options.state}"` : ''}/>`).join('')}</sheets>
 ${namedRangesXml}
-<calcPr calcId="191028"/>
+${this._calcPrXml()}
 ${pivotCachesXml}
 ${hasSlicers ? (() => {
   const tableSlicers = allSlicerCaches.filter(sc => sc.type === 'table');
@@ -898,6 +939,34 @@ ${hasSlicers ? (() => {
             wsRels.push(`<Relationship Id="${ctrlRIds[ci]}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/ctrlProp" Target="../ctrlProps/ctrlProp${ctrlPropIdx}.xml"/>`);
             entries.push({ name: `xl/ctrlProps/ctrlProp${ctrlPropIdx}.xml`, data: strToBytes(buildCtrlPropXml(sheetControls[ci])) });
           }
+        }
+      }
+
+      // ── OLE object rels and embedding files ─────────────────────────────
+      const oleObjects = ws.getOleObjects();
+      for (let oi = 0; oi < oleObjects.length; oi++) {
+        const ole = oleObjects[oi];
+        const oleIdx = ++oleObjGlobal;
+        const oleRId = ws.oleRIds[oi];
+        if (ole.linkToFile) {
+          // Linked OLE — external relationship (no embedded data)
+          wsRels.push(`<Relationship Id="${oleRId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject" Target="${escapeXml(ole.linkPath ?? '')}" TargetMode="External"/>`);
+        } else {
+          // Embedded OLE — package the data as a binary embedding
+          const embName = `xl/embeddings/oleObject${oleIdx}.bin`;
+          wsRels.push(`<Relationship Id="${oleRId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject" Target="../embeddings/oleObject${oleIdx}.bin"/>`);
+          const oleData = !ole.data ? new Uint8Array(0)
+            : typeof ole.data === 'string' ? base64ToBytes(ole.data) : ole.data;
+          entries.push({ name: embName, data: oleData });
+        }
+        // Icon image for OLE object
+        if (ole.iconData) {
+          const iconExt = ole.iconFormat ?? 'emf';
+          const iconIdx = imgCtr++;
+          const iconRId = ws.oleIconRIds[oi];
+          wsRels.push(`<Relationship Id="${iconRId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image${iconIdx}.${iconExt}"/>`);
+          const iconData = typeof ole.iconData === 'string' ? base64ToBytes(ole.iconData) : ole.iconData;
+          entries.push({ name: `xl/media/image${iconIdx}.${iconExt}`, data: iconData });
         }
       }
       if (wsRels.length) {
@@ -1141,6 +1210,15 @@ ${(qt.columns ?? []).map((c,ci) => `<queryTableField id="${ci+1}" name="${escape
       // Insert after </sheets>
       xml = xml.replace('</sheets>', `</sheets>${dnXml}`);
     }
+    // Patch calcPr if calc settings are provided
+    if (this.calcSettings) {
+      const newCalcPr = this._calcPrXml();
+      if (xml.includes('<calcPr')) {
+        xml = xml.replace(/<calcPr[^>]*\/>|<calcPr[^>]*>[\s\S]*?<\/calcPr>/, newCalcPr);
+      } else {
+        xml = xml.replace('</workbook>', `${newCalcPr}</workbook>`);
+      }
+    }
     return xml;
   }
 
@@ -1166,6 +1244,26 @@ ${(qt.columns ?? []).map((c,ci) => `<queryTableField id="${ci+1}" name="${escape
       if (nr.comment) attrs += ` comment="${escapeXml(nr.comment)}"`;
       return `<definedName ${attrs}>${escapeXml(nr.ref)}</definedName>`;
     }).join('')}</definedNames>`;
+  }
+
+  /** Build the `<calcPr>` XML element from calcSettings */
+  private _calcPrXml(): string {
+    const cs = this.calcSettings;
+    let attrs = 'calcId="191028"';
+    if (cs) {
+      if (cs.calcMode === 'manual') attrs += ' calcMode="manual"';
+      else if (cs.calcMode === 'autoNoTable') attrs += ' calcMode="autoNoTable"';
+      if (cs.fullCalcOnLoad) attrs += ' fullCalcOnLoad="1"';
+      if (cs.iterate) {
+        attrs += ' iterate="1"';
+        if (cs.iterateCount != null) attrs += ` iterateCount="${cs.iterateCount}"`;
+        if (cs.iterateDelta != null) attrs += ` iterateDelta="${cs.iterateDelta}"`;
+      }
+      if (cs.fullPrecision === false) attrs += ' fullPrecision="0"';
+      if (cs.calcOnSave === false) attrs += ' calcOnSave="0"';
+      if (cs.concurrentCalc === false) attrs += ' concurrentCalc="0"';
+    }
+    return `<calcPr ${attrs}/>`;
   }
 
   /**

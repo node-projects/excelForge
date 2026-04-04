@@ -47,6 +47,10 @@ export type { JsonExportOptions } from './features/JsonModule.js';
 export { worksheetToHtml, workbookToHtml } from './features/HtmlModule.js';
 export type { HtmlExportOptions, WorkbookHtmlExportOptions } from './features/HtmlModule.js';
 
+// ── PDF export module (tree-shakeable) ──────────────────────────────────────
+export { worksheetToPdf, workbookToPdf } from './features/PdfModule.js';
+export type { PdfExportOptions, PdfWorkbookOptions } from './features/PdfModule.js';
+
 // ── Formula Calculation Engine (tree-shakeable) ──────────────────────────────
 export { FormulaEngine } from './features/FormulaEngine.js';
 
@@ -148,6 +152,9 @@ export type {
   // Workbook
   WorkbookProperties,
   WorksheetOptions,
+  CalcSettings,
+  CalcMode,
+  OleObject,
 
   // New features
   Shape,
@@ -172,7 +179,7 @@ export type {
 
 // ── VBA ──────────────────────────────────────────────────────────────────────
 export { VbaProject } from './vba/VbaProject.js';
-export type { VbaModule, VbaModuleType } from './vba/VbaProject.js';
+export type { VbaModule, VbaModuleType, VbaFormControl } from './vba/VbaProject.js';
 
 // ── Utility functions (re-exported for advanced users) ──────────────────────
 export {

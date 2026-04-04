@@ -3,8 +3,8 @@
  * This file demonstrates every major feature of the library.
  */
 
-import { Workbook, Worksheet, style, Styles, Colors, NumFmt, VbaProject } from '../index.js';
-import type { Chart, ConditionalFormat, Table, Sparkline, DataValidation, Image, CellImage, FormControl } from '../index.js';
+import { Workbook, Worksheet, style, Styles, Colors, NumFmt, VbaProject, encryptWorkbook } from '../index.js';
+import type { Chart, ConditionalFormat, Table, Sparkline, DataValidation, Image, CellImage, FormControl, CalcSettings, OleObject } from '../index.js';
 //@ts-ignore
 import { deflateSync } from 'zlib';
 
@@ -2262,7 +2262,10 @@ async function example_signing() {
 
   // Merge signature entries into ZIP
   const allEntries1: Array<{ name: string; data: Uint8Array }> = [];
-  for (const [name, entry] of parts1) allEntries1.push({ name, data: entry.data });
+  for (const [name, entry] of parts1) {
+    if (sigEntries.has(name)) continue; // skip entries replaced by signature
+    allEntries1.push({ name, data: entry.data });
+  }
   for (const [name, data] of sigEntries) allEntries1.push({ name, data });
   const signed1 = buildZip(allEntries1);
   wf('./output/32_signed_package.xlsx', signed1);
@@ -2291,12 +2294,193 @@ async function example_signing() {
   const result = await signWorkbook(partsMap2, { certificate: certPem, privateKey: privateKeyPem }, vbaProjectBin);
   console.log(`  signWorkbook: ${result.packageSignatureEntries.size} package entries, VBA sig: ${result.vbaSignature ? result.vbaSignature.length + ' bytes' : 'none'}`);
 
+  // Note: Neither VBA nor package signature is embedded in the .xlsm output.
+  // The VBA signature can't be valid because [MS-OVBA] §2.4.2 requires hashing
+  // normalized VBA content parts, not the raw binary. The package signature with a
+  // self-signed cert would trigger validation errors. Both APIs are still exercised
+  // above; the .xlsx sample (32_signed_package.xlsx) demonstrates the package signature.
+
   const allEntries2: Array<{ name: string; data: Uint8Array }> = [];
-  for (const [name, entry] of parts2) allEntries2.push({ name, data: entry.data });
-  for (const [name, data] of result.packageSignatureEntries) allEntries2.push({ name, data });
+  for (const [name, entry] of parts2) {
+    allEntries2.push({ name, data: entry.data });
+  }
   const signed2 = buildZip(allEntries2);
   wf('./output/32_signed_vba.xlsm', signed2);
   console.log('  Written: 32_signed_vba.xlsm');
+}
+
+// ============================================================
+// Example: Calc Settings
+// ============================================================
+async function example_calc_settings() {
+  const wb = new Workbook();
+  wb.properties.title = 'Calc Settings Demo';
+
+  // Set workbook to manual calculation with iterative calculation enabled
+  wb.calcSettings = {
+    calcMode: 'manual',
+    iterate: true,
+    iterateCount: 200,
+    iterateDelta: 0.0001,
+    fullCalcOnLoad: false,
+    calcOnSave: true,
+    fullPrecision: true,
+    concurrentCalc: false,
+  };
+
+  const ws = wb.addSheet('Calc Settings');
+  ws.setValue(1, 1, 'Calculation Mode:');
+  ws.setValue(1, 2, 'Manual');
+  ws.setStyle(1, 1, style().bold().build());
+  ws.setValue(2, 1, 'Iterative Calculation:');
+  ws.setValue(2, 2, 'Enabled (200 iterations, delta 0.0001)');
+  ws.setStyle(2, 1, style().bold().build());
+
+  // Add circular reference to demonstrate iterative calc
+  ws.setValue(4, 1, 'Circular Reference Demo');
+  ws.setStyle(4, 1, style().bold().fontSize(12).build());
+  ws.setValue(5, 1, 'A');
+  ws.setValue(5, 2, 'B');
+  ws.setValue(6, 1, 1);
+  ws.setFormula(6, 2, 'A6+1');
+  ws.setFormula(7, 1, 'B6+1');
+  ws.setFormula(7, 2, 'A7*2');
+
+  ws.setColumn(1, { width: 24 });
+  ws.setColumn(2, { width: 40 });
+
+  await wb.writeFile('./output/33_calc_settings.xlsx');
+}
+
+// ============================================================
+// Example: VBA UserForms
+// ============================================================
+async function example_vba_userforms() {
+  const wb = new Workbook();
+  const ws = wb.addSheet('UserForm Demo');
+  ws.setValue(1, 1, 'VBA UserForm Demo');
+  ws.setStyle(1, 1, style().bold().fontSize(14).build());
+  ws.setValue(2, 1, 'Press Alt+F11 to view the UserForm in the VBA editor');
+  ws.setValue(3, 1, 'Run ShowMyForm to display the form');
+  ws.setColumn(1, { width: 50 });
+
+  const vba = new VbaProject();
+
+  // Standard module that shows the form
+  vba.addModule({
+    name: 'Module1',
+    type: 'standard',
+    code: [
+      'Sub ShowMyForm()',
+      '  MyForm.Show',
+      'End Sub',
+    ].join('\n'),
+  });
+
+  // UserForm module with controls
+  vba.addModule({
+    name: 'MyForm',
+    type: 'userform',
+    controls: [
+      { type: 'Label', name: 'Label1', caption: 'Enter your name:', left: 12, top: 12, width: 120, height: 18 },
+      { type: 'TextBox', name: 'TextBox1', caption: '', left: 12, top: 36, width: 180, height: 24 },
+      { type: 'CommandButton', name: 'OKButton', caption: 'OK', left: 48, top: 72, width: 72, height: 28 },
+      { type: 'CommandButton', name: 'CancelButton', caption: 'Cancel', left: 128, top: 72, width: 72, height: 28 },
+    ],
+    code: [
+      'Private Sub OKButton_Click()',
+      '  If Len(TextBox1.Text) > 0 Then',
+      '    Sheet1.Range("A5").Value = "Hello, " & TextBox1.Text & "!"',
+      '  End If',
+      '  Unload Me',
+      'End Sub',
+      '',
+      'Private Sub CancelButton_Click()',
+      '  Unload Me',
+      'End Sub',
+      '',
+      'Private Sub UserForm_Initialize()',
+      '  Me.Caption = "Greeting Form"',
+      'End Sub',
+    ].join('\n'),
+  });
+
+  wb.vbaProject = vba;
+  await wb.writeFile('./output/34_vba_userforms.xlsm');
+}
+
+// ============================================================
+// Example: OLE Objects
+// ============================================================
+async function example_ole_objects() {
+  const wb = new Workbook();
+  const ws = wb.addSheet('OLE Objects');
+  ws.setValue(1, 1, 'Embedded OLE Object Demo');
+  ws.setStyle(1, 1, style().bold().fontSize(14).build());
+  ws.setValue(2, 1, 'Below is an embedded binary OLE object placeholder');
+  ws.setColumn(1, { width: 40 });
+
+  // Create a small binary payload to embed as an OLE object
+  const payload = new Uint8Array(256);
+  for (let i = 0; i < payload.length; i++) payload[i] = i & 0xFF;
+
+  ws.addOleObject({
+    name: 'EmbeddedData',
+    progId: 'Package',
+    fileName: 'embedded_data.bin',
+    data: payload,
+    from: { col: 1, row: 4 },
+    to: { col: 5, row: 12 },
+  });
+
+  // Add a second OLE object
+  const textData = new TextEncoder().encode('Hello from ExcelForge OLE Object!\nThis is embedded text content.');
+  ws.addOleObject({
+    name: 'EmbeddedText',
+    progId: 'Package',
+    fileName: 'readme.txt',
+    data: textData,
+    from: { col: 6, row: 4 },
+    to: { col: 10, row: 12 },
+  });
+
+  await wb.writeFile('./output/35_ole_objects.xlsx');
+}
+
+// ============================================================
+// Example: Encrypted XLSX
+// ============================================================
+async function example_encrypted() {
+  const wb = new Workbook();
+  wb.properties.title = 'Encrypted Workbook';
+  const ws = wb.addSheet('Confidential');
+  ws.setValue(1, 1, 'Encrypted Workbook');
+  ws.setStyle(1, 1, style().bold().fontSize(16).fontColor('FFCC0000').build());
+  ws.setValue(2, 1, 'This file is password-protected.');
+  ws.setValue(3, 1, 'Password: secret123');
+  ws.setStyle(3, 1, style().italic().fontColor('FF808080').build());
+
+  ws.setValue(5, 1, 'Sensitive Data');
+  ws.setStyle(5, 1, style().bold().build());
+  ws.setValue(6, 1, 'Account');
+  ws.setValue(6, 2, 'Balance');
+  ws.setStyle(6, 1, style().bold().bg('FF4472C4').fontColor('FFFFFFFF').build());
+  ws.setStyle(6, 2, style().bold().bg('FF4472C4').fontColor('FFFFFFFF').build());
+  ws.setValue(7, 1, 'Savings');
+  ws.setValue(7, 2, 50000);
+  ws.setStyle(7, 2, style().numFmt('#,##0.00').build());
+  ws.setValue(8, 1, 'Checking');
+  ws.setValue(8, 2, 12500);
+  ws.setStyle(8, 2, style().numFmt('#,##0.00').build());
+  ws.setColumn(1, { width: 20 });
+  ws.setColumn(2, { width: 16 });
+
+  const xlsxData = await wb.build();
+  const encrypted = await encryptWorkbook(xlsxData, 'secret123', { spinCount: 1000 });
+
+  //@ts-ignore
+  const { writeFileSync } = await import('fs');
+  writeFileSync('./output/36_encrypted.xlsx', encrypted);
 }
 
 // Run all examples
@@ -2338,6 +2522,10 @@ async function runAll() {
     ['New Image Formats',      example_new_image_formats],
     ['Absolute & Sizing',      example_absolute_and_sizing],
     ['Signing',                 example_signing],
+    ['Calc Settings',            example_calc_settings],
+    ['VBA UserForms',            example_vba_userforms],
+    ['OLE Objects',              example_ole_objects],
+    ['Encrypted',                example_encrypted],
   ] as const;
 
   for (const [name, fn] of examples) {
@@ -2367,6 +2555,22 @@ async function runAll() {
     }
   }
   console.log(`  ✅ Exported ${htmlOk}/${xlsxFiles.length} files as HTML`);
+
+  // Export every generated xlsx as PDF
+  console.log('\n── PDF Export ──');
+  const { workbookToPdf } = await import('../features/PdfModule.js');
+  let pdfOk = 0;
+  for (const file of xlsxFiles) {
+    try {
+      const wb2 = await Workbook.fromFile(`./output/${file}`);
+      const pdf = workbookToPdf(wb2, { title: file.replace(/\.[^.]+$/, ''), fitToWidth: true, gridLines: true });
+      writeFileSync(`./output/${file.replace(/\.[^.]+$/, '.pdf')}`, pdf);
+      pdfOk++;
+    } catch (e: any) {
+      console.error(`  ❌ PDF ${file}: ${e.message?.slice(0, 120)}`);
+    }
+  }
+  console.log(`  ✅ Exported ${pdfOk}/${xlsxFiles.length} files as PDF`);
 }
 
 runAll().catch(console.error);
