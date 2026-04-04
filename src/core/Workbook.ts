@@ -12,7 +12,7 @@ import { buildPivotTableFiles } from '../features/PivotTableBuilder.js';
 import { buildCtrlPropXml, buildFormControlVmlShape, buildVmlWithControls } from '../features/FormControlBuilder.js';
 import { VbaProject } from '../vba/VbaProject.js';
 import { buildZip, type ZipEntry, type ZipOptions } from '../utils/zip.js';
-import { strToBytes, base64ToBytes, escapeXml, colIndexToLetter } from '../utils/helpers.js';
+import { strToBytes, base64ToBytes, escapeXml, colIndexToLetter, parseRange } from '../utils/helpers.js';
 import { readWorkbook, connTypeToNum, cmdTypeToNum, type ReadResult } from './WorkbookReader.js';
 import {
   buildCoreXml, buildAppXml, buildCustomXml,
@@ -419,7 +419,52 @@ export class Workbook {
     // sheet uses the same fresh style-registry / shared-strings indices.
     // When nothing is dirty we preserve the original styles & shared strings.
     const sheetXmls = new Map<number, string>();
+    // Map of original table column names keyed by "sheetIdx:tableIdx" — saved before sync
+    const origTableColNames = new Map<string, string[]>();
     if (hasDirty) {
+      // Sync table column names with actual header row cell values before serialising,
+      // so that both the sheet XML and table XML are consistent.
+      for (let i = 0; i < this.sheets.length; i++) {
+        const ws = this.sheets[i];
+        const tables = ws.getTables();
+        for (let ti = 0; ti < tables.length; ti++) {
+          const tbl = tables[ti];
+          // Save original names before mutation
+          origTableColNames.set(`${i}:${ti}`, tbl.columns.map(c => c.name));
+          const { startRow, startCol } = parseRange(tbl.ref);
+          const usedNames = new Set<string>();
+          for (let ci = 0; ci < tbl.columns.length; ci++) {
+            const cell = ws.getCell(startRow, startCol + ci);
+            const cellVal = cell.value;
+            let strVal: string | null = null;
+            if (cellVal == null) {
+              strVal = null; // keep original
+            } else if (cellVal instanceof Date) {
+              strVal = cellVal.toISOString();
+            } else if (typeof cellVal === 'object' && 'error' in cellVal) {
+              strVal = String((cellVal as any).error);
+            } else {
+              strVal = String(cellVal);
+            }
+            const baseName = strVal ?? tbl.columns[ci].name;
+            // Ensure uniqueness (Excel auto-renames duplicates with numeric suffix)
+            let finalName = baseName;
+            let dup = 2;
+            while (usedNames.has(finalName)) { finalName = `${baseName}${dup++}`; }
+            usedNames.add(finalName);
+            // Update both table column name and header cell
+            tbl.columns[ci].name = finalName;
+            if (cellVal == null) {
+              cell.value = finalName; // ensure header cell matches table column name
+            } else if (typeof cellVal !== 'string') {
+              cell.value = finalName;
+            } else if (cellVal !== finalName) {
+              cell.value = finalName; // deduped name
+            }
+          }
+        }
+      }
+
       // Preserve original dxf entries so table dataDxfId references remain valid.
       // Extract raw <dxf>...</dxf> inner content from the original styles XML.
       const dxfRe = /<dxf>([\s\S]*?)<\/dxf>|<dxf\/>/g;
@@ -459,8 +504,8 @@ export class Workbook {
       entries.push({ name: 'docProps/custom.xml', data: strToBytes(buildCustomXml(customProps)) });
     }
 
-    // ── Workbook XML (patch sheet names) ───────────────────────────────────
-    entries.push({ name: 'xl/workbook.xml', data: strToBytes(this._patchWorkbookXml(rr.workbookXml)) });
+    // ── Workbook XML (patch sheet names + add new sheets) ─────────────────
+    entries.push({ name: 'xl/workbook.xml', data: strToBytes(this._patchWorkbookXml(rr.workbookXml, rr)) });
 
     // ── Connections ─────────────────────────────────────────────────────────
     const connectionsXml = this._connectionsXml(rr.connectionsXml);
@@ -510,11 +555,24 @@ export class Workbook {
         if (tblPath) {
           allTablePaths.add(tblPath);
           if (j < xmls.length) {
-            // Preserve original table XML — update only the ref attribute if it changed
+            // Preserve original table XML — update ref and column names if changed
             let xml = xmls[j];
             const origRefMatch = xml.match(/\bref="([^"]+)"/);
             if (origRefMatch && origRefMatch[1] !== tables[j].ref) {
               xml = xml.replace(`ref="${origRefMatch[1]}"`, `ref="${tables[j].ref}"`);
+            }
+            // Sync column names in the XML with the updated in-memory names
+            if (hasDirty) {
+              const origNames = origTableColNames.get(`${i}:${j}`);
+              if (origNames) {
+                for (let ci = 0; ci < tables[j].columns.length; ci++) {
+                  const origName = origNames[ci];
+                  const newName = tables[j].columns[ci].name;
+                  if (origName && origName !== newName) {
+                    xml = xml.replace(`name="${escapeXml(origName)}"`, `name="${escapeXml(newName)}"`);
+                  }
+                }
+              }
             }
             entries.push({ name: tblPath, data: strToBytes(xml) });
           } else {
@@ -1210,13 +1268,40 @@ ${(qt.columns ?? []).map((c,ci) => `<queryTableField id="${ci+1}" name="${escape
     }
   }
 
-  private _patchWorkbookXml(originalXml: string): string {
+  private _patchWorkbookXml(originalXml: string, rr?: ReadResult): string {
     let xml = originalXml;
-    for (let i = 0; i < this.sheets.length; i++) {
+    const origCount = rr?.sheets.length ?? this.sheets.length;
+    for (let i = 0; i < Math.min(this.sheets.length, origCount); i++) {
       xml = xml.replace(
         new RegExp(`(<sheet[^>]+sheetId="${i+1}"[^>]+)name="[^"]*"`),
         `$1name="${escapeXml(this.sheets[i].name)}"`
       );
+    }
+    // Add <sheet> entries for newly added sheets
+    if (rr && this.sheets.length > origCount) {
+      // Compute next available rId and sheetId
+      let maxRId = 0;
+      for (const [id] of rr.workbookRels) {
+        const n = parseInt(id.replace(/\D/g, ''), 10);
+        if (n > maxRId) maxRId = n;
+      }
+      let maxSheetId = 0;
+      for (const s of rr.sheets) {
+        const n = parseInt(s.sheetId, 10);
+        if (n > maxSheetId) maxSheetId = n;
+      }
+      const newSheetTags: string[] = [];
+      for (let i = origCount; i < this.sheets.length; i++) {
+        const ws = this.sheets[i];
+        const rId = `rId${++maxRId}`;
+        const sheetId = ++maxSheetId;
+        ws.rId = rId;
+        ws.sheetIndex = sheetId;
+        const stateAttr = ws.options?.state === 'hidden' ? ' state="hidden"'
+          : ws.options?.state === 'veryHidden' ? ' state="veryHidden"' : '';
+        newSheetTags.push(`<sheet name="${escapeXml(ws.name)}" sheetId="${sheetId}" r:id="${rId}"${stateAttr}/>`);
+      }
+      xml = xml.replace('</sheets>', newSheetTags.join('') + '</sheets>');
     }
     // Ensure codeName on workbookPr when VBA is present
     if (this.vbaProject && !xml.includes('codeName=')) {
@@ -1322,6 +1407,14 @@ ${(qt.columns ?? []).map((c,ci) => `<queryTableField id="${ci+1}" name="${escape
       .map(([id, rel]) =>
       `<Relationship Id="${id}" Type="${rel.type}" Target="${rel.target}"/>`
     );
+    // Add rels for newly added sheets (rId assigned by _patchWorkbookXml)
+    const origCount = rr.sheets.length;
+    for (let i = origCount; i < this.sheets.length; i++) {
+      const ws = this.sheets[i];
+      const folder = ws._isChartSheet ? 'chartsheets' : ws._isDialogSheet ? 'dialogsheets' : 'worksheets';
+      const type = ws._isChartSheet ? 'chartsheet' : ws._isDialogSheet ? 'dialogsheet' : 'worksheet';
+      rels.push(`<Relationship Id="${ws.rId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/${type}" Target="${folder}/sheet${i + 1}.xml"/>`);
+    }
     if (![...rr.workbookRels.values()].some(r => r.type.includes('/styles')))
       rels.push(`<Relationship Id="rIdStyles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>`);
     if (![...rr.workbookRels.values()].some(r => r.type.includes('/sharedStrings')))
@@ -1423,6 +1516,19 @@ ${hasCustom ? `<Relationship Id="rId4" Type="http://schemas.openxmlformats.org/o
     }
     if (this.connections.length && !xml.includes('connections.xml'))
       xml = xml.replace('</Types>', `<Override PartName="/xl/connections.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.connections+xml"/>\n</Types>`);
+    // Add content type overrides for newly added sheets
+    for (let i = 0; i < this.sheets.length; i++) {
+      const ws = this.sheets[i];
+      const folder = ws._isChartSheet ? 'chartsheets' : ws._isDialogSheet ? 'dialogsheets' : 'worksheets';
+      const ct = ws._isChartSheet
+        ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.chartsheet+xml'
+        : ws._isDialogSheet
+          ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.dialogsheet+xml'
+          : 'application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml';
+      const partName = `/xl/${folder}/sheet${i + 1}.xml`;
+      if (!xml.includes(partName))
+        xml = xml.replace('</Types>', `<Override PartName="${partName}" ContentType="${ct}"/>\n</Types>`);
+    }
     return xml;
   }
 

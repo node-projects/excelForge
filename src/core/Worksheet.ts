@@ -143,18 +143,38 @@ export class Worksheet {
   }
 
   setValue(row: number, col: number, value: CellValue): this {
-    this.getCell(row, col).value = value;
+    const cell = this.getCell(row, col);
+    // Clear properties that take precedence during serialisation
+    delete cell.formula;
+    delete cell.arrayFormula;
+    delete cell.richText;
+    delete (cell as any)._sharedIdx;
+    delete (cell as any)._sharedRef;
+    delete (cell as any)._dynamic;
+    cell.value = value;
     return this;
   }
 
   setFormula(row: number, col: number, formula: string): this {
-    this.getCell(row, col).formula = formula;
+    const cell = this.getCell(row, col);
+    // Clear properties that take precedence or conflict during serialisation
+    delete cell.arrayFormula;
+    delete cell.richText;
+    delete (cell as any)._sharedIdx;
+    delete (cell as any)._sharedRef;
+    delete (cell as any)._dynamic;
+    cell.formula = formula;
     return this;
   }
 
   /** Set a dynamic array formula (spill formula) on a cell. The formula will spill results automatically. */
   setDynamicArrayFormula(row: number, col: number, formula: string): this {
     const cell = this.getCell(row, col);
+    // Clear properties that conflict during serialisation
+    delete cell.formula;
+    delete cell.richText;
+    delete (cell as any)._sharedIdx;
+    delete (cell as any)._sharedRef;
     cell.arrayFormula = formula;
     (cell as any)._dynamic = true;
     return this;
