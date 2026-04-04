@@ -22,6 +22,12 @@ import {
  *  and eliminates string key allocation/parsing overhead. */
 type CellMap = Map<number, Map<number, Cell>>;
 
+/** Minimal back-reference to the owning workbook — avoids a circular import. */
+interface WorkbookRef {
+  markDirty(name: string): void;
+  setActiveSheet(name: string): void;
+}
+
 /** Escape XML element content (only &, <, > — quotes are valid in element text) */
 const _xmlContentRe = /[&<>]/g;
 const _xmlContentEsc: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;' };
@@ -93,6 +99,8 @@ export class Worksheet {
   tableRIds: string[] = [];
   ctrlPropRIds: string[] = [];
   slicerRId = '';
+  /** Back-reference to the owning workbook — set by Workbook when the sheet is added/loaded */
+  _workbook?: WorkbookRef;
   /** Slicer info for drawing XML generation — set by Workbook._buildFresh() */
   _slicerDrawingInfo: Array<{ name: string; cell?: string }> = [];
 
@@ -101,7 +109,18 @@ export class Worksheet {
     this.options = { ...options, name };
   }
 
-  // ─── Cell Access ─────────────────────────────────────────────────────────────
+  // ─── Workbook-level convenience methods ──────────────────────────────────────
+
+  /** Mark this sheet as dirty so it will be re-serialised on write. */
+  markDirty(): void {
+    this._workbook?.markDirty(this.name);
+  }
+
+  /** Make this sheet the active (selected) tab in the workbook. */
+  setActive(): void {
+    this._workbook?.setActiveSheet(this.name);
+  }
+
 
   getCell(row: number, col: number): Cell {
     let rowMap = this.cells.get(row);

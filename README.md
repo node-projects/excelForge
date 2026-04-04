@@ -152,7 +152,8 @@ ws.writeRow(20, 1, ['TOTAL', '', '=SUM(C2:C19)']);
 
 // Mark the sheet dirty — it will be re-serialised on write.
 // Sheets NOT marked dirty are written back byte-for-byte from the original.
-wb.markDirty('Sales');
+ws.markDirty();          // preferred: call on the sheet instance directly
+wb.markDirty('Sales');   // or via the workbook (equivalent)
 
 // Patch properties without re-serialising any sheets
 wb.coreProperties.title = 'Updated Report';
@@ -162,6 +163,18 @@ await wb.writeFile('./report_updated.xlsx');
 ```
 
 > **Tip:** If you forget to call `markDirty()`, your cell changes won't appear in the output because the original sheet XML will be used. Always call it after modifying a loaded sheet.
+
+### Active sheet
+
+```typescript
+// Set the active (initially visible) sheet — workbook level
+wb.setActiveSheet('Summary');          // by name
+wb.setActiveSheet(2);                  // by 0-based index
+
+// Or directly on the sheet instance
+const ws = wb.getSheet('Summary');
+ws.setActive();
+```
 
 ---
 

@@ -66,6 +66,7 @@ export class Workbook {
 
   private _readResult?: ReadResult;
   private _dirtySheets = new Set<number>();
+  private _activeTabIndex = 0;
 
   /** Mark a sheet as modified so it will be re-serialised on write */
   markDirty(sheetIndexOrName: number | string): void {
@@ -105,6 +106,11 @@ export class Workbook {
     };
 
     wb.sheets = result.sheets.map(s => s.ws);
+    for (let i = 0; i < wb.sheets.length; i++) {
+      const ws = wb.sheets[i];
+      ws._workbook = wb;
+      if (ws.view?.tabSelected) wb._activeTabIndex = i;
+    }
     wb.namedRanges = result.namedRanges;
     wb.connections = result.connections;
     wb.powerQueries = result.powerQueries;
@@ -164,6 +170,7 @@ export class Workbook {
   addSheet(name: string, options: WorksheetOptions = {}): Worksheet {
     const ws = new Worksheet(name, options);
     ws.sheetIndex = this.sheets.length + 1;
+    ws._workbook = this;
     this.sheets.push(ws);
     this._dirtySheets.add(ws.sheetIndex - 1);
     return ws;
@@ -188,6 +195,23 @@ export class Workbook {
   removeSheet(name: string): this {
     this.sheets = this.sheets.filter(s => s.name !== name);
     return this;
+  }
+
+  /** Make a sheet the active (selected) tab. Clears tabSelected on all other sheets. */
+  setActiveSheet(sheetIndexOrName: number | string): void {
+    const idx = typeof sheetIndexOrName === 'string'
+      ? this.sheets.findIndex(s => s.name === sheetIndexOrName)
+      : sheetIndexOrName;
+    if (idx < 0 || idx >= this.sheets.length) return;
+    for (let i = 0; i < this.sheets.length; i++) {
+      const ws = this.sheets[i];
+      if (i === idx) {
+        ws.view = { ...(ws.view ?? {}), tabSelected: true };
+      } else if (ws.view?.tabSelected) {
+        ws.view = { ...ws.view, tabSelected: false };
+      }
+    }
+    this._activeTabIndex = idx;
   }
 
   /**
@@ -833,7 +857,7 @@ ${hasCellImages ? '<Relationship Id="rIdRdArray" Type="http://schemas.microsoft.
     entries.push({ name: 'xl/workbook.xml', data: strToBytes(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
 ${date1904}
-<bookViews><workbookView xWindow="0" yWindow="0" windowWidth="14400" windowHeight="8260"/></bookViews>
+<bookViews><workbookView xWindow="0" yWindow="0" windowWidth="14400" windowHeight="8260"${this._activeTabIndex ? ` activeTab="${this._activeTabIndex}"` : ''}/></bookViews>
 <sheets>${this.sheets.map((ws,i) => `<sheet name="${escapeXml(ws.name)}" sheetId="${i+1}" r:id="${ws.rId}"${ws.options?.state && ws.options.state !== 'visible' ? ` state="${ws.options.state}"` : ''}/>`).join('')}</sheets>
 ${namedRangesXml}
 ${this._calcPrXml()}
