@@ -243,7 +243,7 @@ function parseFont(node: XmlNode): Font {
         const rgb = c.attrs['rgb'];
         const theme = c.attrs['theme'];
         if (rgb) f.color = rgb;
-        else if (theme) f.color = `theme:${theme}`;
+        else if (theme) f.color = `theme:${theme}${c.attrs['tint'] ? ':tint:' + c.attrs['tint'] : ''}`;
         break;
       }
     }
@@ -258,9 +258,9 @@ function parseFill(node: XmlNode): Fill {
     const bg = child(pattern, 'bgColor');
     return {
       type: 'pattern',
-      pattern: (pattern.attrs['patternType'] ?? 'none') as any,
-      fgColor: fg?.attrs['rgb'] ?? (fg?.attrs['theme'] ? `theme:${fg.attrs['theme']}` : undefined),
-      bgColor: bg?.attrs['rgb'] ?? (bg?.attrs['theme'] ? `theme:${bg.attrs['theme']}` : undefined),
+      pattern: pattern.attrs['patternType'] as any,
+      fgColor: fg?.attrs['rgb'] ?? (fg?.attrs['theme'] ? `theme:${fg.attrs['theme']}${fg.attrs['tint'] ? ':tint:' + fg.attrs['tint'] : ''}` : undefined),
+      bgColor: bg?.attrs['rgb'] ?? (bg?.attrs['theme'] ? `theme:${bg.attrs['theme']}${bg.attrs['tint'] ? ':tint:' + bg.attrs['tint'] : ''}` : undefined),
     } as PatternFill;
   }
   const gradient = child(node, 'gradientFill');
@@ -269,7 +269,7 @@ function parseFill(node: XmlNode): Fill {
       const colorNode = child(s, 'color');
       return {
         position: parseFloat(s.attrs['position'] ?? '0'),
-        color: colorNode?.attrs['rgb'] ?? (colorNode?.attrs['theme'] ? `theme:${colorNode.attrs['theme']}` : 'FF000000'),
+        color: colorNode?.attrs['rgb'] ?? (colorNode?.attrs['theme'] ? `theme:${colorNode.attrs['theme']}${colorNode.attrs['tint'] ? ':tint:' + colorNode.attrs['tint'] : ''}` : 'FF000000'),
       };
     });
     return {
@@ -289,7 +289,7 @@ function parseBorder(node: XmlNode): Border {
     const style = n.attrs['style'];
     const color = child(n, 'color');
     if (!style && !color) return undefined;
-    const colorVal = color?.attrs['rgb'] ?? (color?.attrs['theme'] ? `theme:${color.attrs['theme']}` : undefined);
+    const colorVal = color?.attrs['rgb'] ?? (color?.attrs['theme'] ? `theme:${color.attrs['theme']}${color.attrs['tint'] ? ':tint:' + color.attrs['tint'] : ''}` : undefined);
     return { style: style as any, color: colorVal };
   };
   return {

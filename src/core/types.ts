@@ -53,7 +53,7 @@ export type FillPattern =
 
 export interface PatternFill {
   type: 'pattern';
-  pattern: FillPattern;
+  pattern?: FillPattern;
   fgColor?: Color;
   bgColor?: Color;
 }

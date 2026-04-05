@@ -25,7 +25,16 @@ function colorXml(color: Color | undefined, prefix = 'rgb'): string {
 /** Emit a color attribute for inline use (font, fill, border) */
 function colorAttrXml(tag: string, color: Color | undefined): string {
   if (!color) return '';
-  if (color.startsWith('theme:')) return `<${tag} theme="${color.slice(6)}"/>`;
+  if (color.startsWith('theme:')) {
+    const rest = color.slice(6);
+    const tintIdx = rest.indexOf(':tint:');
+    if (tintIdx >= 0) {
+      const theme = rest.slice(0, tintIdx);
+      const tint = rest.slice(tintIdx + 6);
+      return `<${tag} theme="${theme}" tint="${tint}"/>`;
+    }
+    return `<${tag} theme="${rest}"/>`;
+  }
   const rgb = color.startsWith('#') ? 'FF' + color.slice(1) : color;
   return `<${tag} rgb="${rgb}"/>`;
 }
@@ -53,7 +62,8 @@ function fillXml(fill: Fill): string {
     const f = fill as PatternFill;
     const fg = colorAttrXml('fgColor', f.fgColor);
     const bg = colorAttrXml('bgColor', f.bgColor);
-    return `<patternFill patternType="${f.pattern}">${fg}${bg}</patternFill>`;
+    const ptAttr = f.pattern ? ` patternType="${f.pattern}"` : '';
+    return `<patternFill${ptAttr}>${fg}${bg}</patternFill>`;
   }
   // gradient
   const f = fill as GradientFill;

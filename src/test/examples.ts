@@ -9,6 +9,20 @@ import type { Chart, ConditionalFormat, Table, Sparkline, DataValidation, Image,
 import { deflateSync } from 'zlib';
 
 // ============================================================
+// 0. BASIC WORKBOOK & SHEET CREATION
+// ============================================================
+async function conditional_formatting() {
+  const wb = await Workbook.fromFile('./src/test/ErrorsAndWarnings.xlsx');
+ 
+  const sheet = wb.getSheet('ErrorsAndWarnings');
+  sheet.markDirty();
+  sheet.setValue(4, 7, 'Error');
+  sheet.setValue(5, 7, 'Warning');
+
+  await wb.writeFile('./output/ErrorsAndWarnings.xlsx');
+}
+
+// ============================================================
 // 1. BASIC WORKBOOK & SHEET CREATION
 // ============================================================
 async function example_basic() {
@@ -2490,6 +2504,7 @@ async function runAll() {
   try { await fs.mkdir('./output', { recursive: true }); } catch {}
 
   const examples = [
+    ['Conditional Formating',  conditional_formatting],
     ['Basic',                  example_basic],
     ['Formulas',               example_formulas],
     ['Styles',                 example_styles],

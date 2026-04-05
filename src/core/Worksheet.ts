@@ -37,7 +37,16 @@ function escapeXmlContent(s: string): string {
 
 /** Emit a <color> element handling theme:X, #hex, and AARRGGBB formats */
 function colorEl(c: string): string {
-  if (c.startsWith('theme:')) return `<color theme="${c.slice(6)}"/>`;
+  if (c.startsWith('theme:')) {
+    const rest = c.slice(6);
+    const tintIdx = rest.indexOf(':tint:');
+    if (tintIdx >= 0) {
+      const theme = rest.slice(0, tintIdx);
+      const tint = rest.slice(tintIdx + 6);
+      return `<color theme="${theme}" tint="${tint}"/>`;
+    }
+    return `<color theme="${rest}"/>`;
+  }
   const rgb = c.startsWith('#') ? 'FF' + c.slice(1) : c;
   return `<color rgb="${rgb}"/>`;
 }
