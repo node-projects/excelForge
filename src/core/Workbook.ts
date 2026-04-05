@@ -3,13 +3,14 @@ import type {
   Connection, PowerQuery, ConnectionType, CalcSettings, OleObject,
   Theme, ExternalLink, CustomPivotStyle, LocaleSettings, PivotSlicer,
 } from '../core/types.js';
+import type { buildChartXml as buildChartXmlType } from '../features/ChartBuilder.js';
+import type { buildCtrlPropXml as buildCtrlPropXmlType, buildFormControlVmlShape as buildFormControlVmlShapeType, buildVmlWithControls as buildVmlWithControlsType } from '../features/FormControlBuilder.js';
+import type { buildPivotTableFiles as buildPivotTableFilesType } from '../features/PivotTableBuilder.js';
+import type { VbaProject as VbaProjectType } from '../vba/VbaProject.js';
 import { Worksheet } from './Worksheet.js';
 import { StyleRegistry } from '../styles/StyleRegistry.js';
 import { SharedStrings } from './SharedStrings.js';
 import { buildTableXml } from '../features/TableBuilder.js';
-import { buildPivotTableFiles } from '../features/PivotTableBuilder.js';
-import { buildCtrlPropXml, buildFormControlVmlShape, buildVmlWithControls } from '../features/FormControlBuilder.js';
-import { VbaProject } from '../vba/VbaProject.js';
 import { buildZip, type ZipEntry, type ZipOptions } from '../utils/zip.js';
 import { strToBytes, base64ToBytes, escapeXml, colIndexToLetter, parseRange } from '../utils/helpers.js';
 import { readWorkbook, connTypeToNum, cmdTypeToNum, type ReadResult } from './WorkbookReader.js';
@@ -18,7 +19,12 @@ import {
   type CoreProperties, type ExtendedProperties, type CustomProperty,
 } from './properties.js';
 
-let buildChartXml: typeof import('../features/ChartBuilder.js').buildChartXml; // lazy import.
+let buildChartXml: typeof buildChartXmlType;
+let buildCtrlPropXml: typeof buildCtrlPropXmlType;
+let buildFormControlVmlShape: typeof buildFormControlVmlShapeType;
+let buildVmlWithControls: typeof buildVmlWithControlsType;
+let buildPivotTableFiles: typeof buildPivotTableFilesType;
+let VbaProject: typeof VbaProjectType;
 
 export class Workbook {
   private sheets: Worksheet[] = [];
@@ -58,7 +64,7 @@ export class Workbook {
   customProperties: CustomProperty[] = [];
 
   /** VBA macro project (set to enable .xlsm output) */
-  vbaProject?: VbaProject;
+  vbaProject?: VbaProjectType;
 
   /** Save as .xltx template (changes the content type) */
   isTemplate = false;
@@ -119,6 +125,9 @@ export class Workbook {
     // Parse VBA project if present
     const vbaData = result.unknownParts.get('xl/vbaProject.bin');
     if (vbaData) {
+      if (!VbaProject) {
+        VbaProject = (await import('../vba/VbaProject.js')).VbaProject;
+      }
       try { wb.vbaProject = VbaProject.fromBytes(vbaData); } catch { /* not fatal */ }
     }
 
@@ -989,6 +998,10 @@ ${hasSlicers ? (() => {
       const sheetComments = ws.getComments();
       const sheetControls = ws.getFormControls();
       if ((sheetComments.length || sheetControls.length) && ws.legacyDrawingRId) {
+        if (!buildCtrlPropXml) {
+          ({ buildCtrlPropXml, buildFormControlVmlShape, buildVmlWithControls } = await import('../features/FormControlBuilder.js'));
+        }
+
         const vIdx = vmlCtr++;
         wsRels.push(`<Relationship Id="${ws.legacyDrawingRId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/vmlDrawing" Target="../drawings/vmlDrawing${vIdx}.vml"/>`);
 
@@ -1130,6 +1143,9 @@ ${cellImgRels.join('\n')}
     }
 
     for (const { ws, pt, pivotIdx, cacheId: cId } of allPivotTables) {
+      if (!buildPivotTableFiles) {
+        buildPivotTableFiles = (await import('../features/PivotTableBuilder.js')).buildPivotTableFiles;
+      }
       const sourceWs = this.sheets.find(s => s.name === pt.sourceSheet);
       const sourceData = sourceWs ? sourceWs.readRange(pt.sourceRef) : [[]];
       const { pivotTableXml, cacheDefXml, cacheRecordsXml } = buildPivotTableFiles(pt, sourceData, pivotIdx, cId);

@@ -20,7 +20,7 @@
     "build": "tsc",
     "prepublishOnly": "npm run build && npm run bundle && npm run bundle-core",
     "bundle": "esbuild ./dist/index.js --format=esm --minify --external:fs/promises --external:zlib --platform=neutral --bundle --outfile=./dist/index-min.js",
-    "bundle-core": "esbuild ./dist/index-core.js --format=esm --minify --external:fs/promises --external:zlib --platform=neutral --bundle --outfile=./dist/index-core-min.js"
+    "bundle-core": "esbuild ./dist/index-core.js --format=esm --minify --external:../features/ChartBuilder.js --external:../features/FormControlBuilder.js  --external:../features/PivotTableBuilder.js  --external:../vba/VbaProject.js --external:fs/promises --external:zlib --platform=neutral --bundle --outfile=./dist/index-core-min.js"
   },
   "devDependencies": {
     "esbuild": "^0.28.0",
