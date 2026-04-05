@@ -30,7 +30,7 @@ import { Worksheet } from './Worksheet.js';
 import { SharedStrings } from './SharedStrings.js';
 import { StyleRegistry } from '../styles/StyleRegistry.js';
 import { cellRefToIndices, colLetterToIndex, dateToSerial } from '../utils/helpers.js';
-import { OBJ_TYPE_TO_CTRL, CHECKED_REV } from '../features/FormControlBuilder.js';
+import { OBJ_TYPE_TO_CTRL, CHECKED_REV } from '../features/FormControlBuilderCommon.js';
 
 // ─── Raw file store (for unknown parts) ───────────────────────────────────────
 
