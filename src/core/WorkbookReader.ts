@@ -35,8 +35,8 @@ import { OBJ_TYPE_TO_CTRL, CHECKED_REV } from '../features/FormControlBuilder.js
 // ─── Raw file store (for unknown parts) ───────────────────────────────────────
 
 export interface RawPart {
-  path:        string;
-  data:        Uint8Array;
+  path: string;
+  data: Uint8Array;
   contentType: string;
 }
 
@@ -52,14 +52,14 @@ function parseRels(xml: string): RelMap {
     for (const c of root.children) {
       if (localName(c.tag) === 'Relationship') {
         const entry: RelEntry = {
-          type:   c.attrs['Type'] ?? '',
+          type: c.attrs['Type'] ?? '',
           target: c.attrs['Target'] ?? '',
         };
         if (c.attrs['TargetMode']) entry.targetMode = c.attrs['TargetMode'];
         map.set(c.attrs['Id'] ?? '', entry);
       }
     }
-  } catch {}
+  } catch { }
   return map;
 }
 
@@ -75,11 +75,11 @@ function parseContentTypes(xml: string): CTMap {
       const ln = localName(c.tag);
       if (ln === 'Override') {
         const part = c.attrs['PartName'] ?? '';
-        const ct   = c.attrs['ContentType'] ?? '';
+        const ct = c.attrs['ContentType'] ?? '';
         map.set(part.startsWith('/') ? part.slice(1) : part, ct);
       }
     }
-  } catch {}
+  } catch { }
   return map;
 }
 
@@ -101,13 +101,13 @@ function parseStyles(xml: string): ParsedStyles {
 
   // Built-in numfmt IDs
   const builtinFmts: Record<number, string> = {
-    0:'General',1:'0',2:'0.00',3:'#,##0',4:'#,##0.00',
-    9:'0%',10:'0.00%',11:'0.00E+00',12:'# ?/?',13:'# ??/??',
-    14:'mm-dd-yy',15:'d-mmm-yy',16:'d-mmm',17:'mmm-yy',
-    18:'h:mm AM/PM',19:'h:mm:ss AM/PM',20:'h:mm',21:'h:mm:ss',
-    22:'m/d/yy h:mm',37:'#,##0 ;(#,##0)',38:'#,##0 ;[Red](#,##0)',
-    39:'#,##0.00;(#,##0.00)',40:'#,##0.00;[Red](#,##0.00)',
-    45:'mm:ss',46:'[h]:mm:ss',47:'mmss.0',48:'##0.0E+0',49:'@',
+    0: 'General', 1: '0', 2: '0.00', 3: '#,##0', 4: '#,##0.00',
+    9: '0%', 10: '0.00%', 11: '0.00E+00', 12: '# ?/?', 13: '# ??/??',
+    14: 'mm-dd-yy', 15: 'd-mmm-yy', 16: 'd-mmm', 17: 'mmm-yy',
+    18: 'h:mm AM/PM', 19: 'h:mm:ss AM/PM', 20: 'h:mm', 21: 'h:mm:ss',
+    22: 'm/d/yy h:mm', 37: '#,##0 ;(#,##0)', 38: '#,##0 ;[Red](#,##0)',
+    39: '#,##0.00;(#,##0.00)', 40: '#,##0.00;[Red](#,##0.00)',
+    45: 'mm:ss', 46: '[h]:mm:ss', 47: 'mmss.0', 48: '##0.0E+0', 49: '@',
   };
 
   // Parse custom numFmts
@@ -151,21 +151,21 @@ function parseStyles(xml: string): ParsedStyles {
   const cellXfsNode = find(root, 'cellXfs');
   if (cellXfsNode) {
     for (const xf of children(cellXfsNode, 'xf')) {
-      const fontId   = parseInt(xf.attrs['fontId']   ?? '0', 10);
-      const fillId   = parseInt(xf.attrs['fillId']   ?? '0', 10);
+      const fontId = parseInt(xf.attrs['fontId'] ?? '0', 10);
+      const fillId = parseInt(xf.attrs['fillId'] ?? '0', 10);
       const borderId = parseInt(xf.attrs['borderId'] ?? '0', 10);
       const numFmtId = parseInt(xf.attrs['numFmtId'] ?? '0', 10);
-      const applyFont      = xf.attrs['applyFont']      === '1';
-      const applyFill      = xf.attrs['applyFill']      === '1';
-      const applyBorder    = xf.attrs['applyBorder']    === '1';
+      const applyFont = xf.attrs['applyFont'] === '1';
+      const applyFill = xf.attrs['applyFill'] === '1';
+      const applyBorder = xf.attrs['applyBorder'] === '1';
       const applyAlignment = xf.attrs['applyAlignment'] === '1';
-      const applyNumFmt    = xf.attrs['applyNumberFormat'] === '1';
-      const applyProt      = xf.attrs['applyProtection'] === '1';
+      const applyNumFmt = xf.attrs['applyNumberFormat'] === '1';
+      const applyProt = xf.attrs['applyProtection'] === '1';
 
       const style: CellStyle = {};
-      if (applyFont    && fonts[fontId])   style.font   = fonts[fontId];
-      if (applyFill    && fills[fillId])   style.fill   = fills[fillId];
-      if (applyBorder  && borders[borderId]) style.border = borders[borderId];
+      if (applyFont && fonts[fontId]) style.font = fonts[fontId];
+      if (applyFill && fills[fillId]) style.fill = fills[fillId];
+      if (applyBorder && borders[borderId]) style.border = borders[borderId];
 
       if (applyNumFmt && numFmtId !== 0) {
         if (numFmts.has(numFmtId)) {
@@ -229,14 +229,14 @@ function parseFont(node: XmlNode): Font {
   const f: Font = {};
   for (const c of node.children) {
     switch (localName(c.tag)) {
-      case 'b':       f.bold   = c.attrs['val'] !== '0'; break;
-      case 'i':       f.italic = c.attrs['val'] !== '0'; break;
-      case 'strike':  f.strike = c.attrs['val'] !== '0'; break;
-      case 'u':       f.underline = (c.attrs['val'] as Font['underline']) ?? 'single'; break;
-      case 'sz':      f.size   = parseFloat(c.attrs['val'] ?? '11'); break;
-      case 'name':    f.name   = c.attrs['val']; break;
-      case 'family':  f.family = parseInt(c.attrs['val'] ?? '0', 10); break;
-      case 'scheme':  f.scheme = c.attrs['val'] as Font['scheme']; break;
+      case 'b': f.bold = c.attrs['val'] !== '0'; break;
+      case 'i': f.italic = c.attrs['val'] !== '0'; break;
+      case 'strike': f.strike = c.attrs['val'] !== '0'; break;
+      case 'u': f.underline = (c.attrs['val'] as Font['underline']) ?? 'single'; break;
+      case 'sz': f.size = parseFloat(c.attrs['val'] ?? '11'); break;
+      case 'name': f.name = c.attrs['val']; break;
+      case 'family': f.family = parseInt(c.attrs['val'] ?? '0', 10); break;
+      case 'scheme': f.scheme = c.attrs['val'] as Font['scheme']; break;
       case 'charset': f.charset = parseInt(c.attrs['val'] ?? '0', 10); break;
       case 'vertAlign': f.vertAlign = c.attrs['val'] as Font['vertAlign']; break;
       case 'color': {
@@ -293,24 +293,24 @@ function parseBorder(node: XmlNode): Border {
     return { style: style as any, color: colorVal };
   };
   return {
-    left:     parseSide('left'),
-    right:    parseSide('right'),
-    top:      parseSide('top'),
-    bottom:   parseSide('bottom'),
+    left: parseSide('left'),
+    right: parseSide('right'),
+    top: parseSide('top'),
+    bottom: parseSide('bottom'),
     diagonal: parseSide('diagonal'),
-    diagonalUp:   node.attrs['diagonalUp']   === '1',
+    diagonalUp: node.attrs['diagonalUp'] === '1',
     diagonalDown: node.attrs['diagonalDown'] === '1',
   };
 }
 
 function parseAlignment(node: XmlNode): Alignment {
   const a: Alignment = {};
-  if (node.attrs['horizontal'])   a.horizontal   = node.attrs['horizontal'] as any;
-  if (node.attrs['vertical'])     a.vertical     = node.attrs['vertical'] as any;
-  if (node.attrs['wrapText'])     a.wrapText     = node.attrs['wrapText'] !== '0';
-  if (node.attrs['shrinkToFit'])  a.shrinkToFit  = node.attrs['shrinkToFit'] !== '0';
+  if (node.attrs['horizontal']) a.horizontal = node.attrs['horizontal'] as any;
+  if (node.attrs['vertical']) a.vertical = node.attrs['vertical'] as any;
+  if (node.attrs['wrapText']) a.wrapText = node.attrs['wrapText'] !== '0';
+  if (node.attrs['shrinkToFit']) a.shrinkToFit = node.attrs['shrinkToFit'] !== '0';
   if (node.attrs['textRotation']) a.textRotation = parseInt(node.attrs['textRotation'], 10);
-  if (node.attrs['indent'])       a.indent       = parseInt(node.attrs['indent'], 10);
+  if (node.attrs['indent']) a.indent = parseInt(node.attrs['indent'], 10);
   if (node.attrs['readingOrder']) a.readingOrder = parseInt(node.attrs['readingOrder'], 10) as any;
   return a;
 }
@@ -381,22 +381,22 @@ function parseWorksheet(
   const vmCells = new Map<string, number>();
 
   const knownTags = new Set([
-    'sheetPr','dimension','sheetViews','sheetFormatPr','cols',
-    'sheetData','mergeCells','conditionalFormatting','dataValidations',
-    'sheetProtection','printOptions','pageMargins','pageSetup',
-    'headerFooter','drawing','tableParts','autoFilter',
-    'rowBreaks','colBreaks','picture','oleObjects','ctrlProps',
-    'legacyDrawing','AlternateContent','extLst',
+    'sheetPr', 'dimension', 'sheetViews', 'sheetFormatPr', 'cols',
+    'sheetData', 'mergeCells', 'conditionalFormatting', 'dataValidations',
+    'sheetProtection', 'printOptions', 'pageMargins', 'pageSetup',
+    'headerFooter', 'drawing', 'tableParts', 'autoFilter',
+    'rowBreaks', 'colBreaks', 'picture', 'oleObjects', 'ctrlProps',
+    'legacyDrawing', 'AlternateContent', 'extLst',
   ]);
 
   for (const node of root.children) {
     const tag = localName(node.tag);
     switch (tag) {
-      case 'sheetViews':    parseSheetViews(node, ws);   break;
-      case 'cols':          parseCols(node, ws, styles); break;
-      case 'sheetData':     parseSheetData(node, ws, styles, sharedStrings, vmCells); break;
-      case 'mergeCells':    parseMerges(node, ws);       break;
-      case 'autoFilter':    ws.autoFilter = { ref: node.attrs['ref'] ?? '' }; break;
+      case 'sheetViews': parseSheetViews(node, ws); break;
+      case 'cols': parseCols(node, ws, styles); break;
+      case 'sheetData': parseSheetData(node, ws, styles, sharedStrings, vmCells); break;
+      case 'mergeCells': parseMerges(node, ws); break;
+      case 'autoFilter': ws.autoFilter = { ref: node.attrs['ref'] ?? '' }; break;
       case 'tableParts':
         for (const tp of children(node, 'tablePart')) {
           const rid = tp.attrs['r:id'] ?? '';
@@ -404,10 +404,10 @@ function parseWorksheet(
         }
         break;
       case 'sheetProtection': parseProtection(node, ws); break;
-      case 'pageMargins':   parsePageMargins(node, ws); break;
-      case 'pageSetup':     parsePageSetup(node, ws);   break;
-      case 'headerFooter':  parseHeaderFooter(node, ws); break;
-      case 'printOptions':  parsePrintOptions(node, ws); break;
+      case 'pageMargins': parsePageMargins(node, ws); break;
+      case 'pageSetup': parsePageSetup(node, ws); break;
+      case 'headerFooter': parseHeaderFooter(node, ws); break;
+      case 'printOptions': parsePrintOptions(node, ws); break;
       case 'conditionalFormatting':
         parseConditionalFormatting(node, ws, styles);
         break;
@@ -481,12 +481,12 @@ function parseSheetViews(node: XmlNode, ws: Worksheet): void {
   if (!sv) return;
 
   ws.view = {
-    showGridLines:     sv.attrs['showGridLines']     !== '0',
+    showGridLines: sv.attrs['showGridLines'] !== '0',
     showRowColHeaders: sv.attrs['showRowColHeaders'] !== '0',
-    zoomScale:         sv.attrs['zoomScale'] ? parseInt(sv.attrs['zoomScale'], 10) : undefined,
-    rightToLeft:       sv.attrs['rightToLeft'] === '1',
-    tabSelected:       sv.attrs['tabSelected'] === '1',
-    view:              sv.attrs['view'] as any,
+    zoomScale: sv.attrs['zoomScale'] ? parseInt(sv.attrs['zoomScale'], 10) : undefined,
+    rightToLeft: sv.attrs['rightToLeft'] === '1',
+    tabSelected: sv.attrs['tabSelected'] === '1',
+    view: sv.attrs['view'] as any,
   };
 
   const pane = child(sv, 'pane');
@@ -503,11 +503,11 @@ function parseCols(node: XmlNode, ws: Worksheet, styles: ParsedStyles): void {
     const min = parseInt(col.attrs['min'] ?? '1', 10);
     const max = parseInt(col.attrs['max'] ?? '1', 10);
     const def = {
-      width:        col.attrs['width']  ? parseFloat(col.attrs['width']) : undefined,
-      hidden:       col.attrs['hidden'] === '1',
-      customWidth:  col.attrs['customWidth'] === '1',
+      width: col.attrs['width'] ? parseFloat(col.attrs['width']) : undefined,
+      hidden: col.attrs['hidden'] === '1',
+      customWidth: col.attrs['customWidth'] === '1',
       outlineLevel: col.attrs['outlineLevel'] ? parseInt(col.attrs['outlineLevel'], 10) : undefined,
-      style:        col.attrs['style']  ? styles.xfs[parseInt(col.attrs['style'], 10)] : undefined,
+      style: col.attrs['style'] ? styles.xfs[parseInt(col.attrs['style'], 10)] : undefined,
     };
     for (let c = min; c <= max; c++) ws.setColumn(c, def);
   }
@@ -525,11 +525,11 @@ function parseSheetData(
     if (!rowIdx) continue;
 
     const rowDef: any = {};
-    if (rowNode.attrs['ht'])        rowDef.height       = parseFloat(rowNode.attrs['ht']);
-    if (rowNode.attrs['hidden'])    rowDef.hidden        = rowNode.attrs['hidden'] === '1';
+    if (rowNode.attrs['ht']) rowDef.height = parseFloat(rowNode.attrs['ht']);
+    if (rowNode.attrs['hidden']) rowDef.hidden = rowNode.attrs['hidden'] === '1';
     if (rowNode.attrs['outlineLevel']) rowDef.outlineLevel = parseInt(rowNode.attrs['outlineLevel'], 10);
-    if (rowNode.attrs['collapsed']) rowDef.collapsed     = rowNode.attrs['collapsed'] === '1';
-    if (rowNode.attrs['s'])         rowDef.style         = styles.xfs[parseInt(rowNode.attrs['s'], 10)];
+    if (rowNode.attrs['collapsed']) rowDef.collapsed = rowNode.attrs['collapsed'] === '1';
+    if (rowNode.attrs['s']) rowDef.style = styles.xfs[parseInt(rowNode.attrs['s'], 10)];
     if (Object.keys(rowDef).length) ws.setRow(rowIdx, rowDef);
 
     for (const cNode of children(rowNode, 'c')) {
@@ -607,29 +607,29 @@ function parseMerges(node: XmlNode, ws: Worksheet): void {
 
 function parseProtection(node: XmlNode, ws: Worksheet): void {
   ws.protection = {
-    sheet:                node.attrs['sheet']               !== '0',
-    password:             undefined, // hash only, can't reverse
-    selectLockedCells:    node.attrs['selectLockedCells']   !== '0',
-    selectUnlockedCells:  node.attrs['selectUnlockedCells'] !== '0',
-    formatCells:          node.attrs['formatCells']         === '0',
-    formatColumns:        node.attrs['formatColumns']       === '0',
-    formatRows:           node.attrs['formatRows']          === '0',
-    insertColumns:        node.attrs['insertColumns']       === '0',
-    insertRows:           node.attrs['insertRows']          === '0',
-    insertHyperlinks:     node.attrs['insertHyperlinks']    === '0',
-    deleteColumns:        node.attrs['deleteColumns']       === '0',
-    deleteRows:           node.attrs['deleteRows']          === '0',
-    sort:                 node.attrs['sort']                === '0',
-    autoFilter:           node.attrs['autoFilter']          === '0',
-    pivotTables:          node.attrs['pivotTables']         === '0',
+    sheet: node.attrs['sheet'] !== '0',
+    password: undefined, // hash only, can't reverse
+    selectLockedCells: node.attrs['selectLockedCells'] !== '0',
+    selectUnlockedCells: node.attrs['selectUnlockedCells'] !== '0',
+    formatCells: node.attrs['formatCells'] === '0',
+    formatColumns: node.attrs['formatColumns'] === '0',
+    formatRows: node.attrs['formatRows'] === '0',
+    insertColumns: node.attrs['insertColumns'] === '0',
+    insertRows: node.attrs['insertRows'] === '0',
+    insertHyperlinks: node.attrs['insertHyperlinks'] === '0',
+    deleteColumns: node.attrs['deleteColumns'] === '0',
+    deleteRows: node.attrs['deleteRows'] === '0',
+    sort: node.attrs['sort'] === '0',
+    autoFilter: node.attrs['autoFilter'] === '0',
+    pivotTables: node.attrs['pivotTables'] === '0',
   };
 }
 
 function parsePageMargins(node: XmlNode, ws: Worksheet): void {
   ws.pageMargins = {
-    left:   parseFloat(node.attrs['left']   ?? '0.7'),
-    right:  parseFloat(node.attrs['right']  ?? '0.7'),
-    top:    parseFloat(node.attrs['top']    ?? '0.75'),
+    left: parseFloat(node.attrs['left'] ?? '0.7'),
+    right: parseFloat(node.attrs['right'] ?? '0.7'),
+    top: parseFloat(node.attrs['top'] ?? '0.75'),
     bottom: parseFloat(node.attrs['bottom'] ?? '0.75'),
     header: parseFloat(node.attrs['header'] ?? '0.3'),
     footer: parseFloat(node.attrs['footer'] ?? '0.3'),
@@ -638,37 +638,37 @@ function parsePageMargins(node: XmlNode, ws: Worksheet): void {
 
 function parsePageSetup(node: XmlNode, ws: Worksheet): void {
   ws.pageSetup = {
-    paperSize:       node.attrs['paperSize']     ? parseInt(node.attrs['paperSize'], 10) as any : undefined,
-    orientation:     node.attrs['orientation']   as any,
-    fitToPage:       node.attrs['fitToPage']     === '1',
-    fitToWidth:      node.attrs['fitToWidth']    ? parseInt(node.attrs['fitToWidth'], 10) : undefined,
-    fitToHeight:     node.attrs['fitToHeight']   ? parseInt(node.attrs['fitToHeight'], 10) : undefined,
-    scale:           node.attrs['scale']         ? parseInt(node.attrs['scale'], 10) : undefined,
-    horizontalDpi:   node.attrs['horizontalDpi'] ? parseInt(node.attrs['horizontalDpi'], 10) : undefined,
-    verticalDpi:     node.attrs['verticalDpi']   ? parseInt(node.attrs['verticalDpi'], 10) : undefined,
+    paperSize: node.attrs['paperSize'] ? parseInt(node.attrs['paperSize'], 10) as any : undefined,
+    orientation: node.attrs['orientation'] as any,
+    fitToPage: node.attrs['fitToPage'] === '1',
+    fitToWidth: node.attrs['fitToWidth'] ? parseInt(node.attrs['fitToWidth'], 10) : undefined,
+    fitToHeight: node.attrs['fitToHeight'] ? parseInt(node.attrs['fitToHeight'], 10) : undefined,
+    scale: node.attrs['scale'] ? parseInt(node.attrs['scale'], 10) : undefined,
+    horizontalDpi: node.attrs['horizontalDpi'] ? parseInt(node.attrs['horizontalDpi'], 10) : undefined,
+    verticalDpi: node.attrs['verticalDpi'] ? parseInt(node.attrs['verticalDpi'], 10) : undefined,
   };
 }
 
 function parseHeaderFooter(node: XmlNode, ws: Worksheet): void {
   ws.headerFooter = {
-    oddHeader:         child(node, 'oddHeader')?.text,
-    oddFooter:         child(node, 'oddFooter')?.text,
-    evenHeader:        child(node, 'evenHeader')?.text,
-    evenFooter:        child(node, 'evenFooter')?.text,
-    firstHeader:       child(node, 'firstHeader')?.text,
-    firstFooter:       child(node, 'firstFooter')?.text,
-    differentOddEven:  node.attrs['differentOddEven'] === '1',
-    differentFirst:    node.attrs['differentFirst']   === '1',
+    oddHeader: child(node, 'oddHeader')?.text,
+    oddFooter: child(node, 'oddFooter')?.text,
+    evenHeader: child(node, 'evenHeader')?.text,
+    evenFooter: child(node, 'evenFooter')?.text,
+    firstHeader: child(node, 'firstHeader')?.text,
+    firstFooter: child(node, 'firstFooter')?.text,
+    differentOddEven: node.attrs['differentOddEven'] === '1',
+    differentFirst: node.attrs['differentFirst'] === '1',
   };
 }
 
 function parsePrintOptions(node: XmlNode, ws: Worksheet): void {
   ws.printOptions = {
-    gridLines:         node.attrs['gridLines']           === '1',
-    gridLinesSet:      node.attrs['gridLinesSet']        === '1',
-    headings:          node.attrs['headings']            === '1',
-    centerHorizontal:  node.attrs['horizontalCentered']  === '1',
-    centerVertical:    node.attrs['verticalCentered']    === '1',
+    gridLines: node.attrs['gridLines'] === '1',
+    gridLinesSet: node.attrs['gridLinesSet'] === '1',
+    headings: node.attrs['headings'] === '1',
+    centerHorizontal: node.attrs['horizontalCentered'] === '1',
+    centerVertical: node.attrs['verticalCentered'] === '1',
   };
 }
 
@@ -681,11 +681,11 @@ function parseConditionalFormatting(node: XmlNode, ws: Worksheet, styles: Parsed
     const cf: ConditionalFormat = { sqref, type };
 
     if (rule.attrs['operator']) cf.operator = rule.attrs['operator'] as any;
-    if (rule.attrs['priority'])  cf.priority = parseInt(rule.attrs['priority'], 10);
-    if (rule.attrs['text'])      cf.text = rule.attrs['text'];
+    if (rule.attrs['priority']) cf.priority = parseInt(rule.attrs['priority'], 10);
+    if (rule.attrs['text']) cf.text = rule.attrs['text'];
     if (rule.attrs['aboveAverage'] === '0') cf.aboveAverage = false;
     if (rule.attrs['percent'] === '1') cf.percent = true;
-    if (rule.attrs['rank'])     cf.rank = parseInt(rule.attrs['rank'], 10);
+    if (rule.attrs['rank']) cf.rank = parseInt(rule.attrs['rank'], 10);
     if (rule.attrs['timePeriod']) cf.timePeriod = rule.attrs['timePeriod'];
 
     // Resolve dxfId to CellStyle
@@ -760,10 +760,10 @@ function parseDataValidations(node: XmlNode, ws: Worksheet): void {
     if (dv.attrs['allowBlank'] === '1') val.allowBlank = true;
     if (dv.attrs['showErrorMessage'] === '1') val.showErrorAlert = true;
     if (dv.attrs['errorTitle']) val.errorTitle = dv.attrs['errorTitle'];
-    if (dv.attrs['error'])      val.error = dv.attrs['error'];
+    if (dv.attrs['error']) val.error = dv.attrs['error'];
     if (dv.attrs['showInputMessage'] === '1') val.showInputMessage = true;
     if (dv.attrs['promptTitle']) val.promptTitle = dv.attrs['promptTitle'];
-    if (dv.attrs['prompt'])      val.prompt = dv.attrs['prompt'];
+    if (dv.attrs['prompt']) val.prompt = dv.attrs['prompt'];
     // showDropDown in OOXML means "suppress dropdown" (inverted semantics)
     if (dv.attrs['showDropDown'] === '1') val.showDropDown = false;
 
@@ -790,9 +790,9 @@ function parseTableXml(xml: string): Table | null {
     const tag = localName(root.tag);
     if (tag !== 'table') return null;
 
-    const name        = root.attrs['name'] ?? '';
+    const name = root.attrs['name'] ?? '';
     const displayName = root.attrs['displayName'] ?? name;
-    const ref         = root.attrs['ref'] ?? '';
+    const ref = root.attrs['ref'] ?? '';
     const totalsCount = parseInt(root.attrs['totalsRowCount'] ?? '0', 10);
 
     const columns: TableColumn[] = [];
@@ -802,7 +802,7 @@ function parseTableXml(xml: string): Table | null {
         const tc: TableColumn = { name: col.attrs['name'] ?? '' };
         if (col.attrs['totalsRowFunction']) tc.totalsRowFunction = col.attrs['totalsRowFunction'] as any;
         if (col.attrs['totalsRowFormula']) tc.totalsRowFormula = col.attrs['totalsRowFormula'];
-        if (col.attrs['totalsRowLabel'])  tc.totalsRowLabel = col.attrs['totalsRowLabel'];
+        if (col.attrs['totalsRowLabel']) tc.totalsRowLabel = col.attrs['totalsRowLabel'];
         columns.push(tc);
       }
     }
@@ -813,10 +813,10 @@ function parseTableXml(xml: string): Table | null {
 
     const styleNode = find(root, 'tableStyleInfo');
     if (styleNode) {
-      if (styleNode.attrs['name'])              table.style = styleNode.attrs['name'] as any;
-      if (styleNode.attrs['showFirstColumn'] === '1')   table.showFirstColumn = true;
-      if (styleNode.attrs['showLastColumn'] === '1')    table.showLastColumn = true;
-      if (styleNode.attrs['showRowStripes'] === '1')    table.showRowStripes = true;
+      if (styleNode.attrs['name']) table.style = styleNode.attrs['name'] as any;
+      if (styleNode.attrs['showFirstColumn'] === '1') table.showFirstColumn = true;
+      if (styleNode.attrs['showLastColumn'] === '1') table.showLastColumn = true;
+      if (styleNode.attrs['showRowStripes'] === '1') table.showRowStripes = true;
       if (styleNode.attrs['showColumnStripes'] === '1') table.showColumnStripes = true;
     }
 
@@ -1278,7 +1278,7 @@ function parseSparklineExtensions(extLst: XmlNode, ws: Worksheet): void {
         const typeAttr = group.attrs['type'] ?? 'line';
         const spkType: SparklineType =
           typeAttr === 'column' ? 'bar' :
-          typeAttr === 'stacked' ? 'stacked' : 'line';
+            typeAttr === 'stacked' ? 'stacked' : 'line';
 
         // Group-level colors
         const colorSeries = group.children?.find(
@@ -1812,31 +1812,31 @@ export interface ReadResult {
     /** Original table XML strings (parallel to tablePaths) for verbatim round-trip */
     tableXmls: string[];
   }>;
-  styles:         ParsedStyles;
-  stylesXml:      string;       // original — for patching
-  sharedStrings:  SharedStringEntry[];
-  sharedXml:      string;       // original
-  workbookXml:    string;       // original
-  workbookRels:   RelMap;
-  contentTypes:   CTMap;
+  styles: ParsedStyles;
+  stylesXml: string;       // original — for patching
+  sharedStrings: SharedStringEntry[];
+  sharedXml: string;       // original
+  workbookXml: string;       // original
+  workbookRels: RelMap;
+  contentTypes: CTMap;
   contentTypesXml: string;
-  core:           CoreProperties;
-  extended:       ExtendedProperties;
+  core: CoreProperties;
+  extended: ExtendedProperties;
   extendedUnknownRaw: string;
-  custom:         CustomProperty[];
+  custom: CustomProperty[];
   hasCustomProps: boolean;
   /** Named ranges parsed from workbook.xml <definedNames> */
-  namedRanges:    NamedRange[];
+  namedRanges: NamedRange[];
   /** Data connections parsed from xl/connections.xml */
-  connections:    Connection[];
+  connections: Connection[];
   /** Original connections.xml for patching */
   connectionsXml: string;
   /** Power Query formulas extracted from DataMashup in customXml */
-  powerQueries:   PowerQuery[];
+  powerQueries: PowerQuery[];
   /** All files from the ZIP that we don't otherwise handle — preserved verbatim */
-  unknownParts:   Map<string, Uint8Array>;
+  unknownParts: Map<string, Uint8Array>;
   /** All relationship files (we need them to route images/charts/etc) */
-  allRels:        Map<string, RelMap>;
+  allRels: Map<string, RelMap>;
 }
 
 export async function readWorkbook(data: Uint8Array): Promise<ReadResult> {
@@ -1922,10 +1922,10 @@ export async function readWorkbook(data: Uint8Array): Promise<ReadResult> {
   // Parse each sheet
   const sheets: ReadResult['sheets'] = [];
   for (const sn of sheetNodes) {
-    const rId     = sn.attrs['r:id'] ?? Object.values(sn.attrs).find(v => v.startsWith('rId')) ?? '';
+    const rId = sn.attrs['r:id'] ?? Object.values(sn.attrs).find(v => v.startsWith('rId')) ?? '';
     const sheetId = sn.attrs['sheetId'] ?? '';
-    const name    = sn.attrs['name'] ?? `Sheet${sheetId}`;
-    const rel     = workbookRels.get(rId);
+    const name = sn.attrs['name'] ?? `Sheet${sheetId}`;
+    const rel = workbookRels.get(rId);
     if (!rel) continue;
 
     // Target is relative to xl/
@@ -2183,7 +2183,7 @@ function parseVmlAnchor(clientData?: XmlNode): { from: FormControlAnchor; to: Fo
   if (parts.length < 8 || parts.some(isNaN)) return defaultAnchor;
   return {
     from: { col: parts[0], colOff: parts[1], row: parts[2], rowOff: parts[3] },
-    to:   { col: parts[4], colOff: parts[5], row: parts[6], rowOff: parts[7] },
+    to: { col: parts[4], colOff: parts[5], row: parts[6], rowOff: parts[7] },
   };
 }
 
