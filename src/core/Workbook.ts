@@ -6,7 +6,6 @@ import type {
 import { Worksheet } from './Worksheet.js';
 import { StyleRegistry } from '../styles/StyleRegistry.js';
 import { SharedStrings } from './SharedStrings.js';
-import { buildChartXml } from '../features/ChartBuilder.js';
 import { buildTableXml } from '../features/TableBuilder.js';
 import { buildPivotTableFiles } from '../features/PivotTableBuilder.js';
 import { buildCtrlPropXml, buildFormControlVmlShape, buildVmlWithControls } from '../features/FormControlBuilder.js';
@@ -18,6 +17,8 @@ import {
   buildCoreXml, buildAppXml, buildCustomXml,
   type CoreProperties, type ExtendedProperties, type CustomProperty,
 } from './properties.js';
+
+let buildChartXml: typeof import('../features/ChartBuilder.js').buildChartXml; // lazy import.
 
 export class Workbook {
   private sheets: Worksheet[] = [];
@@ -86,23 +87,23 @@ export class Workbook {
     const result = await readWorkbook(data);
     wb._readResult = result;
 
-    wb.coreProperties     = result.core;
+    wb.coreProperties = result.core;
     wb.extendedProperties = result.extended;
-    wb.customProperties   = result.custom;
+    wb.customProperties = result.custom;
 
     // Back-compat: mirror into legacy .properties
     wb.properties = {
-      title:          result.core.title,
-      author:         result.core.creator,
-      subject:        result.core.subject,
-      description:    result.core.description,
-      keywords:       result.core.keywords,
-      company:        result.extended.company,
+      title: result.core.title,
+      author: result.core.creator,
+      subject: result.core.subject,
+      description: result.core.description,
+      keywords: result.core.keywords,
+      company: result.extended.company,
       lastModifiedBy: result.core.lastModifiedBy,
-      created:        result.core.created,
-      modified:       result.core.modified,
-      category:       result.core.category,
-      status:         result.core.contentStatus,
+      created: result.core.created,
+      modified: result.core.modified,
+      category: result.core.category,
+      status: result.core.contentStatus,
     };
 
     wb.sheets = result.sheets.map(s => s.ws);
@@ -247,12 +248,12 @@ export class Workbook {
     for (const { row, col, cell } of cells) {
       const target = ws.getCell(row, col);
       if (cell.value != null) target.value = cell.value;
-      if (cell.formula)       target.formula = cell.formula;
-      if (cell.arrayFormula)  target.arrayFormula = cell.arrayFormula;
-      if (cell.richText)      target.richText = cell.richText.map(r => ({ ...r, font: r.font ? { ...r.font } : undefined }));
-      if (cell.style)         target.style = { ...cell.style };
-      if (cell.comment)       target.comment = { ...cell.comment };
-      if (cell.hyperlink)     target.hyperlink = { ...cell.hyperlink };
+      if (cell.formula) target.formula = cell.formula;
+      if (cell.arrayFormula) target.arrayFormula = cell.arrayFormula;
+      if (cell.richText) target.richText = cell.richText.map(r => ({ ...r, font: r.font ? { ...r.font } : undefined }));
+      if (cell.style) target.style = { ...cell.style };
+      if (cell.comment) target.comment = { ...cell.comment };
+      if (cell.hyperlink) target.hyperlink = { ...cell.hyperlink };
     }
     // Copy merges
     for (const m of src.getMerges()) {
@@ -350,7 +351,7 @@ export class Workbook {
   setCustomProperty(name: string, value: CustomProperty['value']): this {
     const idx = this.customProperties.findIndex(p => p.name === name);
     if (idx >= 0) this.customProperties[idx] = { name, value };
-    else          this.customProperties.push({ name, value });
+    else this.customProperties.push({ name, value });
     return this;
   }
 
@@ -491,7 +492,7 @@ export class Workbook {
         ...rr.extended,
         ...this.extendedProperties,
         titlesOfParts: this.sheets.map(s => s.name),
-        headingPairs:  this._headingPairs(),
+        headingPairs: this._headingPairs(),
       }, rr.extendedUnknownRaw)),
     });
 
@@ -516,11 +517,11 @@ export class Workbook {
     // ── Styles & shared strings ────────────────────────────────────────────
     if (hasDirty) {
       // All sheets re-serialised → use fresh registries
-      entries.push({ name: 'xl/styles.xml',        data: strToBytes(styles.toXml()) });
+      entries.push({ name: 'xl/styles.xml', data: strToBytes(styles.toXml()) });
       entries.push({ name: 'xl/sharedStrings.xml', data: strToBytes(shared.toXml()) });
     } else {
       // No sheets modified → preserve originals so indices remain valid
-      entries.push({ name: 'xl/styles.xml',        data: strToBytes(rr.stylesXml) });
+      entries.push({ name: 'xl/styles.xml', data: strToBytes(rr.stylesXml) });
       entries.push({ name: 'xl/sharedStrings.xml', data: strToBytes(rr.sharedXml) });
     }
 
@@ -605,7 +606,7 @@ export class Workbook {
     }
 
     // ── Rels ──────────────────────────────────────────────────────────────
-    entries.push({ name: '_rels/.rels',                data: strToBytes(this._buildRootRels(customProps != null && customProps.length > 0)) });
+    entries.push({ name: '_rels/.rels', data: strToBytes(this._buildRootRels(customProps != null && customProps.length > 0)) });
     entries.push({ name: 'xl/_rels/workbook.xml.rels', data: strToBytes(this._buildWorkbookRels(rr, hasDirty)) });
 
     for (const [relPath, relMap] of rr.allRels) {
@@ -637,14 +638,14 @@ export class Workbook {
     let globalRId = 1;
     for (const ws of this.sheets) ws.rId = `rId${globalRId++}`;
 
-    const allImages:  Array<{ ws: Worksheet; img: Image; ext: string; idx: number }> = [];
-    const allCharts:  Array<{ ws: Worksheet; chartIdx: number; globalIdx: number }> = [];
-    const allTables:  Array<{ ws: Worksheet; tableIdx: number; globalTableId: number }> = [];
+    const allImages: Array<{ ws: Worksheet; img: Image; ext: string; idx: number }> = [];
+    const allCharts: Array<{ ws: Worksheet; chartIdx: number; globalIdx: number }> = [];
+    const allTables: Array<{ ws: Worksheet; tableIdx: number; globalTableId: number }> = [];
     const allPivotTables: Array<{ ws: Worksheet; pt: PivotTable; pivotIdx: number; cacheId: number; pivotRId: string; cacheRId: string }> = [];
-    const sheetImageRIds  = new Map<Worksheet, string[]>();
-    const sheetChartRIds  = new Map<Worksheet, string[]>();
-    const sheetTableRIds  = new Map<Worksheet, string[]>();
-    const sheetPivotRIds  = new Map<Worksheet, string[]>();
+    const sheetImageRIds = new Map<Worksheet, string[]>();
+    const sheetChartRIds = new Map<Worksheet, string[]>();
+    const sheetTableRIds = new Map<Worksheet, string[]>();
+    const sheetPivotRIds = new Map<Worksheet, string[]>();
     let imgCtr = 1, chartCtr = 1, tableCtr = 1, vmlCtr = 1, pivotCtr = 1, pivotCacheIdCtr = 0, ctrlPropGlobal = 0, oleObjGlobal = 0;
 
     for (const ws of this.sheets) {
@@ -658,9 +659,9 @@ export class Workbook {
       // legacyDrawing needed for comments OR form controls (they share VML)
       if (ws.getComments().length || controls.length) ws.legacyDrawingRId = `rId${globalRId++}`;
 
-      for (const img of imgs)    { const r = `rId${globalRId++}`; imgRIds.push(r);   allImages.push({ ws, img, ext: imageExt(img.format), idx: imgCtr++ }); }
-      for (let i=0;i<charts.length;i++) { const r = `rId${globalRId++}`; chartRIds.push(r); allCharts.push({ ws, chartIdx: i, globalIdx: chartCtr++ }); }
-      for (let i=0;i<tables.length;i++) { const r = `rId${globalRId++}`; tblRIds.push(r);   allTables.push({ ws, tableIdx: i, globalTableId: tableCtr++ }); }
+      for (const img of imgs) { const r = `rId${globalRId++}`; imgRIds.push(r); allImages.push({ ws, img, ext: imageExt(img.format), idx: imgCtr++ }); }
+      for (let i = 0; i < charts.length; i++) { const r = `rId${globalRId++}`; chartRIds.push(r); allCharts.push({ ws, chartIdx: i, globalIdx: chartCtr++ }); }
+      for (let i = 0; i < tables.length; i++) { const r = `rId${globalRId++}`; tblRIds.push(r); allTables.push({ ws, tableIdx: i, globalTableId: tableCtr++ }); }
 
       // Allocate OLE object rIds
       const oleRIds: string[] = [];
@@ -804,7 +805,7 @@ export class Workbook {
     const hasSlicers = sheetSlicerMap.size > 0;
 
     const hasCustom = this.customProperties.length > 0;
-    const hasVba    = !!this.vbaProject;
+    const hasVba = !!this.vbaProject;
 
     // Content types
     const imgCTs = new Set<string>();
@@ -814,7 +815,7 @@ export class Workbook {
     }
     const sheetsWithComments = this.sheets.filter(ws => ws.getComments().length);
     const sheetsWithVml = this.sheets.filter(ws => ws.getComments().length || ws.getFormControls().length);
-    const vmlCT  = sheetsWithVml.length ? '<Default Extension="vml" ContentType="application/vnd.openxmlformats-officedocument.vmlDrawing"/>' : '';
+    const vmlCT = sheetsWithVml.length ? '<Default Extension="vml" ContentType="application/vnd.openxmlformats-officedocument.vmlDrawing"/>' : '';
     let vmlIdx = 0;
     const commentsCTs = sheetsWithComments.map(() =>
       `<Override PartName="/xl/comments${++vmlIdx}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.comments+xml"/>`
@@ -832,7 +833,8 @@ export class Workbook {
     const hasOleObjects = this.sheets.some(ws => ws.getOleObjects().length > 0);
     const oleCT = hasOleObjects ? '<Default Extension="bin" ContentType="application/vnd.openxmlformats-officedocument.oleObject"/>' : '';
 
-    entries.push({ name: '[Content_Types].xml', data: strToBytes(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+    entries.push({
+      name: '[Content_Types].xml', data: strToBytes(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
 <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
 <Default Extension="xml" ContentType="application/xml"/>
@@ -844,12 +846,12 @@ ${hasVba ? '<Override PartName="/xl/vbaProject.bin" ContentType="application/vnd
 <Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
 <Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/>
 <Override PartName="/xl/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/>
-${this.sheets.filter(ws => !ws._isChartSheet && !ws._isDialogSheet).map(ws => { const idx = this.sheets.indexOf(ws); return `<Override PartName="/xl/worksheets/sheet${idx+1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`; }).join('')}
-${this.sheets.filter(ws => ws._isChartSheet).map(ws => { const idx = this.sheets.indexOf(ws); return `<Override PartName="/xl/chartsheets/sheet${idx+1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.chartsheet+xml"/>`; }).join('')}
-${this.sheets.filter(ws => ws._isDialogSheet).map(ws => { const idx = this.sheets.indexOf(ws); return `<Override PartName="/xl/dialogsheets/sheet${idx+1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.dialogsheet+xml"/>`; }).join('')}
-${this.sheets.filter(ws=>ws.drawingRId).map((_,i) => `<Override PartName="/xl/drawings/drawing${i+1}.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>`).join('')}
-${allCharts.map(({globalIdx}) => `<Override PartName="/xl/charts/chart${globalIdx}.xml" ContentType="application/vnd.openxmlformats-officedocument.drawingml.chart+xml"/>`).join('')}
-${allTables.map(({globalTableId}) => `<Override PartName="/xl/tables/table${globalTableId}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml"/>`).join('')}
+${this.sheets.filter(ws => !ws._isChartSheet && !ws._isDialogSheet).map(ws => { const idx = this.sheets.indexOf(ws); return `<Override PartName="/xl/worksheets/sheet${idx + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`; }).join('')}
+${this.sheets.filter(ws => ws._isChartSheet).map(ws => { const idx = this.sheets.indexOf(ws); return `<Override PartName="/xl/chartsheets/sheet${idx + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.chartsheet+xml"/>`; }).join('')}
+${this.sheets.filter(ws => ws._isDialogSheet).map(ws => { const idx = this.sheets.indexOf(ws); return `<Override PartName="/xl/dialogsheets/sheet${idx + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.dialogsheet+xml"/>`; }).join('')}
+${this.sheets.filter(ws => ws.drawingRId).map((_, i) => `<Override PartName="/xl/drawings/drawing${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>`).join('')}
+${allCharts.map(({ globalIdx }) => `<Override PartName="/xl/charts/chart${globalIdx}.xml" ContentType="application/vnd.openxmlformats-officedocument.drawingml.chart+xml"/>`).join('')}
+${allTables.map(({ globalTableId }) => `<Override PartName="/xl/tables/table${globalTableId}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml"/>`).join('')}
 ${allPivotTables.map(p => `<Override PartName="/xl/pivotTables/pivotTable${p.pivotIdx}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.pivotTable+xml"/>`).join('\n')}
 ${allPivotTables.map(p => `<Override PartName="/xl/pivotCache/pivotCacheDefinition${p.pivotIdx}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.pivotCacheDefinition+xml"/>`).join('\n')}
 ${allPivotTables.map(p => `<Override PartName="/xl/pivotCache/pivotCacheRecords${p.pivotIdx}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.pivotCacheRecords+xml"/>`).join('\n')}
@@ -859,27 +861,29 @@ ${ctrlPropCTs.join('')}
 <Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>
 ${hasCustom ? '<Override PartName="/docProps/custom.xml" ContentType="application/vnd.openxmlformats-officedocument.custom-properties+xml"/>' : ''}
 ${this.connections.length ? '<Override PartName="/xl/connections.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.connections+xml"/>' : ''}
-${this.externalLinks.map((_,i) => `<Override PartName="/xl/externalLinks/externalLink${i+1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.externalLink+xml"/>`).join('\n')}
+${this.externalLinks.map((_, i) => `<Override PartName="/xl/externalLinks/externalLink${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.externalLink+xml"/>`).join('\n')}
 ${[...sheetSlicerMap.values()].map(info => `<Override PartName="/xl/slicers/slicer${info.slicerDefIdx}.xml" ContentType="application/vnd.ms-excel.slicer+xml"/>`).join('\n')}
 ${allSlicerCaches.map(sc => `<Override PartName="/xl/slicerCaches/slicerCache${sc.idx}.xml" ContentType="application/vnd.ms-excel.slicerCache+xml"/>`).join('\n')}
-${this.sheets.flatMap(ws => ws.getQueryTables()).map((_,i) => `<Override PartName="/xl/queryTables/queryTable${i+1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.queryTable+xml"/>`).join('\n')}
+${this.sheets.flatMap(ws => ws.getQueryTables()).map((_, i) => `<Override PartName="/xl/queryTables/queryTable${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.queryTable+xml"/>`).join('\n')}
 ${hasCellImages ? `<Override PartName="/xl/metadata.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheetMetadata+xml"/>
 <Override PartName="/xl/richData/rdrichvalue.xml" ContentType="application/vnd.ms-excel.rdrichvalue+xml"/>
 <Override PartName="/xl/richData/rdRichValueStructure.xml" ContentType="application/vnd.ms-excel.rdrichvaluestructure+xml"/>
 <Override PartName="/xl/richData/richValueRel.xml" ContentType="application/vnd.ms-excel.richvaluerel+xml"/>
 <Override PartName="/xl/richData/rdRichValueTypes.xml" ContentType="application/vnd.ms-excel.rdrichvaluetypes+xml"/>
 <Override PartName="/xl/richData/rdarray.xml" ContentType="application/vnd.ms-excel.rdarray+xml"/>` : ''}
-</Types>`) });
+</Types>`)
+    });
 
     entries.push({ name: '_rels/.rels', data: strToBytes(this._buildRootRels(hasCustom)) });
 
-    entries.push({ name: 'xl/_rels/workbook.xml.rels', data: strToBytes(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+    entries.push({
+      name: 'xl/_rels/workbook.xml.rels', data: strToBytes(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-${this.sheets.map((ws,i) => {
-  const type = ws._isChartSheet ? 'chartsheet' : ws._isDialogSheet ? 'dialogsheet' : 'worksheet';
-  const folder = ws._isChartSheet ? 'chartsheets' : ws._isDialogSheet ? 'dialogsheets' : 'worksheets';
-  return `<Relationship Id="${ws.rId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/${type}" Target="${folder}/sheet${i+1}.xml"/>`;
-}).join('')}
+${this.sheets.map((ws, i) => {
+        const type = ws._isChartSheet ? 'chartsheet' : ws._isDialogSheet ? 'dialogsheet' : 'worksheet';
+        const folder = ws._isChartSheet ? 'chartsheets' : ws._isDialogSheet ? 'dialogsheets' : 'worksheets';
+        return `<Relationship Id="${ws.rId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/${type}" Target="${folder}/sheet${i + 1}.xml"/>`;
+      }).join('')}
 <Relationship Id="rIdStyles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
 <Relationship Id="rIdShared" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/>
 <Relationship Id="rIdTheme" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" Target="theme/theme1.xml"/>
@@ -887,14 +891,15 @@ ${allPivotTables.map(p => `<Relationship Id="${p.cacheRId}" Type="http://schemas
 ${allSlicerCaches.map(sc => `<Relationship Id="${sc.rId}" Type="http://schemas.microsoft.com/office/2007/relationships/slicerCache" Target="slicerCaches/slicerCache${sc.idx}.xml"/>`).join('\n')}
 ${hasVba ? '<Relationship Id="rIdVBA" Type="http://schemas.microsoft.com/office/2006/relationships/vbaProject" Target="vbaProject.bin"/>' : ''}
 ${this.connections.length ? '<Relationship Id="rIdConns" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/connections" Target="connections.xml"/>' : ''}
-${this.externalLinks.map((_,i) => `<Relationship Id="rIdExtLink${i+1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/externalLink" Target="externalLinks/externalLink${i+1}.xml"/>`).join('\n')}
+${this.externalLinks.map((_, i) => `<Relationship Id="rIdExtLink${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/externalLink" Target="externalLinks/externalLink${i + 1}.xml"/>`).join('\n')}
 ${hasCellImages ? '<Relationship Id="rIdMeta" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sheetMetadata" Target="metadata.xml"/>' : ''}
 ${hasCellImages ? '<Relationship Id="rIdRichValueRel" Type="http://schemas.microsoft.com/office/2022/10/relationships/richValueRel" Target="richData/richValueRel.xml"/>' : ''}
 ${hasCellImages ? '<Relationship Id="rIdRichValue" Type="http://schemas.microsoft.com/office/2017/06/relationships/rdRichValue" Target="richData/rdrichvalue.xml"/>' : ''}
 ${hasCellImages ? '<Relationship Id="rIdRichValueStruct" Type="http://schemas.microsoft.com/office/2017/06/relationships/rdRichValueStructure" Target="richData/rdRichValueStructure.xml"/>' : ''}
 ${hasCellImages ? '<Relationship Id="rIdRichValueTypes" Type="http://schemas.microsoft.com/office/2017/06/relationships/rdRichValueTypes" Target="richData/rdRichValueTypes.xml"/>' : ''}
 ${hasCellImages ? '<Relationship Id="rIdRdArray" Type="http://schemas.microsoft.com/office/2017/06/relationships/rdArray" Target="richData/rdarray.xml"/>' : ''}
-</Relationships>`) });
+</Relationships>`)
+    });
 
     // ── VBA project binary ──────────────────────────────────────────────
     if (hasVba) {
@@ -912,24 +917,26 @@ ${hasCellImages ? '<Relationship Id="rIdRdArray" Type="http://schemas.microsoft.
       ? `<pivotCaches>${allPivotTables.map(p => `<pivotCache cacheId="${p.cacheId}" r:id="${p.cacheRId}"/>`).join('')}</pivotCaches>`
       : '';
 
-    entries.push({ name: 'xl/workbook.xml', data: strToBytes(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+    entries.push({
+      name: 'xl/workbook.xml', data: strToBytes(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
 ${date1904}
 <bookViews><workbookView xWindow="0" yWindow="0" windowWidth="14400" windowHeight="8260"${this._activeTabIndex ? ` activeTab="${this._activeTabIndex}"` : ''}/></bookViews>
-<sheets>${this.sheets.map((ws,i) => `<sheet name="${escapeXml(ws.name)}" sheetId="${i+1}" r:id="${ws.rId}"${ws.options?.state && ws.options.state !== 'visible' ? ` state="${ws.options.state}"` : ''}/>`).join('')}</sheets>
+<sheets>${this.sheets.map((ws, i) => `<sheet name="${escapeXml(ws.name)}" sheetId="${i + 1}" r:id="${ws.rId}"${ws.options?.state && ws.options.state !== 'visible' ? ` state="${ws.options.state}"` : ''}/>`).join('')}</sheets>
 ${namedRangesXml}
 ${this._calcPrXml()}
 ${pivotCachesXml}
 ${hasSlicers ? (() => {
-  const tableSlicers = allSlicerCaches.filter(sc => sc.type === 'table');
-  const pivotSlicers = allSlicerCaches.filter(sc => sc.type === 'pivot');
-  let xml = '<extLst>';
-  if (pivotSlicers.length) xml += `<ext uri="{BBE1A952-AA13-448e-AADC-164F8A28A991}" xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main"><x14:slicerCaches>${pivotSlicers.map(sc => `<x14:slicerCache r:id="${sc.rId}"/>`).join('')}</x14:slicerCaches></ext>`;
-  if (tableSlicers.length) xml += `<ext uri="{46BE6895-7355-4a93-B00E-2C351335B9C9}" xmlns:x15="http://schemas.microsoft.com/office/spreadsheetml/2010/11/main" xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main"><x15:slicerCaches>${tableSlicers.map(sc => `<x14:slicerCache r:id="${sc.rId}"/>`).join('')}</x15:slicerCaches></ext>`;
-  xml += '</extLst>';
-  return xml;
-})() : ''}
-</workbook>`) });
+          const tableSlicers = allSlicerCaches.filter(sc => sc.type === 'table');
+          const pivotSlicers = allSlicerCaches.filter(sc => sc.type === 'pivot');
+          let xml = '<extLst>';
+          if (pivotSlicers.length) xml += `<ext uri="{BBE1A952-AA13-448e-AADC-164F8A28A991}" xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main"><x14:slicerCaches>${pivotSlicers.map(sc => `<x14:slicerCache r:id="${sc.rId}"/>`).join('')}</x14:slicerCaches></ext>`;
+          if (tableSlicers.length) xml += `<ext uri="{46BE6895-7355-4a93-B00E-2C351335B9C9}" xmlns:x15="http://schemas.microsoft.com/office/spreadsheetml/2010/11/main" xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main"><x15:slicerCaches>${tableSlicers.map(sc => `<x14:slicerCache r:id="${sc.rId}"/>`).join('')}</x15:slicerCaches></ext>`;
+          xml += '</extLst>';
+          return xml;
+        })() : ''}
+</workbook>`)
+    });
 
     // ── Connections ─────────────────────────────────────────────────────────
     if (this.connections.length) {
@@ -938,15 +945,15 @@ ${hasSlicers ? (() => {
 
     // Per-sheet
     for (let i = 0; i < this.sheets.length; i++) {
-      const ws       = this.sheets[i];
-      const imgRIds  = sheetImageRIds.get(ws) ?? [];
-      const cRIds    = sheetChartRIds.get(ws) ?? [];
+      const ws = this.sheets[i];
+      const imgRIds = sheetImageRIds.get(ws) ?? [];
+      const cRIds = sheetChartRIds.get(ws) ?? [];
       const tblEntries = allTables.filter(t => t.ws === ws);
       const tblRIds_ = sheetTableRIds.get(ws) ?? [];
 
       // Determine sheet path based on type
       const sheetFolder = ws._isChartSheet ? 'chartsheets' : ws._isDialogSheet ? 'dialogsheets' : 'worksheets';
-      const sheetPath = `xl/${sheetFolder}/sheet${i+1}.xml`;
+      const sheetPath = `xl/${sheetFolder}/sheet${i + 1}.xml`;
 
       // Generate appropriate XML based on sheet type
       if (ws._isChartSheet) {
@@ -959,14 +966,14 @@ ${hasSlicers ? (() => {
 
       const wsRels: string[] = [];
       if (ws.drawingRId) {
-        const dIdx = this.sheets.filter((s,j)=>j<=i&&s.drawingRId).length;
+        const dIdx = this.sheets.filter((s, j) => j <= i && s.drawingRId).length;
         wsRels.push(`<Relationship Id="${ws.drawingRId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing${dIdx}.xml"/>`);
       }
-      for (let j=0;j<(ws.getImages() as Image[]).length;j++) {
-        const g = allImages.filter(x=>x.ws===ws)[j];
+      for (let j = 0; j < (ws.getImages() as Image[]).length; j++) {
+        const g = allImages.filter(x => x.ws === ws)[j];
         if (g) wsRels.push(`<Relationship Id="${imgRIds[j]}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image${g.idx}.${g.ext}"/>`);
       }
-      for (let j=0;j<tblEntries.length;j++) {
+      for (let j = 0; j < tblEntries.length; j++) {
         wsRels.push(`<Relationship Id="${tblRIds_[j]}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/table" Target="../tables/table${tblEntries[j].globalTableId}.xml"/>`);
       }
       const ptRIds_ = sheetPivotRIds.get(ws) ?? [];
@@ -993,8 +1000,8 @@ ${hasSlicers ? (() => {
 
         // Build comment VML shapes
         const commentShapes = sheetComments.map(({ row, col }, ci) => {
-          const left  = (col + 1) * 64;
-          const top   = (row - 1) * 20;
+          const left = (col + 1) * 64;
+          const top = (row - 1) * 20;
           const sid = 1025 + i * 1000 + ci;
           return `<v:shape id="_x0000_s${sid}" type="#_x0000_t202" style="position:absolute;margin-left:${left}pt;margin-top:${top}pt;width:108pt;height:59.25pt;z-index:${ci + 1};visibility:hidden" fillcolor="#ffffe1" o:insetmode="auto">
 <v:fill color2="#ffffe1"/>
@@ -1052,29 +1059,33 @@ ${hasSlicers ? (() => {
         }
       }
       if (wsRels.length) {
-        entries.push({ name: `xl/${sheetFolder}/_rels/sheet${i+1}.xml.rels`, data: strToBytes(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+        entries.push({
+          name: `xl/${sheetFolder}/_rels/sheet${i + 1}.xml.rels`, data: strToBytes(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
 ${wsRels.join('\n')}
-</Relationships>`) });
+</Relationships>`)
+        });
       }
 
       if (ws.drawingRId) {
-        const dIdx = this.sheets.filter((s,j)=>j<=i&&s.drawingRId).length;
+        const dIdx = this.sheets.filter((s, j) => j <= i && s.drawingRId).length;
         entries.push({ name: `xl/drawings/drawing${dIdx}.xml`, data: strToBytes(ws.toDrawingXml(imgRIds, cRIds)) });
         const dRels: string[] = [];
-        for (let j=0;j<(ws.getImages() as Image[]).length;j++) {
-          const g = allImages.filter(x=>x.ws===ws)[j];
+        for (let j = 0; j < (ws.getImages() as Image[]).length; j++) {
+          const g = allImages.filter(x => x.ws === ws)[j];
           if (g) dRels.push(`<Relationship Id="${imgRIds[j]}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image${g.idx}.${g.ext}"/>`);
         }
-        for (let j=0;j<ws.getCharts().length;j++) {
-          const g = allCharts.filter(x=>x.ws===ws)[j];
+        for (let j = 0; j < ws.getCharts().length; j++) {
+          const g = allCharts.filter(x => x.ws === ws)[j];
           if (g) dRels.push(`<Relationship Id="${cRIds[j]}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart" Target="../charts/chart${g.globalIdx}.xml"/>`);
         }
         if (dRels.length) {
-          entries.push({ name: `xl/drawings/_rels/drawing${dIdx}.xml.rels`, data: strToBytes(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+          entries.push({
+            name: `xl/drawings/_rels/drawing${dIdx}.xml.rels`, data: strToBytes(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
 ${dRels.join('\n')}
-</Relationships>`) });
+</Relationships>`)
+          });
         }
       }
     }
@@ -1095,18 +1106,23 @@ ${dRels.join('\n')}
         entries.push({ name: `xl/media/image${idx}.${ext}`, data: typeof img.data === 'string' ? base64ToBytes(img.data) : img.data });
       }
 
-      entries.push({ name: 'xl/metadata.xml',                        data: strToBytes(buildMetadataXml(allCellImages.length)) });
-      entries.push({ name: 'xl/richData/rdrichvalue.xml',             data: strToBytes(buildRichValueXml(allCellImages.length)) });
-      entries.push({ name: 'xl/richData/richValueRel.xml',            data: strToBytes(buildRichValueRelXml(cellImgRIds)) });
-      entries.push({ name: 'xl/richData/rdRichValueStructure.xml',    data: strToBytes(buildRichValueStructureXml()) });
-      entries.push({ name: 'xl/richData/rdRichValueTypes.xml',        data: strToBytes(buildRichValueTypesXml()) });
-      entries.push({ name: 'xl/richData/rdarray.xml',                data: strToBytes(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><arrayData xmlns="http://schemas.microsoft.com/office/spreadsheetml/2017/richdata2" count="0"></arrayData>`) });
-      entries.push({ name: 'xl/richData/_rels/richValueRel.xml.rels', data: strToBytes(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+      entries.push({ name: 'xl/metadata.xml', data: strToBytes(buildMetadataXml(allCellImages.length)) });
+      entries.push({ name: 'xl/richData/rdrichvalue.xml', data: strToBytes(buildRichValueXml(allCellImages.length)) });
+      entries.push({ name: 'xl/richData/richValueRel.xml', data: strToBytes(buildRichValueRelXml(cellImgRIds)) });
+      entries.push({ name: 'xl/richData/rdRichValueStructure.xml', data: strToBytes(buildRichValueStructureXml()) });
+      entries.push({ name: 'xl/richData/rdRichValueTypes.xml', data: strToBytes(buildRichValueTypesXml()) });
+      entries.push({ name: 'xl/richData/rdarray.xml', data: strToBytes(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><arrayData xmlns="http://schemas.microsoft.com/office/spreadsheetml/2017/richdata2" count="0"></arrayData>`) });
+      entries.push({
+        name: 'xl/richData/_rels/richValueRel.xml.rels', data: strToBytes(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
 ${cellImgRels.join('\n')}
-</Relationships>`) });
+</Relationships>`)
+      });
     }
     for (const { ws, chartIdx, globalIdx } of allCharts) {
+      if (!buildChartXml) {
+        buildChartXml = (await import('../features/ChartBuilder.js')).buildChartXml;
+      }
       entries.push({ name: `xl/charts/chart${globalIdx}.xml`, data: strToBytes(buildChartXml(ws.getCharts()[chartIdx])) });
     }
     for (const { ws, tableIdx, globalTableId } of allTables) {
@@ -1114,20 +1130,20 @@ ${cellImgRels.join('\n')}
     }
 
     for (const { ws, pt, pivotIdx, cacheId: cId } of allPivotTables) {
-      const sourceWs   = this.sheets.find(s => s.name === pt.sourceSheet);
+      const sourceWs = this.sheets.find(s => s.name === pt.sourceSheet);
       const sourceData = sourceWs ? sourceWs.readRange(pt.sourceRef) : [[]];
       const { pivotTableXml, cacheDefXml, cacheRecordsXml } = buildPivotTableFiles(pt, sourceData, pivotIdx, cId);
       const wbRel = (type: string, target: string) =>
         `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">\n<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/${type}" Target="${target}"/>\n</Relationships>`;
 
-      entries.push({ name: `xl/pivotTables/pivotTable${pivotIdx}.xml`,                               data: strToBytes(pivotTableXml) });
-      entries.push({ name: `xl/pivotTables/_rels/pivotTable${pivotIdx}.xml.rels`,                    data: strToBytes(wbRel('pivotCacheDefinition', `../pivotCache/pivotCacheDefinition${pivotIdx}.xml`)) });
-      entries.push({ name: `xl/pivotCache/pivotCacheDefinition${pivotIdx}.xml`,                      data: strToBytes(cacheDefXml) });
-      entries.push({ name: `xl/pivotCache/_rels/pivotCacheDefinition${pivotIdx}.xml.rels`,           data: strToBytes(wbRel('pivotCacheRecords', `pivotCacheRecords${pivotIdx}.xml`)) });
-      entries.push({ name: `xl/pivotCache/pivotCacheRecords${pivotIdx}.xml`,                         data: strToBytes(cacheRecordsXml) });
+      entries.push({ name: `xl/pivotTables/pivotTable${pivotIdx}.xml`, data: strToBytes(pivotTableXml) });
+      entries.push({ name: `xl/pivotTables/_rels/pivotTable${pivotIdx}.xml.rels`, data: strToBytes(wbRel('pivotCacheDefinition', `../pivotCache/pivotCacheDefinition${pivotIdx}.xml`)) });
+      entries.push({ name: `xl/pivotCache/pivotCacheDefinition${pivotIdx}.xml`, data: strToBytes(cacheDefXml) });
+      entries.push({ name: `xl/pivotCache/_rels/pivotCacheDefinition${pivotIdx}.xml.rels`, data: strToBytes(wbRel('pivotCacheRecords', `pivotCacheRecords${pivotIdx}.xml`)) });
+      entries.push({ name: `xl/pivotCache/pivotCacheRecords${pivotIdx}.xml`, data: strToBytes(cacheRecordsXml) });
     }
 
-    entries.push({ name: 'xl/styles.xml',        data: strToBytes(styles.toXml()) });
+    entries.push({ name: 'xl/styles.xml', data: strToBytes(styles.toXml()) });
     entries.push({ name: 'xl/sharedStrings.xml', data: strToBytes(shared.toXml()) });
 
     // ── Theme ──────────────────────────────────────────────────────────────
@@ -1143,16 +1159,20 @@ ${cellImgRels.join('\n')}
         ).join('') ?? '';
         return `<sheetName val="${escapeXml(s.name)}"/>${dNames ? `<sheetDataSet>${dNames}</sheetDataSet>` : ''}`;
       }).join('');
-      entries.push({ name: `xl/externalLinks/externalLink${idx}.xml`, data: strToBytes(
-        `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+      entries.push({
+        name: `xl/externalLinks/externalLink${idx}.xml`, data: strToBytes(
+          `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <externalLink xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
 <externalBook r:id="rId1"><sheetNames>${sheetsXml}</sheetNames></externalBook>
-</externalLink>`) });
-      entries.push({ name: `xl/externalLinks/_rels/externalLink${idx}.xml.rels`, data: strToBytes(
-        `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+</externalLink>`)
+      });
+      entries.push({
+        name: `xl/externalLinks/_rels/externalLink${idx}.xml.rels`, data: strToBytes(
+          `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
 <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/externalLinkPath" Target="${escapeXml(link.target)}" TargetMode="External"/>
-</Relationships>`) });
+</Relationships>`)
+      });
     }
 
     // ── Slicers (per-sheet definitions + caches) ───────────────────────────
@@ -1168,11 +1188,13 @@ ${cellImgRels.join('\n')}
         const s = ps.slicer;
         allSheetSlicerItems.push(`<slicer name="${escapeXml(s.name)}" cache="${escapeXml(s.name + '_cache')}" caption="${escapeXml(s.caption ?? s.fieldName)}" rowHeight="241300" columnCount="${s.columnCount ?? 1}" style="${s.style ?? 'SlicerStyleLight1'}"/>`);
       }
-      entries.push({ name: `xl/slicers/slicer${info.slicerDefIdx}.xml`, data: strToBytes(
-        `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+      entries.push({
+        name: `xl/slicers/slicer${info.slicerDefIdx}.xml`, data: strToBytes(
+          `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <slicers xmlns="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:x="http://schemas.openxmlformats.org/spreadsheetml/2006/main" mc:Ignorable="x">
 ${allSheetSlicerItems.join('\n')}
-</slicers>`) });
+</slicers>`)
+      });
     }
 
     // Slicer caches (all types unified)
@@ -1185,39 +1207,45 @@ ${allSheetSlicerItems.join('\n')}
         cacheBody = `<pivotTables><pivotTable tabId="${sc.tabId}" name="${escapeXml(sc.pivotTableName ?? '')}"/></pivotTables>` +
           (sc.items?.length ? `<data><tabular pivotCacheId="${sc.pivotCacheId}" showMissing="0"><items count="${sc.items.length}">${itemsXml}</items></tabular></data>` : '');
       }
-      entries.push({ name: `xl/slicerCaches/slicerCache${sc.idx}.xml`, data: strToBytes(
-        `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+      entries.push({
+        name: `xl/slicerCaches/slicerCache${sc.idx}.xml`, data: strToBytes(
+          `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <slicerCacheDefinition xmlns="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main" xmlns:x="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" mc:Ignorable="x" name="${escapeXml(sc.name)}" sourceName="${escapeXml(sc.sourceName)}">
 ${cacheBody}
-</slicerCacheDefinition>`) });
+</slicerCacheDefinition>`)
+      });
     }
 
     // ── Query Tables ────────────────────────────────────────────────────────
     const allQueryTables = this.sheets.flatMap(ws => ws.getQueryTables());
     for (let i = 0; i < allQueryTables.length; i++) {
       const qt = allQueryTables[i];
-      entries.push({ name: `xl/queryTables/queryTable${i + 1}.xml`, data: strToBytes(
-        `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+      entries.push({
+        name: `xl/queryTables/queryTable${i + 1}.xml`, data: strToBytes(
+          `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <queryTable xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" name="${escapeXml(qt.name)}" connectionId="${qt.connectionId}" autoFormatId="16" applyNumberFormats="0" applyBorderFormats="0" applyFontFormats="0" applyPatternFormats="0" applyAlignmentFormats="0" applyWidthHeightFormats="0">
 <queryTableRefresh nextId="${(qt.columns?.length ?? 0) + 1}">
 <queryTableFields count="${qt.columns?.length ?? 0}">
-${(qt.columns ?? []).map((c,ci) => `<queryTableField id="${ci+1}" name="${escapeXml(c)}" tableColumnId="${ci+1}"/>`).join('\n')}
+${(qt.columns ?? []).map((c, ci) => `<queryTableField id="${ci + 1}" name="${escapeXml(c)}" tableColumnId="${ci + 1}"/>`).join('\n')}
 </queryTableFields>
 </queryTableRefresh>
-</queryTable>`) });
+</queryTable>`)
+      });
     }
 
     const cp = { ...this.coreProperties, created: this.coreProperties.created ?? new Date(), modified: new Date() };
     if (!cp.creator && this.properties.author) cp.creator = this.properties.author;
     entries.push({ name: 'docProps/core.xml', data: strToBytes(buildCoreXml(cp)) });
 
-    entries.push({ name: 'docProps/app.xml', data: strToBytes(buildAppXml({
-      ...this.extendedProperties,
-      application: this.extendedProperties.application ?? 'ExcelForge',
-      company:     this.extendedProperties.company ?? this.properties.company,
-      titlesOfParts: this.sheets.map(s => s.name),
-      headingPairs:  this._headingPairs(),
-    })) });
+    entries.push({
+      name: 'docProps/app.xml', data: strToBytes(buildAppXml({
+        ...this.extendedProperties,
+        application: this.extendedProperties.application ?? 'ExcelForge',
+        company: this.extendedProperties.company ?? this.properties.company,
+        titlesOfParts: this.sheets.map(s => s.name),
+        headingPairs: this._headingPairs(),
+      }))
+    });
 
     if (hasCustom) entries.push({ name: 'docProps/custom.xml', data: strToBytes(buildCustomXml(this.customProperties)) });
 
@@ -1228,11 +1256,11 @@ ${(qt.columns ?? []).map((c,ci) => `<queryTableField id="${ci+1}" name="${escape
 
   private _headingPairs(): Array<{ name: string; count: number }> {
     const normalCount = this.sheets.filter(ws => !ws._isChartSheet && !ws._isDialogSheet).length;
-    const chartCount  = this.sheets.filter(ws => ws._isChartSheet).length;
+    const chartCount = this.sheets.filter(ws => ws._isChartSheet).length;
     const dialogCount = this.sheets.filter(ws => ws._isDialogSheet).length;
     const pairs: Array<{ name: string; count: number }> = [];
     if (normalCount) pairs.push({ name: 'Worksheets', count: normalCount });
-    if (chartCount)  pairs.push({ name: 'Charts', count: chartCount });
+    if (chartCount) pairs.push({ name: 'Charts', count: chartCount });
     if (dialogCount) pairs.push({ name: 'Dialogs', count: dialogCount });
     if (!pairs.length) pairs.push({ name: 'Worksheets', count: 0 });
     return pairs;
@@ -1240,16 +1268,16 @@ ${(qt.columns ?? []).map((c,ci) => `<queryTableField id="${ci+1}" name="${escape
 
   private _syncLegacyProperties(): void {
     const p = this.properties;
-    if (p.title)          this.coreProperties.title          ??= p.title;
-    if (p.author)         this.coreProperties.creator        ??= p.author;
-    if (p.subject)        this.coreProperties.subject        ??= p.subject;
-    if (p.description)    this.coreProperties.description    ??= p.description;
-    if (p.keywords)       this.coreProperties.keywords       ??= p.keywords;
-    if (p.company)        this.extendedProperties.company    ??= p.company;
+    if (p.title) this.coreProperties.title ??= p.title;
+    if (p.author) this.coreProperties.creator ??= p.author;
+    if (p.subject) this.coreProperties.subject ??= p.subject;
+    if (p.description) this.coreProperties.description ??= p.description;
+    if (p.keywords) this.coreProperties.keywords ??= p.keywords;
+    if (p.company) this.extendedProperties.company ??= p.company;
     if (p.lastModifiedBy) this.coreProperties.lastModifiedBy ??= p.lastModifiedBy;
-    if (p.created)        this.coreProperties.created        ??= p.created;
-    if (p.category)       this.coreProperties.category       ??= p.category;
-    if (p.status)         this.coreProperties.contentStatus  ??= p.status;
+    if (p.created) this.coreProperties.created ??= p.created;
+    if (p.category) this.coreProperties.category ??= p.category;
+    if (p.status) this.coreProperties.contentStatus ??= p.status;
   }
 
   /** Ensure the VBA project has a document module for each worksheet. */
@@ -1273,7 +1301,7 @@ ${(qt.columns ?? []).map((c,ci) => `<queryTableField id="${ci+1}" name="${escape
     const origCount = rr?.sheets.length ?? this.sheets.length;
     for (let i = 0; i < Math.min(this.sheets.length, origCount); i++) {
       xml = xml.replace(
-        new RegExp(`(<sheet[^>]+sheetId="${i+1}"[^>]+)name="[^"]*"`),
+        new RegExp(`(<sheet[^>]+sheetId="${i + 1}"[^>]+)name="[^"]*"`),
         `$1name="${escapeXml(this.sheets[i].name)}"`
       );
     }
@@ -1405,8 +1433,8 @@ ${(qt.columns ?? []).map((c,ci) => `<queryTableField id="${ci+1}" name="${escape
     const rels = [...rr.workbookRels.entries()]
       .filter(([_, rel]) => !(dropCalcChain && rel.type.includes('/calcChain')))
       .map(([id, rel]) =>
-      `<Relationship Id="${id}" Type="${rel.type}" Target="${rel.target}"/>`
-    );
+        `<Relationship Id="${id}" Type="${rel.type}" Target="${rel.target}"/>`
+      );
     // Add rels for newly added sheets (rId assigned by _patchWorkbookXml)
     const origCount = rr.sheets.length;
     for (let i = origCount; i < this.sheets.length; i++) {
@@ -1432,7 +1460,7 @@ ${rels.join('\n')}
   private _relsToXml(relMap: Map<string, { type: string; target: string; targetMode?: string }>): string {
     return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-${[...relMap.entries()].map(([id,r]) => `<Relationship Id="${escapeXml(id)}" Type="${escapeXml(r.type)}" Target="${escapeXml(r.target)}"${r.targetMode ? ` TargetMode="${escapeXml(r.targetMode)}"` : ''}/>`).join('\n')}
+${[...relMap.entries()].map(([id, r]) => `<Relationship Id="${escapeXml(id)}" Type="${escapeXml(r.type)}" Target="${escapeXml(r.target)}"${r.targetMode ? ` TargetMode="${escapeXml(r.targetMode)}"` : ''}/>`).join('\n')}
 </Relationships>`;
   }
 
@@ -1562,13 +1590,13 @@ ${hasCustom ? `<Relationship Id="rId4" Type="http://schemas.openxmlformats.org/o
           let rPr = '';
           if (run.font) {
             const f = run.font;
-            if (f.bold)   rPr += '<b/>';
+            if (f.bold) rPr += '<b/>';
             if (f.italic) rPr += '<i/>';
             if (f.underline && f.underline !== 'none') rPr += `<u val="${f.underline === 'single' ? 'single' : f.underline}"/>`;
             if (f.strike) rPr += '<strike/>';
-            if (f.size)   rPr += `<sz val="${f.size}"/>`;
-            if (f.color)  rPr += `<color rgb="${f.color}"/>`;
-            if (f.name)   rPr += `<rFont val="${escapeXml(f.name)}"/>`;
+            if (f.size) rPr += `<sz val="${f.size}"/>`;
+            if (f.color) rPr += `<color rgb="${f.color}"/>`;
+            if (f.name) rPr += `<rFont val="${escapeXml(f.name)}"/>`;
             if (f.family != null) rPr += `<family val="${f.family}"/>`;
           }
           const rPrTag = rPr ? `<rPr>${rPr}</rPr>` : '';
@@ -1589,8 +1617,8 @@ ${hasCustom ? `<Relationship Id="rId4" Type="http://schemas.openxmlformats.org/o
   private _buildVmlXml(comments: Array<{ row: number; col: number; comment: Comment }>, sheetIdx: number): string {
     const shapes = comments.map(({ row, col }, i) => {
       // Position the comment box roughly 2 columns right and 0 rows above the cell
-      const left  = (col + 1) * 64;
-      const top   = (row - 1) * 20;
+      const left = (col + 1) * 64;
+      const top = (row - 1) * 20;
       return `<v:shape id="_x0000_s${1025 + sheetIdx * 1000 + i}" type="#_x0000_t202" style="position:absolute;margin-left:${left}pt;margin-top:${top}pt;width:108pt;height:59.25pt;z-index:${i + 1};visibility:hidden" fillcolor="#ffffe1" o:insetmode="auto">
 <v:fill color2="#ffffe1"/>
 <v:shadow color="black" obscured="t"/>
@@ -1609,8 +1637,8 @@ ${shapes}
   async download(filename = 'workbook.xlsx'): Promise<void> {
     const bytes = await this.build();
     const blob = new Blob([bytes.buffer as ArrayBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-    const url  = URL.createObjectURL(blob);
-    const a    = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
     a.href = url; a.download = filename; a.click();
     URL.revokeObjectURL(url);
   }
@@ -1619,17 +1647,17 @@ ${shapes}
 /** Map image file extension to MIME content type */
 function imageContentType(ext: string): string {
   switch (ext) {
-    case 'jpg':  return 'image/jpeg';
-    case 'png':  return 'image/png';
-    case 'gif':  return 'image/gif';
-    case 'bmp':  return 'image/bmp';
+    case 'jpg': return 'image/jpeg';
+    case 'png': return 'image/png';
+    case 'gif': return 'image/gif';
+    case 'bmp': return 'image/bmp';
     case 'tiff': return 'image/tiff';
-    case 'emf':  return 'image/x-emf';
-    case 'wmf':  return 'image/x-wmf';
-    case 'svg':  return 'image/svg+xml';
-    case 'ico':  return 'image/x-icon';
+    case 'emf': return 'image/x-emf';
+    case 'wmf': return 'image/x-wmf';
+    case 'svg': return 'image/svg+xml';
+    case 'ico': return 'image/x-icon';
     case 'webp': return 'image/webp';
-    default:     return `image/${ext}`;
+    default: return `image/${ext}`;
   }
 }
 
