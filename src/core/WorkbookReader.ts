@@ -225,6 +225,15 @@ function find(node: XmlNode, localTag: string): XmlNode | undefined {
   return undefined;
 }
 
+function parseOoxmlColor(node: XmlNode | undefined): string | undefined {
+  if (!node) return undefined;
+  if (node.attrs['rgb']) return node.attrs['rgb'];
+  if (node.attrs['theme']) {
+    return `theme:${node.attrs['theme']}${node.attrs['tint'] ? ':tint:' + node.attrs['tint'] : ''}`;
+  }
+  return undefined;
+}
+
 function parseFont(node: XmlNode): Font {
   const f: Font = {};
   for (const c of node.children) {
@@ -706,7 +715,7 @@ function parseConditionalFormatting(node: XmlNode, ws: Worksheet, styles: Parsed
         type: (c.attrs['type'] ?? 'min') as any,
         val: c.attrs['val'],
       }));
-      const colors = children(csNode, 'color').map(c => c.attrs['rgb'] ?? c.attrs['theme'] ?? '');
+      const colors = children(csNode, 'color').map(c => parseOoxmlColor(c) ?? '');
       cf.colorScale = { type: 'colorScale', cfvo: cfvos, color: colors };
     }
 
@@ -722,7 +731,7 @@ function parseConditionalFormatting(node: XmlNode, ws: Worksheet, styles: Parsed
         minVal: cfvos[0]?.attrs['val'],
         maxType: cfvos[1]?.attrs['type'] as any,
         maxVal: cfvos[1]?.attrs['val'],
-        color: colorNode?.attrs['rgb'],
+        color: parseOoxmlColor(colorNode),
       };
     }
 
@@ -784,7 +793,7 @@ function parseDataValidations(node: XmlNode, ws: Worksheet): void {
 
 // ─── Table XML parsing ────────────────────────────────────────────────────────
 
-function parseTableXml(xml: string): Table | null {
+function parseTableXml(xml: string, styles: ParsedStyles): Table | null {
   try {
     const root = parseXml(xml);
     const tag = localName(root.tag);
@@ -803,6 +812,12 @@ function parseTableXml(xml: string): Table | null {
         if (col.attrs['totalsRowFunction']) tc.totalsRowFunction = col.attrs['totalsRowFunction'] as any;
         if (col.attrs['totalsRowFormula']) tc.totalsRowFormula = col.attrs['totalsRowFormula'];
         if (col.attrs['totalsRowLabel']) tc.totalsRowLabel = col.attrs['totalsRowLabel'];
+        if (col.attrs['filterButton'] === '0') tc.filterButton = false;
+        const dataDxfId = col.attrs['dataDxfId'];
+        if (dataDxfId !== undefined) {
+          const parsedStyle = styles.dxfs[parseInt(dataDxfId, 10)];
+          if (parsedStyle) tc.style = parsedStyle;
+        }
         columns.push(tc);
       }
     }
@@ -1958,7 +1973,7 @@ export async function readWorkbook(data: Uint8Array): Promise<ReadResult> {
             : resolvePath(sheetDir, tblRel.target);
           const tblXml = getText(tblTarget);
           if (tblXml) {
-            const table = parseTableXml(tblXml);
+            const table = parseTableXml(tblXml, styles);
             if (table) ws.addTable(table);
             tablePaths.push(tblTarget);
             tableXmls.push(tblXml);
@@ -2281,4 +2296,3 @@ async function parseDataMashup(data: Uint8Array): Promise<PowerQuery[]> {
 
   return queries;
 }
-

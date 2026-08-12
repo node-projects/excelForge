@@ -737,6 +737,47 @@ const wbPdf = workbookToPdf(wb, { footerText: 'Page &P / &N' });
 writeFileSync('./workbook.pdf', wbPdf);
 ```
 
+### HTML Export
+
+HTML export has three presets. `basic` emits the plain grid, `styled` adds cell formatting,
+conditional formatting, and built-in Excel table styles, and `interactive` also adds
+Excel-style value filters, sticky filter headers, and trims preformatted empty tail rows.
+
+```typescript
+import { Workbook, workbookToHtml } from '@node-projects/excelforge';
+import { writeFileSync } from 'fs';
+
+const wb = await Workbook.fromFile('./ErrorsAndWarnings.xlsx');
+const html = workbookToHtml(wb, {
+  title: 'Errors and Warnings',
+  includeTabs: true,
+  mode: 'interactive',
+});
+writeFileSync('./ErrorsAndWarnings.html', html, 'utf8');
+```
+
+The presets are only conveniences. Each extended feature can be controlled independently:
+
+```typescript
+const html = workbookToHtml(wb, {
+  includeStyles: true,
+  includeConditionalFormatting: true,
+  includeTableStyles: true,
+  includeAutoFilters: true,
+  stickyHeaders: true,
+  trimEmptyRows: true,
+  trimEmptyColumns: true,
+
+  // Optional override when the workbook has no AutoFilter/table metadata.
+  // The first row of every range is treated as the filter header.
+  filterRanges: ['A1:L500'],
+});
+```
+
+When `filterRanges` is omitted, interactive export discovers worksheet AutoFilter ranges and
+Excel table ranges automatically. Filter menus support search, select all, blanks, multi-column
+filtering, applying, and clearing filters entirely in the generated standalone HTML file.
+
 ### Digital Signatures
 
 Sign OOXML packages and VBA projects using RSA with SHA-256 via Web Crypto API.

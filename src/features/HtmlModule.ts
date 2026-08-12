@@ -11,12 +11,14 @@ import type { Workbook } from '../core/Workbook.js';
 import type {
   CellStyle, Font, Fill, PatternFill, GradientFill, Border, BorderSide, Alignment,
   ConditionalFormat, Chart, ChartSeries, Sparkline, MathElement, MathEquation, Image, CellImage, FormControl,
-  Shape, WordArt, ChartPosition,
+  Shape, WordArt, ChartPosition, Table,
 } from '../core/types.js';
 import { escapeXml, colIndexToLetter } from '../utils/helpers.js';
 import { FormulaEngine } from './FormulaEngine.js';
 
 export interface HtmlExportOptions {
+  /** Convenience preset. `interactive` enables table styles, filters, sticky headers, and empty-tail trimming. */
+  mode?: 'basic' | 'styled' | 'interactive';
   /** Include inline CSS styles (default true) */
   includeStyles?: boolean;
   /** Full HTML document or just the <table> (default true) */
@@ -27,6 +29,18 @@ export interface HtmlExportOptions {
   classPrefix?: string;
   /** Include conditional formatting visualization */
   includeConditionalFormatting?: boolean;
+  /** Render built-in Excel table styles, including banded rows */
+  includeTableStyles?: boolean;
+  /** Render interactive Excel-style AutoFilter controls */
+  includeAutoFilters?: boolean;
+  /** Explicit filter ranges (for example `A1:D200`). Overrides detected worksheet/table ranges. */
+  filterRanges?: string[];
+  /** Keep filter/header rows visible while scrolling */
+  stickyHeaders?: boolean;
+  /** Remove trailing rows that contain formatting but no values (useful for pre-sized Excel tables) */
+  trimEmptyRows?: boolean;
+  /** Remove trailing columns that contain formatting but no values */
+  trimEmptyColumns?: boolean;
   /** Include chart placeholders */
   includeCharts?: boolean;
   /** Include sparkline visualization (as inline SVG) */
@@ -60,8 +74,16 @@ function colorToCSS(c: string | undefined): string {
   if (!c) return '';
   if (c.startsWith('#')) return c;
   if (c.startsWith('theme:')) {
-    const idx = parseInt(c.slice(6), 10);
-    return THEME_COLORS[idx] ?? '#000';
+    const match = c.match(/^theme:(\d+)(?::tint:([-+]?\d*\.?\d+))?$/);
+    const idx = match ? parseInt(match[1], 10) : 0;
+    const base = THEME_COLORS[idx] ?? '#000000';
+    const tint = match?.[2] ? parseFloat(match[2]) : 0;
+    if (!tint) return base;
+    const [r, g, b] = parseColor(base);
+    const adjust = (value: number) => Math.round(tint > 0
+      ? value + (255 - value) * tint
+      : value * (1 + tint));
+    return `#${[adjust(r), adjust(g), adjust(b)].map(v => Math.max(0, Math.min(255, v)).toString(16).padStart(2, '0')).join('')}`;
   }
   if (c.length === 8 && !c.startsWith('#')) return '#' + c.slice(2);
   return '#' + c;
@@ -102,7 +124,10 @@ function fontToCSS(f: Font): string {
 function fillToCSS(fill: Fill): string {
   if (fill.type === 'pattern') {
     const pf = fill as PatternFill;
-    if (pf.pattern === 'solid' && pf.fgColor) return `background-color:${colorToCSS(pf.fgColor)}`;
+    // Differential formats frequently omit patternType and store their color
+    // in bgColor. Excel still treats those fills as solid conditional formats.
+    const color = pf.fgColor ?? pf.bgColor;
+    if (color && pf.pattern !== 'none') return `background-color:${colorToCSS(color)}`;
   }
   if (fill.type === 'gradient') {
     const gf = fill as GradientFill;
@@ -168,37 +193,45 @@ function styleToCSS(s: CellStyle): string {
 function formatNumber(value: unknown, fmt: string | undefined): string {
   if (value == null) return '';
   if (!fmt || fmt === 'General') return String(value);
-  const num = typeof value === 'number' ? value : parseFloat(String(value));
-  if (isNaN(num)) return String(value);
+  // Shared-string dates/times must stay strings. parseFloat("00:07:01") used
+  // to turn valid time text into 0 and then accidentally format it as money.
+  if (typeof value !== 'number' || !Number.isFinite(value)) return String(value);
+  const num = value;
+  const cleanFmt = fmt
+    .replace(/\[\$-[^\]]+\]/g, '')
+    .replace(/\\(.)/g, '$1')
+    .replace(/"([^"]*)"/g, '$1');
+
+  // Date/time patterns must be detected before currency: locale markers such
+  // as [$-F400] contain a dollar sign but are not currency formats.
+  if (/[ymdhis]/i.test(cleanFmt) && /[dmyhs]/i.test(cleanFmt)) return formatDate(num, fmt);
 
   // Percentage
-  if (fmt.includes('%')) {
-    const decimals = (fmt.match(/0\.(0+)%/) ?? [])[1]?.length ?? 0;
+  if (cleanFmt.includes('%')) {
+    const decimals = (cleanFmt.match(/0\.(0+)%/) ?? [])[1]?.length ?? 0;
     return (num * 100).toFixed(decimals) + '%';
   }
   // Currency / Accounting
-  const currMatch = fmt.match(/[$€£¥]|"CHF"/);
+  const currMatch = cleanFmt.match(/[$€£¥]|CHF/);
   if (currMatch) {
     const sym = currMatch[0].replace(/"/g, '');
-    const decimals = (fmt.match(/\.(0+)/) ?? [])[1]?.length ?? 2;
+    const decimals = (cleanFmt.match(/\.(0+)/) ?? [])[1]?.length ?? 2;
     const formatted = Math.abs(num).toFixed(decimals).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-    if (fmt.indexOf(currMatch[0]) < fmt.indexOf('0')) {
+    if (cleanFmt.indexOf(currMatch[0]) < cleanFmt.indexOf('0')) {
       return (num < 0 ? '-' : '') + sym + formatted;
     }
     return (num < 0 ? '-' : '') + formatted + ' ' + sym;
   }
   // Thousands separator
-  if (fmt.includes('#,##0') || fmt.includes('#,###')) {
-    const decimals = (fmt.match(/\.(0+)/) ?? [])[1]?.length ?? 0;
+  if (cleanFmt.includes('#,##0') || cleanFmt.includes('#,###')) {
+    const decimals = (cleanFmt.match(/\.(0+)/) ?? [])[1]?.length ?? 0;
     return num.toFixed(decimals).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
   }
   // Fixed decimals
-  const fixedMatch = fmt.match(/^0\.(0+)$/);
+  const fixedMatch = cleanFmt.match(/^0\.(0+)$/);
   if (fixedMatch) return num.toFixed(fixedMatch[1].length);
-  // Date patterns
-  if (/[ymdh]/i.test(fmt)) return formatDate(num, fmt);
   // Fraction
-  if (fmt.includes('?/?') || fmt.includes('??/??')) return formatFraction(num);
+  if (cleanFmt.includes('?/?') || cleanFmt.includes('??/??')) return formatFraction(num);
   // Scientific
   if (/0\.0+E\+0+/i.test(fmt)) {
     const decimals = (fmt.match(/0\.(0+)/) ?? [])[1]?.length ?? 2;
@@ -208,23 +241,37 @@ function formatNumber(value: unknown, fmt: string | undefined): string {
 }
 
 function formatDate(serial: number, fmt: string): string {
-  const epoch = new Date(1899, 11, 30);
-  const d = new Date(epoch.getTime() + serial * 86400000);
-  const Y = d.getFullYear(), M = d.getMonth() + 1, D = d.getDate();
-  const h = d.getHours(), m = d.getMinutes(), s = d.getSeconds();
-  return fmt
-    .replace(/yyyy/gi, String(Y))
-    .replace(/yy/gi, String(Y).slice(-2))
-    .replace(/mmmm/gi, d.toLocaleDateString('en', { month: 'long' }))
-    .replace(/mmm/gi, d.toLocaleDateString('en', { month: 'short' }))
-    .replace(/mm/gi, String(M).padStart(2, '0'))
-    .replace(/m/gi, String(M))
-    .replace(/dd/gi, String(D).padStart(2, '0'))
-    .replace(/d/gi, String(D))
-    .replace(/hh/gi, String(h).padStart(2, '0'))
-    .replace(/h/gi, String(h))
-    .replace(/ss/gi, String(s).padStart(2, '0'))
-    .replace(/nn|MM/g, String(m).padStart(2, '0'));
+  const epoch = Date.UTC(1899, 11, 30);
+  const d = new Date(epoch + serial * 86400000);
+  const Y = d.getUTCFullYear(), M = d.getUTCMonth() + 1, D = d.getUTCDate();
+  let h = d.getUTCHours();
+  const minute = d.getUTCMinutes(), second = d.getUTCSeconds();
+  const hasAmPm = /AM\/PM/i.test(fmt);
+  const amPm = h >= 12 ? 'PM' : 'AM';
+  if (hasAmPm) h = h % 12 || 12;
+  const cleaned = fmt
+    .replace(/\[\$-[^\]]+\]/g, '')
+    .replace(/\\(.)/g, '$1')
+    .replace(/"([^"]*)"/g, '$1');
+  return cleaned.replace(/AM\/PM|yyyy|mmmm|mmm|yy|mm|dd|hh|ss|m|d|h|s/gi, (token, offset: number) => {
+    const lower = token.toLowerCase();
+    if (lower === 'am/pm') return amPm;
+    if (lower === 'yyyy') return String(Y);
+    if (lower === 'yy') return String(Y).slice(-2);
+    if (lower === 'mmmm') return d.toLocaleDateString('en', { month: 'long', timeZone: 'UTC' });
+    if (lower === 'mmm') return d.toLocaleDateString('en', { month: 'short', timeZone: 'UTC' });
+    if (lower === 'dd') return String(D).padStart(2, '0');
+    if (lower === 'd') return String(D);
+    if (lower === 'hh') return String(h).padStart(2, '0');
+    if (lower === 'h') return String(h);
+    if (lower === 'ss') return String(second).padStart(2, '0');
+    if (lower === 's') return String(second);
+    const before = cleaned.slice(0, offset);
+    const after = cleaned.slice(offset + token.length);
+    const isMinute = /h[^a-z]*$/i.test(before) || /^[^a-z]*s/i.test(after) || (!/[yd]/i.test(cleaned) && /[hs]/i.test(cleaned));
+    const value = isMinute ? minute : M;
+    return lower === 'mm' ? String(value).padStart(2, '0') : String(value);
+  });
 }
 
 function formatFraction(num: number): string {
@@ -243,6 +290,183 @@ function formatFraction(num: number): string {
 }
 
 /* ─── Conditional formatting helpers ───────────────────────────────────────── */
+
+interface HtmlRange {
+  startRow: number;
+  startCol: number;
+  endRow: number;
+  endCol: number;
+}
+
+function parseHtmlRange(ref: string): HtmlRange | null {
+  const local = (ref.includes('!') ? ref.slice(ref.lastIndexOf('!') + 1) : ref)
+    .replace(/\$/g, '')
+    .replace(/^'|'$/g, '');
+  const m = local.match(/^([A-Z]+)(\d+)(?::([A-Z]+)(\d+))?$/i);
+  if (!m) return null;
+  return {
+    startCol: colLetterToIdx(m[1].toUpperCase()),
+    startRow: parseInt(m[2], 10),
+    endCol: colLetterToIdx((m[3] ?? m[1]).toUpperCase()),
+    endRow: parseInt(m[4] ?? m[2], 10),
+  };
+}
+
+function rangesForSqref(sqref: string): HtmlRange[] {
+  return sqref.split(/\s+/).map(parseHtmlRange).filter((r): r is HtmlRange => !!r);
+}
+
+function rangeContains(range: HtmlRange, row: number, col: number): boolean {
+  return row >= range.startRow && row <= range.endRow && col >= range.startCol && col <= range.endCol;
+}
+
+function compareValues(left: unknown, operator: string | undefined, right: unknown, right2?: unknown): boolean {
+  const numeric = typeof left === 'number' && typeof right === 'number';
+  const a = numeric ? left : String(left ?? '');
+  const b = numeric ? right : String(right ?? '');
+  switch (operator) {
+    case 'notEqual': case '<>': return a !== b;
+    case 'greaterThan': case '>': return a > b;
+    case 'greaterThanOrEqual': case '>=': return a >= b;
+    case 'lessThan': case '<': return a < b;
+    case 'lessThanOrEqual': case '<=': return a <= b;
+    case 'between': return a >= b && a <= (typeof right2 === 'number' && numeric ? right2 : String(right2 ?? ''));
+    case 'notBetween': return !(a >= b && a <= (typeof right2 === 'number' && numeric ? right2 : String(right2 ?? '')));
+    case 'equal': case '=': default: return a === b;
+  }
+}
+
+function splitFormulaArgs(input: string): string[] {
+  const args: string[] = [];
+  let start = 0, depth = 0, quoted = false;
+  for (let i = 0; i < input.length; i++) {
+    const ch = input[i];
+    if (ch === '"') quoted = !quoted;
+    else if (!quoted && ch === '(') depth++;
+    else if (!quoted && ch === ')') depth--;
+    else if (!quoted && depth === 0 && (ch === ',' || ch === ';')) {
+      args.push(input.slice(start, i).trim());
+      start = i + 1;
+    }
+  }
+  args.push(input.slice(start).trim());
+  return args;
+}
+
+function findComparison(input: string): { left: string; op: string; right: string } | null {
+  let depth = 0, quoted = false;
+  for (let i = 0; i < input.length; i++) {
+    const ch = input[i];
+    if (ch === '"') quoted = !quoted;
+    else if (!quoted && ch === '(') depth++;
+    else if (!quoted && ch === ')') depth--;
+    if (quoted || depth !== 0) continue;
+    const two = input.slice(i, i + 2);
+    if (two === '<>' || two === '>=' || two === '<=') {
+      return { left: input.slice(0, i), op: two, right: input.slice(i + 2) };
+    }
+    if (ch === '=' || ch === '>' || ch === '<') {
+      return { left: input.slice(0, i), op: ch, right: input.slice(i + 1) };
+    }
+  }
+  return null;
+}
+
+function resolveFormulaCell(ws: Worksheet, ref: string, row: number, col: number, anchor: HtmlRange): unknown {
+  const m = ref.match(/^(\$?)([A-Z]+)(\$?)(\d+)$/i);
+  if (!m) return undefined;
+  const baseCol = colLetterToIdx(m[2].toUpperCase());
+  const baseRow = parseInt(m[4], 10);
+  const targetCol = m[1] ? baseCol : baseCol + col - anchor.startCol;
+  const targetRow = m[3] ? baseRow : baseRow + row - anchor.startRow;
+  return ws.getCell(targetRow, targetCol).value;
+}
+
+function formulaOperand(input: string, ws: Worksheet, row: number, col: number, anchor: HtmlRange): unknown {
+  const token = input.trim();
+  if (/^"[\s\S]*"$/.test(token)) return token.slice(1, -1).replace(/""/g, '"');
+  if (/^(TRUE|FALSE)$/i.test(token)) return /^TRUE$/i.test(token);
+  if (/^-?\d+(?:\.\d+)?$/.test(token)) return Number(token);
+  if (/^\$?[A-Z]+\$?\d+$/i.test(token)) return resolveFormulaCell(ws, token, row, col, anchor);
+  const len = token.match(/^LEN\((.*)\)$/i);
+  if (len) return String(formulaOperand(len[1], ws, row, col, anchor) ?? '').length;
+  const search = token.match(/^SEARCH\((.*)\)$/i);
+  if (search) {
+    const [needle, haystack] = splitFormulaArgs(search[1]).map(x => formulaOperand(x, ws, row, col, anchor));
+    const idx = String(haystack ?? '').toLowerCase().indexOf(String(needle ?? '').toLowerCase());
+    return idx >= 0 ? idx + 1 : undefined;
+  }
+  return token;
+}
+
+function evaluateFormulaExpression(input: string, ws: Worksheet, row: number, col: number, anchor: HtmlRange): boolean {
+  const expression = input.trim().replace(/^=/, '');
+  const fn = expression.match(/^(AND|OR|NOT|ISBLANK|ISNUMBER|ISTEXT)\(([\s\S]*)\)$/i);
+  if (fn) {
+    const name = fn[1].toUpperCase();
+    const args = splitFormulaArgs(fn[2]);
+    if (name === 'AND') return args.every(arg => evaluateFormulaExpression(arg, ws, row, col, anchor));
+    if (name === 'OR') return args.some(arg => evaluateFormulaExpression(arg, ws, row, col, anchor));
+    if (name === 'NOT') return !evaluateFormulaExpression(args[0] ?? '', ws, row, col, anchor);
+    const value = formulaOperand(args[0] ?? '', ws, row, col, anchor);
+    if (name === 'ISBLANK') return value == null || value === '';
+    if (name === 'ISNUMBER') return typeof value === 'number' && Number.isFinite(value);
+    return typeof value === 'string';
+  }
+  const comparison = findComparison(expression);
+  if (comparison) {
+    return compareValues(
+      formulaOperand(comparison.left, ws, row, col, anchor),
+      comparison.op,
+      formulaOperand(comparison.right, ws, row, col, anchor),
+    );
+  }
+  return Boolean(formulaOperand(expression, ws, row, col, anchor));
+}
+
+function conditionalFormatApplies(
+  cf: ConditionalFormat,
+  ws: Worksheet,
+  row: number,
+  col: number,
+  allValues: unknown[],
+): boolean {
+  const ranges = rangesForSqref(cf.sqref);
+  const anchor = ranges.find(range => rangeContains(range, row, col));
+  if (!anchor) return false;
+  const value = ws.getCell(row, col).value;
+  const text = String(value ?? '');
+  switch (cf.type) {
+    case 'expression': return cf.formula ? evaluateFormulaExpression(cf.formula, ws, row, col, anchor) : false;
+    case 'cellIs': {
+      const parse = (v: string | undefined) => v == null ? undefined : (/^-?\d+(?:\.\d+)?$/.test(v) ? Number(v) : v.replace(/^"|"$/g, ''));
+      return compareValues(value, cf.operator, parse(cf.formula), parse(cf.formula2));
+    }
+    case 'containsText': return text.includes(cf.text ?? '');
+    case 'notContainsText': return !text.includes(cf.text ?? '');
+    case 'beginsWith': return text.startsWith(cf.text ?? '');
+    case 'endsWith': return text.endsWith(cf.text ?? '');
+    case 'containsBlanks': return value == null || value === '';
+    case 'notContainsBlanks': return value != null && value !== '';
+    case 'containsErrors': return /^#(?:NULL!|DIV\/0!|VALUE!|REF!|NAME\?|NUM!|N\/A)/.test(text);
+    case 'notContainsErrors': return !/^#(?:NULL!|DIV\/0!|VALUE!|REF!|NAME\?|NUM!|N\/A)/.test(text);
+    case 'duplicateValues': return allValues.filter(v => String(v ?? '') === text).length > 1;
+    case 'uniqueValues': return allValues.filter(v => String(v ?? '') === text).length === 1;
+    case 'aboveAverage': {
+      const nums = allValues.filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
+      const avg = nums.length ? nums.reduce((a, b) => a + b, 0) / nums.length : 0;
+      return typeof value === 'number' && (cf.aboveAverage === false ? value < avg : value > avg);
+    }
+    case 'top10': {
+      if (typeof value !== 'number') return false;
+      const nums = allValues.filter((v): v is number => typeof v === 'number' && Number.isFinite(v)).sort((a, b) => b - a);
+      const count = cf.percent ? Math.ceil(nums.length * (cf.rank ?? 10) / 100) : (cf.rank ?? 10);
+      return nums.slice(0, count).includes(value);
+    }
+    case 'colorScale': case 'dataBar': case 'iconSet': return typeof value === 'number';
+    default: return false;
+  }
+}
 
 function evaluateConditionalFormats(cf: ConditionalFormat, value: number, allValues: number[]): string {
   if (cf.colorScale) {
@@ -284,6 +508,74 @@ function evaluateConditionalFormats(cf: ConditionalFormat, value: number, allVal
     return `data-icon="${icons[idx]}"`;
   }
   return '';
+}
+
+/* ─── Excel table styling ─────────────────────────────────────────────────── */
+
+interface TablePalette {
+  header: string;
+  headerText: string;
+  stripe: string;
+  border: string;
+  total: string;
+}
+
+const TABLE_STYLE_PALETTES: Record<string, TablePalette> = {
+  TableStyleMedium1: { header: '#000000', headerText: '#FFFFFF', stripe: '#E7E6E6', border: '#A6A6A6', total: '#D9D9D9' },
+  TableStyleMedium2: { header: '#4472C4', headerText: '#FFFFFF', stripe: '#D9E2F3', border: '#8EAADB', total: '#B4C6E7' },
+  TableStyleMedium3: { header: '#ED7D31', headerText: '#FFFFFF', stripe: '#FCE4D6', border: '#F4B183', total: '#F8CBAD' },
+  TableStyleMedium4: { header: '#A5A5A5', headerText: '#FFFFFF', stripe: '#E7E6E6', border: '#BFBFBF', total: '#D9D9D9' },
+  TableStyleMedium5: { header: '#FFC000', headerText: '#000000', stripe: '#FFF2CC', border: '#FFD966', total: '#FFE699' },
+  TableStyleMedium6: { header: '#5B9BD5', headerText: '#FFFFFF', stripe: '#DDEBF7', border: '#9DC3E6', total: '#BDD7EE' },
+  TableStyleMedium7: { header: '#70AD47', headerText: '#FFFFFF', stripe: '#E2F0D9', border: '#A9D18E', total: '#C6E0B4' },
+  TableStyleMedium8: { header: '#264478', headerText: '#FFFFFF', stripe: '#D9E2F3', border: '#8EAADB', total: '#B4C6E7' },
+  TableStyleMedium9: { header: '#A64D79', headerText: '#FFFFFF', stripe: '#EADCF8', border: '#C9A0DC', total: '#D9B8EA' },
+};
+
+function paletteForTable(table: Table): TablePalette {
+  if (table.style && TABLE_STYLE_PALETTES[table.style]) return TABLE_STYLE_PALETTES[table.style];
+  const style = table.style ?? '';
+  if (/TableStyleDark/i.test(style)) return { header: '#203864', headerText: '#FFFFFF', stripe: '#D9E2F3', border: '#7F8FA6', total: '#B4C6E7' };
+  if (/TableStyleLight/i.test(style)) return { header: '#FFFFFF', headerText: '#203864', stripe: '#F2F2F2', border: '#B4C6E7', total: '#D9E2F3' };
+  return TABLE_STYLE_PALETTES.TableStyleMedium2;
+}
+
+function tableForCell(tables: readonly Table[], row: number, col: number): { table: Table; range: HtmlRange } | undefined {
+  for (const table of tables) {
+    const range = parseHtmlRange(table.ref);
+    if (range && rangeContains(range, row, col)) return { table, range };
+  }
+  return undefined;
+}
+
+function tableStyleToCSS(table: Table, range: HtmlRange, row: number, col: number): string {
+  const palette = paletteForTable(table);
+  const parts = [`border-color:${palette.border}`];
+  const isHeader = row === range.startRow;
+  const isTotal = !!table.totalsRow && row === range.endRow;
+  if (isHeader) {
+    parts.push(`background-color:${palette.header}`, `color:${palette.headerText}`, 'font-weight:bold', 'vertical-align:middle');
+  } else if (isTotal) {
+    parts.push(`background-color:${palette.total}`, 'font-weight:bold', `border-top:2px solid ${palette.header}`);
+  } else {
+    const dataRow = row - range.startRow;
+    if (table.showRowStripes && dataRow % 2 === 1) parts.push(`background-color:${palette.stripe}`);
+    if (table.showColumnStripes && (col - range.startCol) % 2 === 1) parts.push(`background-color:${palette.stripe}`);
+  }
+  if (table.showFirstColumn && col === range.startCol) parts.push('font-weight:bold');
+  if (table.showLastColumn && col === range.endCol) parts.push('font-weight:bold');
+  return parts.join(';');
+}
+
+function numberFormatForStyle(style: CellStyle | undefined): string | undefined {
+  if (style?.numberFormat?.formatCode) return style.numberFormat.formatCode;
+  const builtin: Record<number, string> = {
+    1: '0', 2: '0.00', 3: '#,##0', 4: '#,##0.00', 9: '0%', 10: '0.00%',
+    11: '0.00E+00', 12: '# ?/?', 13: '# ??/??', 14: 'mm-dd-yy', 15: 'd-mmm-yy',
+    16: 'd-mmm', 17: 'mmm-yy', 18: 'h:mm AM/PM', 19: 'h:mm:ss AM/PM',
+    20: 'h:mm', 21: 'h:mm:ss', 22: 'm/d/yy h:mm', 45: 'mm:ss', 46: '[h]:mm:ss', 49: '@',
+  };
+  return style?.numFmtId == null ? undefined : builtin[style.numFmtId];
 }
 
 /* ─── Sparkline SVG ────────────────────────────────────────────────────────── */
@@ -1157,12 +1449,111 @@ function resolveSparklineData(ws: Worksheet, dataRange: string): number[] {
   return vals;
 }
 
+const FILTER_SCRIPT = `<script>
+(function(){
+  var active = new Map();
+  var popup = null;
+  function closePopup(){ if (popup) popup.remove(); popup = null; }
+  function cellValue(row, col){
+    var cell = row.querySelector('[data-xl-col="' + col + '"]');
+    return cell ? (cell.getAttribute('data-xl-filter-value') || '') : '';
+  }
+  function applyFilters(){
+    var tables = new Set();
+    active.forEach(function(state){ tables.add(state.table); });
+    document.querySelectorAll('table.xl-grid').forEach(function(table){
+      Array.from(table.rows).forEach(function(row){ row.hidden = false; });
+    });
+    tables.forEach(function(table){
+      Array.from(table.rows).forEach(function(row){
+        var rowNo = parseInt(row.getAttribute('data-xl-row') || '0', 10);
+        var visible = true;
+        active.forEach(function(state){
+          if (state.table !== table || rowNo <= state.startRow || rowNo > state.endRow) return;
+          if (!state.values.has(cellValue(row, state.col))) visible = false;
+        });
+        row.hidden = !visible;
+      });
+    });
+    document.querySelectorAll('.xl-filter-button').forEach(function(button){
+      var key = button.getAttribute('data-xl-filter-id') + ':' + button.getAttribute('data-xl-filter-col');
+      button.classList.toggle('active', active.has(key));
+    });
+  }
+  function openPopup(button){
+    closePopup();
+    var table = button.closest('table');
+    if (!table) return;
+    var col = parseInt(button.getAttribute('data-xl-filter-col') || '0', 10);
+    var startRow = parseInt(button.getAttribute('data-xl-filter-start-row') || '0', 10);
+    var endRow = parseInt(button.getAttribute('data-xl-filter-end-row') || '0', 10);
+    var key = button.getAttribute('data-xl-filter-id') + ':' + col;
+    var values = Array.from(new Set(Array.from(table.rows)
+      .filter(function(row){ var n = parseInt(row.getAttribute('data-xl-row') || '0', 10); return n > startRow && n <= endRow; })
+      .map(function(row){ return cellValue(row, col); })))
+      .sort(function(a,b){ return a.localeCompare(b, undefined, {numeric:true, sensitivity:'base'}); });
+    var selected = active.has(key) ? new Set(active.get(key).values) : new Set(values);
+    popup = document.createElement('div');
+    popup.className = 'xl-filter-menu';
+    popup.setAttribute('role', 'dialog');
+    var title = document.createElement('div'); title.className = 'xl-filter-title'; title.textContent = 'Filter values';
+    var search = document.createElement('input'); search.className = 'xl-filter-search'; search.type = 'search'; search.placeholder = 'Search';
+    var allLabel = document.createElement('label'); allLabel.className = 'xl-filter-all';
+    var allBox = document.createElement('input'); allBox.type = 'checkbox'; allBox.checked = selected.size === values.length;
+    allLabel.append(allBox, document.createTextNode(' Select all'));
+    var list = document.createElement('div'); list.className = 'xl-filter-values';
+    values.forEach(function(value){
+      var label = document.createElement('label'); label.dataset.search = value.toLowerCase();
+      var box = document.createElement('input'); box.type = 'checkbox'; box.checked = selected.has(value); box.value = value;
+      var caption = value === '' ? '(Blanks)' : value;
+      label.append(box, document.createTextNode(' ' + caption)); list.append(label);
+    });
+    search.addEventListener('input', function(){
+      var q = search.value.toLowerCase();
+      list.querySelectorAll('label').forEach(function(label){ label.hidden = !label.dataset.search.includes(q); });
+    });
+    allBox.addEventListener('change', function(){ list.querySelectorAll('input').forEach(function(box){ if (!box.closest('label').hidden) box.checked = allBox.checked; }); });
+    list.addEventListener('change', function(){ allBox.checked = Array.from(list.querySelectorAll('input')).every(function(box){ return box.checked; }); });
+    var actions = document.createElement('div'); actions.className = 'xl-filter-actions';
+    var clear = document.createElement('button'); clear.type = 'button'; clear.textContent = 'Clear';
+    var apply = document.createElement('button'); apply.type = 'button'; apply.className = 'primary'; apply.textContent = 'Apply';
+    clear.addEventListener('click', function(){ active.delete(key); applyFilters(); closePopup(); });
+    apply.addEventListener('click', function(){
+      var checked = new Set(Array.from(list.querySelectorAll('input:checked')).map(function(box){ return box.value; }));
+      if (checked.size === values.length) active.delete(key);
+      else active.set(key, {table:table, col:col, startRow:startRow, endRow:endRow, values:checked});
+      applyFilters(); closePopup();
+    });
+    actions.append(clear, apply); popup.append(title, search, allLabel, list, actions); document.body.append(popup);
+    var rect = button.getBoundingClientRect();
+    var left = Math.min(rect.left, window.innerWidth - popup.offsetWidth - 8);
+    popup.style.left = Math.max(8, left) + 'px'; popup.style.top = Math.min(rect.bottom + 3, window.innerHeight - popup.offsetHeight - 8) + 'px';
+    search.focus();
+  }
+  document.addEventListener('click', function(event){
+    var button = event.target.closest && event.target.closest('.xl-filter-button');
+    if (button) { event.preventDefault(); event.stopPropagation(); openPopup(button); return; }
+    if (popup && !popup.contains(event.target)) closePopup();
+  });
+  document.addEventListener('keydown', function(event){ if (event.key === 'Escape') closePopup(); });
+})();
+</script>`;
+
 /* ─── Main worksheet export ────────────────────────────────────────────────── */
 
 /**
  * Convert a worksheet to an HTML table string with rich formatting.
  */
 export function worksheetToHtml(ws: Worksheet, options: HtmlExportOptions = {}): string {
+  const mode = options.mode;
+  const includeCellStyles = options.includeStyles ?? mode !== 'basic';
+  const includeConditionalFormatting = options.includeConditionalFormatting ?? mode !== 'basic';
+  const includeTableStyles = options.includeTableStyles ?? (mode === 'styled' || mode === 'interactive');
+  const includeAutoFilters = options.includeAutoFilters ?? (mode === 'interactive' || !!options.filterRanges?.length);
+  const stickyHeaders = options.stickyHeaders ?? mode === 'interactive';
+  const trimEmptyRows = options.trimEmptyRows ?? mode === 'interactive';
+  const trimEmptyColumns = options.trimEmptyColumns ?? mode === 'interactive';
+
   // Evaluate formulas if requested
   if (options.evaluateFormulas) {
     new FormulaEngine().calculateSheet(ws);
@@ -1177,6 +1568,19 @@ export function worksheetToHtml(ws: Worksheet, options: HtmlExportOptions = {}):
 
   let { startRow, startCol, endRow, endCol } = range;
 
+  if (trimEmptyRows || trimEmptyColumns) {
+    let lastContentRow = startRow;
+    let lastContentCol = startCol;
+    for (const { row, col, cell } of ws.readAllCells()) {
+      if ((cell.value != null && cell.value !== '') || cell.formula || cell.arrayFormula || cell.richText?.length) {
+        lastContentRow = Math.max(lastContentRow, row);
+        lastContentCol = Math.max(lastContentCol, col);
+      }
+    }
+    if (trimEmptyRows) endRow = Math.min(endRow, lastContentRow);
+    if (trimEmptyColumns) endCol = Math.min(endCol, lastContentCol);
+  }
+
   // Print area restriction
   if (options.printAreaOnly && ws.printArea) {
     const pa = ws.printArea;
@@ -1188,8 +1592,30 @@ export function worksheetToHtml(ws: Worksheet, options: HtmlExportOptions = {}):
   }
 
   const merges = ws.getMerges();
-  const conditionalFormats = options.includeConditionalFormatting !== false ? ws.getConditionalFormats() : [];
+  const tables = ws.getTables();
+  const conditionalFormats = includeConditionalFormatting ? [...ws.getConditionalFormats()].sort((a, b) => (b.priority ?? 9999) - (a.priority ?? 9999)) : [];
   const sparklines = options.includeSparklines !== false ? ws.getSparklines() : [];
+
+  const detectedFilterRefs = options.filterRanges ?? [
+    ...(ws.autoFilter?.ref ? [ws.autoFilter.ref] : []),
+    ...tables.map(table => table.ref),
+  ];
+  const filterRanges = includeAutoFilters
+    ? [...new Set(detectedFilterRefs)].map((ref, index) => ({
+        ref,
+        range: parseHtmlRange(ref),
+        id: `${options.sheetName ?? ws.name ?? 'sheet'}-${index}`.replace(/[^A-Za-z0-9_-]/g, '_'),
+      })).filter((item): item is { ref: string; range: HtmlRange; id: string } => !!item.range)
+    : [];
+  const filterHeaderMap = new Map<string, { id: string; range: HtmlRange }>();
+  for (const item of filterRanges) {
+    for (let c = item.range.startCol; c <= item.range.endCol; c++) {
+      const tableInfo = tableForCell(tables, item.range.startRow, c);
+      const tableColumn = tableInfo?.table.columns[c - tableInfo.range.startCol];
+      if (tableColumn?.filterButton === false) continue;
+      filterHeaderMap.set(`${item.range.startRow},${c}`, { id: item.id, range: item.range });
+    }
+  }
 
   // Build sparkline map: "row,col" → Sparkline
   const sparklineMap = new Map<string, Sparkline>();
@@ -1199,19 +1625,14 @@ export function worksheetToHtml(ws: Worksheet, options: HtmlExportOptions = {}):
   }
 
   // Collect numeric values per CF sqref for relative evaluation
-  const cfValueMap = new Map<ConditionalFormat, number[]>();
+  const cfValueMap = new Map<ConditionalFormat, unknown[]>();
   for (const cf of conditionalFormats) {
-    if (!cf.colorScale && !cf.dataBar && !cf.iconSet) continue;
-    const vals: number[] = [];
-    const refs = cf.sqref.split(' ');
-    for (const ref of refs) {
-      const rm = ref.match(/^([A-Z]+)(\d+):([A-Z]+)(\d+)$/);
-      if (rm) {
-        for (let r = parseInt(rm[2], 10); r <= parseInt(rm[4], 10); r++) {
-          for (let c = colLetterToIdx(rm[1]); c <= colLetterToIdx(rm[3]); c++) {
-            const cell = ws.getCell(r, c);
-            if (typeof cell.value === 'number') vals.push(cell.value);
-          }
+    const vals: unknown[] = [];
+    for (const cfRange of rangesForSqref(cf.sqref)) {
+      const boundedEndRow = Math.min(cfRange.endRow, endRow);
+      for (let r = cfRange.startRow; r <= boundedEndRow; r++) {
+        for (let c = cfRange.startCol; c <= cfRange.endCol; c++) {
+          vals.push(ws.getCell(r, c).value);
         }
       }
     }
@@ -1254,7 +1675,10 @@ export function worksheetToHtml(ws: Worksheet, options: HtmlExportOptions = {}):
     const rowDef = ws.getRow(r);
     if (options.skipHidden && rowDef?.hidden) continue;
 
-    const rowStyle = rowDef?.height ? ` style="height:${rowDef.height}px"` : '';
+    const sticky = stickyHeaders && [...filterHeaderMap.keys()].some(key => key.startsWith(`${r},`));
+    const rowAttrs = [`data-xl-row="${r}"`];
+    if (rowDef?.height) rowAttrs.push(`style="height:${rowDef.height}px"`);
+    if (sticky) rowAttrs.push('class="xl-sticky-header"');
     const cells: string[] = [];
     for (let c = startCol; c <= endCol; c++) {
       const colDef = ws.getColumn(c);
@@ -1265,6 +1689,8 @@ export function worksheetToHtml(ws: Worksheet, options: HtmlExportOptions = {}):
       if (merge === 'skip') continue;
 
       const cell = ws.getCell(r, c);
+      const tableInfo = tableForCell(tables, r, c);
+      const tableColumnStyle = tableInfo?.table.columns[c - tableInfo.range.startCol]?.style;
       let val = '';
       // Cell image (in-cell picture) takes priority
       const cellRef = `${colIndexToLetter(c)}${r}`;
@@ -1277,9 +1703,7 @@ export function worksheetToHtml(ws: Worksheet, options: HtmlExportOptions = {}):
           return s ? `<span style="${s}">${escapeXml(run.text)}</span>` : escapeXml(run.text);
         }).join('');
       } else if (cell.value != null) {
-        const formatted = cell.style?.numberFormat
-          ? formatNumber(cell.value, cell.style.numberFormat.formatCode)
-          : String(cell.value);
+        const formatted = formatNumber(cell.value, numberFormatForStyle(cell.style) ?? numberFormatForStyle(tableColumnStyle));
         val = escapeXml(formatted);
       }
 
@@ -1306,15 +1730,19 @@ export function worksheetToHtml(ws: Worksheet, options: HtmlExportOptions = {}):
 
       // Cell style + conditional formatting
       const cssParts: string[] = [];
-      if (options.includeStyles !== false && cell.style) cssParts.push(styleToCSS(cell.style));
+      if (includeTableStyles && tableInfo) cssParts.push(tableStyleToCSS(tableInfo.table, tableInfo.range, r, c));
+      if (includeTableStyles && tableColumnStyle) cssParts.push(styleToCSS(tableColumnStyle));
+      if (includeCellStyles && cell.style) cssParts.push(styleToCSS(cell.style));
 
       // Conditional formatting evaluation
       let iconAttr = '';
-      if (typeof cell.value === 'number') {
-        for (const cf of conditionalFormats) {
-          const allVals = cfValueMap.get(cf);
-          if (!allVals) continue;
-          const result = evaluateConditionalFormats(cf, cell.value, allVals);
+      for (const cf of conditionalFormats) {
+        const allVals = cfValueMap.get(cf) ?? [];
+        if (!conditionalFormatApplies(cf, ws, r, c, allVals)) continue;
+        if (cf.style) cssParts.push(styleToCSS(cf.style));
+        if (typeof cell.value === 'number') {
+          const numericVals = allVals.filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
+          const result = evaluateConditionalFormats(cf, cell.value, numericVals);
           if (result.startsWith('data-icon=')) {
             iconAttr = ` ${result}`;
           } else if (result) {
@@ -1326,6 +1754,14 @@ export function worksheetToHtml(ws: Worksheet, options: HtmlExportOptions = {}):
       const css = cssParts.filter(Boolean).join(';');
       if (css) attrs.push(`style="${css}"`);
       attrs.push(`data-cell="${colIndexToLetter(c)}${r}"`);
+      attrs.push(`data-xl-col="${c}"`);
+      attrs.push(`data-xl-filter-value="${escapeXml(String(cell.value ?? ''))}"`);
+
+      const filterHeader = filterHeaderMap.get(key);
+      if (filterHeader) {
+        const boundedEndRow = Math.min(filterHeader.range.endRow, endRow);
+        val += `<button type="button" class="xl-filter-button" aria-label="Filter ${escapeXml(String(cell.value ?? colIndexToLetter(c)))}" data-xl-filter-id="${filterHeader.id}" data-xl-filter-col="${c}" data-xl-filter-start-row="${filterHeader.range.startRow}" data-xl-filter-end-row="${boundedEndRow}" title="Filter">▼</button>`;
+      }
 
       // Sparkline — resolve data from dataRange
       const sp = sparklineMap.get(key);
@@ -1334,11 +1770,11 @@ export function worksheetToHtml(ws: Worksheet, options: HtmlExportOptions = {}):
       const attrStr = attrs.length ? ' ' + attrs.join(' ') : '';
       cells.push(`<td${attrStr}${iconAttr}>${val}</td>`);
     }
-    rows.push(`<tr${rowStyle}>${cells.join('')}</tr>`);
+    rows.push(`<tr ${rowAttrs.join(' ')}>${cells.join('')}</tr>`);
   }
 
   const colGroup = colWidths.length ? `<colgroup>${colWidths.join('')}</colgroup>` : '';
-  const tableHtml = `<div class="xl-sheet-wrapper" style="position:relative;display:inline-block"><table border="0" cellpadding="4" cellspacing="0">\n${colGroup}\n${rows.join('\n')}\n</table>`;
+  const tableHtml = `<div class="xl-sheet-wrapper" style="position:relative;display:inline-block"><table class="xl-grid" border="0" cellpadding="4" cellspacing="0">\n${colGroup}\n${rows.join('\n')}\n</table>`;
 
   // Charts — positioned overlays with SVG rendering
   let chartsHtml = '';
@@ -1380,11 +1816,24 @@ export function worksheetToHtml(ws: Worksheet, options: HtmlExportOptions = {}):
   const title = escapeXml(options.title ?? options.sheetName ?? 'Export');
   const css = `<style>
   * { box-sizing: border-box; }
-  body { font-family: 'Segoe UI', Calibri, sans-serif; margin: 20px; background: #f5f6fa; }
+  body { --xl-sticky-top: 0px; font-family: 'Segoe UI', Calibri, sans-serif; margin: 20px; background: #f5f6fa; }
   .xl-sheet-wrapper { position: relative; display: inline-block; }
   table { border-collapse: collapse; background: white; box-shadow: 0 1px 4px rgba(0,0,0,.1); }
   td { padding: 4px 8px; border: 1px solid #d4d4d4; vertical-align: bottom; }
   td[data-icon]::before { content: attr(data-icon); margin-right: 4px; }
+  tr.xl-sticky-header { position: sticky; top: var(--xl-sticky-top); z-index: 4; }
+  tr.xl-sticky-header td { position: relative; height: 30px; padding-right: 34px; white-space: nowrap !important; word-wrap: normal !important; vertical-align: middle !important; }
+  .xl-filter-button { position: absolute; float: none; right: 4px; top: 50%; transform: translateY(-50%); width: 22px; height: 20px; margin: 0; padding: 0; border: 1px solid rgba(0,0,0,.35); border-radius: 2px; background: linear-gradient(#fff,#e7e7e7); color: #4b5563; cursor: pointer; font-size: 10px; line-height: 18px; }
+  .xl-filter-button:hover, .xl-filter-button.active { background: #dbeafe; color: #1d4ed8; }
+  .xl-filter-menu { position: fixed; z-index: 1000; width: 270px; padding: 10px; border: 1px solid #a6a6a6; border-radius: 4px; background: #fff; color: #222; box-shadow: 0 8px 24px rgba(0,0,0,.22); font-size: 13px; }
+  .xl-filter-title { margin-bottom: 8px; font-weight: 600; }
+  .xl-filter-search { width: 100%; margin-bottom: 8px; padding: 6px 8px; border: 1px solid #b7b7b7; border-radius: 3px; }
+  .xl-filter-all { display: block; padding: 4px 2px; border-bottom: 1px solid #e5e7eb; }
+  .xl-filter-values { max-height: 240px; overflow: auto; padding: 4px 0; }
+  .xl-filter-values label { display: block; padding: 3px 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .xl-filter-actions { display: flex; justify-content: flex-end; gap: 8px; padding-top: 8px; border-top: 1px solid #e5e7eb; }
+  .xl-filter-actions button { padding: 5px 12px; border: 1px solid #9ca3af; border-radius: 3px; background: #fff; cursor: pointer; }
+  .xl-filter-actions button.primary { border-color: #2563eb; background: #2563eb; color: #fff; }
   .xl-images { position: absolute; top: 0; left: 0; pointer-events: none; }
   .xl-images .xl-img { pointer-events: auto; position: absolute; z-index: 2; }
   .xl-charts { position: absolute; top: 0; left: 0; pointer-events: none; }
@@ -1456,6 +1905,7 @@ ${css}
 <body>
 ${tableHtml}${extraHtml}${wrapperClose}
 ${positionScript}
+${includeAutoFilters ? FILTER_SCRIPT : ''}
 </body>
 </html>`;
 }
@@ -1470,6 +1920,7 @@ export function workbookToHtml(wb: Workbook, options: WorkbookHtmlExportOptions 
   const names = wb.getSheetNames();
   const selected = options.sheets ?? names;
   const includeTabs = options.includeTabs !== false;
+  const includeAutoFilters = options.includeAutoFilters ?? (options.mode === 'interactive' || !!options.filterRanges?.length);
 
   // Evaluate formulas across workbook if requested
   if (options.evaluateFormulas) {
@@ -1523,7 +1974,7 @@ export function workbookToHtml(wb: Workbook, options: WorkbookHtmlExportOptions 
 <title>${title}</title>
 <style>
   * { box-sizing: border-box; }
-  body { font-family: 'Segoe UI', Calibri, sans-serif; margin: 0; background: #f5f6fa; }
+  body { --xl-sticky-top: 0px; font-family: 'Segoe UI', Calibri, sans-serif; margin: 0; background: #f5f6fa; }
   .tab-bar { display: flex; background: #2b579a; padding: 0 16px; gap: 2px; position: sticky; top: 0; z-index: 10; }
   .tab { padding: 8px 20px; border: none; background: rgba(255,255,255,.15); color: white; cursor: pointer;
          font-size: 13px; border-radius: 4px 4px 0 0; margin-top: 4px; transition: background .15s; }
@@ -1535,6 +1986,19 @@ export function workbookToHtml(wb: Workbook, options: WorkbookHtmlExportOptions 
   table { border-collapse: collapse; background: white; box-shadow: 0 1px 4px rgba(0,0,0,.1); }
   td { padding: 4px 8px; border: 1px solid #d4d4d4; vertical-align: bottom; }
   td[data-icon]::before { content: attr(data-icon); margin-right: 4px; }
+  tr.xl-sticky-header { position: sticky; top: var(--xl-sticky-top); z-index: 4; }
+  tr.xl-sticky-header td { position: relative; height: 30px; padding-right: 34px; white-space: nowrap !important; word-wrap: normal !important; vertical-align: middle !important; }
+  .xl-filter-button { position: absolute; float: none; right: 4px; top: 50%; transform: translateY(-50%); width: 22px; height: 20px; margin: 0; padding: 0; border: 1px solid rgba(0,0,0,.35); border-radius: 2px; background: linear-gradient(#fff,#e7e7e7); color: #4b5563; cursor: pointer; font-size: 10px; line-height: 18px; }
+  .xl-filter-button:hover, .xl-filter-button.active { background: #dbeafe; color: #1d4ed8; }
+  .xl-filter-menu { position: fixed; z-index: 1000; width: 270px; padding: 10px; border: 1px solid #a6a6a6; border-radius: 4px; background: #fff; color: #222; box-shadow: 0 8px 24px rgba(0,0,0,.22); font-size: 13px; }
+  .xl-filter-title { margin-bottom: 8px; font-weight: 600; }
+  .xl-filter-search { width: 100%; margin-bottom: 8px; padding: 6px 8px; border: 1px solid #b7b7b7; border-radius: 3px; }
+  .xl-filter-all { display: block; padding: 4px 2px; border-bottom: 1px solid #e5e7eb; }
+  .xl-filter-values { max-height: 240px; overflow: auto; padding: 4px 0; }
+  .xl-filter-values label { display: block; padding: 3px 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .xl-filter-actions { display: flex; justify-content: flex-end; gap: 8px; padding-top: 8px; border-top: 1px solid #e5e7eb; }
+  .xl-filter-actions button { padding: 5px 12px; border: 1px solid #9ca3af; border-radius: 3px; background: #fff; cursor: pointer; }
+  .xl-filter-actions button.primary { border-color: #2563eb; background: #2563eb; color: #fff; }
   .xl-images { position: absolute; top: 0; left: 0; pointer-events: none; }
   .xl-images .xl-img { pointer-events: auto; position: absolute; z-index: 2; }
   .xl-charts { position: absolute; top: 0; left: 0; pointer-events: none; }
@@ -1605,6 +2069,7 @@ function positionOverlays() {
 }
 positionOverlays();
 </script>
+${includeAutoFilters ? FILTER_SCRIPT : ''}
 </body>
 </html>`;
 }
