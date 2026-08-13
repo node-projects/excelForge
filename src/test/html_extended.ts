@@ -52,4 +52,49 @@ check((html.match(/data-xl-row=/g) ?? []).length === 4, 'trailing formatted rows
 check(!html.includes('data-xl-row="1000"'), 'pre-sized empty table tail was exported');
 check(!html.includes('data-xl-col="50"'), 'trailing formatted columns were not trimmed');
 
+const rotationWb = new Workbook();
+const rotationWs = rotationWb.addSheet('Rotation');
+rotationWs.setCell(1, 1, {
+  value: 'Vertical label',
+  style: style().bg('FF95AEC2').align('center', 'center').rotate(90).build(),
+});
+rotationWs.setCell(2, 1, { value: 'Sized row' });
+rotationWs.setRow(2, { height: 30 });
+
+const rotationHtml = workbookToHtml(rotationWb, {
+  includeTabs: false,
+  includeStyles: true,
+});
+const rotatedCellTag = rotationHtml.match(/<td[^>]*data-cell="A1"[^>]*>/)?.[0] ?? '';
+check(rotatedCellTag.includes('background-color:#95AEC2'), 'rotated cell lost its background fill');
+check(!rotatedCellTag.includes('transform:'), 'rotation is still applied to the table cell');
+check(rotationHtml.includes('class="xl-cell-content xl-text-rotation-90"'), 'rotated text content wrapper is missing');
+check(rotationHtml.includes('writing-mode:vertical-rl'), '90-degree text does not participate in row auto-height');
+check(rotationHtml.includes('data-xl-row="2" style="height:40px"'), 'Excel row height points were not converted to CSS pixels');
+const basicRotationHtml = workbookToHtml(rotationWb, { includeTabs: false, mode: 'basic' });
+check(!basicRotationHtml.includes('xl-text-rotation-90'), 'basic mode unexpectedly rendered cell rotation styling');
+
+const formulaWb = new Workbook();
+const formulaSource = formulaWb.addSheet('Inputs - Outputs');
+formulaSource.setValue(5, 1, 'Input');
+formulaSource.setValue(5, 2, 'Description');
+const formulaTarget = formulaWb.addSheet('Outputs - Inputs');
+formulaTarget.setCell(1, 5, {
+  formula: "='Inputs - Outputs'!A5",
+  style: style().bg('FFEEC18F').align('center', 'center').rotate(90).build(),
+});
+formulaTarget.setCell(2, 5, {
+  formula: "='Inputs - Outputs'!B5",
+  style: style().bg('FFEEC18F').align('center', 'center').rotate(90).build(),
+});
+const evaluatedHtml = workbookToHtml(formulaWb, {
+  includeTabs: true,
+  includeStyles: true,
+  evaluateFormulas: true,
+});
+check(formulaTarget.getCell(1, 5).value === 'Input', 'leading-equals cross-sheet formula was not evaluated');
+check(formulaTarget.getCell(2, 5).value === 'Description', 'quoted sheet reference was not evaluated');
+check(evaluatedHtml.includes('>Input</span>'), 'evaluated formula text is missing from HTML');
+check(evaluatedHtml.includes('>Description</span>'), 'second evaluated formula text is missing from HTML');
+
 console.log('Extended HTML export checks passed.');

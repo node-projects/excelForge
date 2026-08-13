@@ -169,9 +169,32 @@ function alignmentCSS(a: Alignment): string {
     parts.push(`vertical-align:${vMap[a.vertical] ?? 'bottom'}`);
   }
   if (a.wrapText) parts.push('white-space:normal;word-wrap:break-word');
-  if (a.textRotation) parts.push(`transform:rotate(-${a.textRotation}deg)`);
   if (a.indent) parts.push(`padding-left:${a.indent * 8}px`);
   return parts.join(';');
+}
+
+function rotatedCellContentHtml(value: string, alignment: Alignment | undefined): string {
+  const rotation = alignment?.textRotation;
+  if (!value || !rotation) return value;
+  const whiteSpace = alignment?.wrapText
+    ? 'white-space:normal;word-wrap:break-word'
+    : 'white-space:nowrap';
+
+  // Rotating the <td> also rotates its background and its table layout box.
+  // Keep all cell styling on the cell and rotate only an inline content layer.
+  // writing-mode participates in layout, so a 90-degree label also gives an
+  // auto-height row enough height for the text instead of overflowing it.
+  if (rotation === 90) {
+    return `<span class="xl-cell-content xl-text-rotation-90" style="display:inline-block;vertical-align:middle;writing-mode:vertical-rl;text-orientation:mixed;transform:rotate(180deg);${whiteSpace}">${value}</span>`;
+  }
+  if (rotation === 255) {
+    return `<span class="xl-cell-content xl-text-rotation-stacked" style="display:inline-block;vertical-align:middle;writing-mode:vertical-rl;text-orientation:upright;${whiteSpace}">${value}</span>`;
+  }
+  return `<span class="xl-cell-content xl-text-rotation" style="display:inline-block;vertical-align:middle;transform:rotate(-${rotation}deg);transform-origin:center;${whiteSpace}">${value}</span>`;
+}
+
+function pointsToCssPixels(points: number): number {
+  return Math.round(points * (96 / 72) * 100) / 100;
 }
 
 function styleToCSS(s: CellStyle): string {
@@ -1677,7 +1700,8 @@ export function worksheetToHtml(ws: Worksheet, options: HtmlExportOptions = {}):
 
     const sticky = stickyHeaders && [...filterHeaderMap.keys()].some(key => key.startsWith(`${r},`));
     const rowAttrs = [`data-xl-row="${r}"`];
-    if (rowDef?.height) rowAttrs.push(`style="height:${rowDef.height}px"`);
+    // OOXML stores row heights in points; CSS pixels are based on 96 dpi.
+    if (rowDef?.height) rowAttrs.push(`style="height:${pointsToCssPixels(rowDef.height)}px"`);
     if (sticky) rowAttrs.push('class="xl-sticky-header"');
     const cells: string[] = [];
     for (let c = startCol; c <= endCol; c++) {
@@ -1756,6 +1780,11 @@ export function worksheetToHtml(ws: Worksheet, options: HtmlExportOptions = {}):
       attrs.push(`data-cell="${colIndexToLetter(c)}${r}"`);
       attrs.push(`data-xl-col="${c}"`);
       attrs.push(`data-xl-filter-value="${escapeXml(String(cell.value ?? ''))}"`);
+
+      const cellAlignment = includeCellStyles ? cell.style?.alignment : undefined;
+      const tableAlignment = includeTableStyles ? tableColumnStyle?.alignment : undefined;
+      const rotationAlignment = cellAlignment?.textRotation !== undefined ? cellAlignment : tableAlignment;
+      val = rotatedCellContentHtml(val, rotationAlignment);
 
       const filterHeader = filterHeaderMap.get(key);
       if (filterHeader) {
@@ -1950,12 +1979,18 @@ export function workbookToHtml(wb: Workbook, options: WorkbookHtmlExportOptions 
       }
       continue;
     }
-    const html = worksheetToHtml(sheets[i], { ...options, fullDocument: false, sheetName: names[i] });
+    const html = worksheetToHtml(sheets[i], {
+      ...options,
+      fullDocument: false,
+      sheetName: names[i],
+      // Cross-sheet formulas were already evaluated above with workbook context.
+      evaluateFormulas: false,
+    });
     sheetHtmls.push({ name: names[i], html });
   }
 
   if (sheetHtmls.length === 1 && !includeTabs) {
-    return worksheetToHtml(sheets[0], options);
+    return worksheetToHtml(sheets[0], { ...options, evaluateFormulas: false });
   }
 
   const title = escapeXml(options.title ?? 'Workbook Export');

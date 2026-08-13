@@ -32,18 +32,25 @@ function isNum(v: CellValue): boolean {
  */
 export class FormulaEngine {
   private ws!: Worksheet;
+  private workbook?: Workbook;
   private calculating = new Set<string>(); // circular ref guard
 
   /** Calculate all formulas in all sheets of a workbook */
   calculateWorkbook(wb: Workbook): void {
+    this.workbook = wb;
     const sheets = wb.getSheets();
     for (const ws of sheets) {
-      this.calculateSheet(ws);
+      this.calculateSheetCells(ws);
     }
   }
 
   /** Calculate all formulas in a single worksheet */
   calculateSheet(ws: Worksheet): void {
+    this.workbook = undefined;
+    this.calculateSheetCells(ws);
+  }
+
+  private calculateSheetCells(ws: Worksheet): void {
     this.ws = ws;
     const cells = ws.readAllCells();
     for (const { row, col, cell } of cells) {
@@ -57,22 +64,43 @@ export class FormulaEngine {
 
   /** Get a cell value, calculating its formula if needed */
   private getCellValue(row: number, col: number): CellValue {
-    const cell = this.ws.getCell(row, col);
+    return this.getCellValueFromSheet(this.ws, row, col);
+  }
+
+  private getCellValueFromSheet(ws: Worksheet, row: number, col: number): CellValue {
+    const cell = ws.getCell(row, col);
     if (cell.formula) {
-      const key = `${row},${col}`;
+      const key = `${ws.name}!${row},${col}`;
       if (this.calculating.has(key)) return 0; // circular ref
       this.calculating.add(key);
-      const result = this.evaluate(cell.formula, row, col);
-      cell.value = result as CellValue;
-      this.calculating.delete(key);
+      const previousWs = this.ws;
+      try {
+        this.ws = ws;
+        const result = this.evaluate(cell.formula, row, col);
+        cell.value = result as CellValue;
+      } finally {
+        this.ws = previousWs;
+        this.calculating.delete(key);
+      }
     }
     return cell.value ?? null;
   }
 
   /** Resolve a range reference to an array of values */
   private resolveRange(ref: string): CellValue[] {
-    // Handle sheet!ref
-    const rangePart = ref.includes('!') ? ref.split('!')[1] : ref;
+    let targetWs = this.ws;
+    let rangePart = ref;
+    const bang = ref.lastIndexOf('!');
+    if (bang >= 0) {
+      const sheetToken = ref.slice(0, bang);
+      const sheetName = sheetToken.startsWith("'") && sheetToken.endsWith("'")
+        ? sheetToken.slice(1, -1).replace(/''/g, "'")
+        : sheetToken;
+      const referencedSheet = sheetName === this.ws.name ? this.ws : this.workbook?.getSheet(sheetName);
+      if (!referencedSheet) return ['#REF!'];
+      targetWs = referencedSheet;
+      rangePart = ref.slice(bang + 1);
+    }
     const clean = rangePart.replace(/\$/g, '');
 
     if (clean.includes(':')) {
@@ -80,20 +108,21 @@ export class FormulaEngine {
       const values: CellValue[] = [];
       for (let r = startRow; r <= endRow; r++) {
         for (let c = startCol; c <= endCol; c++) {
-          values.push(this.getCellValue(r, c));
+          values.push(this.getCellValueFromSheet(targetWs, r, c));
         }
       }
       return values;
     }
     // Single cell
     const { row, col } = cellRefToIndices(clean);
-    return [this.getCellValue(row, col)];
+    return [this.getCellValueFromSheet(targetWs, row, col)];
   }
 
   /** Evaluate a formula string and return the result */
   private evaluate(formula: string, row: number, col: number): Value {
     try {
-      return this.parseExpression(formula.trim(), 0, row, col).value;
+      const expression = formula.trim().replace(/^=/, '');
+      return this.parseExpression(expression, 0, row, col).value;
     } catch {
       return '#VALUE!';
     }
@@ -238,6 +267,15 @@ export class FormulaEngine {
       return { value: false, pos: pos + 5 };
     }
 
+    // Cell/range reference, optionally prefixed with a quoted sheet name.
+    // Examples: A1, A1:B5, Sheet1!A1, 'Inputs - Outputs'!$A$1.
+    const referenceMatch = expr.slice(pos).match(/^(?:(?:'(?:[^']|'')+'|[A-Za-z_][A-Za-z0-9_.]*)!)?\$?[A-Z]{1,3}\$?\d+(?::\$?[A-Z]{1,3}\$?\d+)?/i);
+    if (referenceMatch) {
+      const reference = referenceMatch[0];
+      const values = this.resolveRange(reference);
+      return { value: values[0] as Value, pos: pos + reference.length };
+    }
+
     // Function call or cell reference
     let end = pos;
     while (end < expr.length && /[A-Za-z0-9_$!:]/.test(expr[end])) end++;
@@ -271,9 +309,9 @@ export class FormulaEngine {
     while (pos < expr.length) {
       pos = this.skipSpaces(expr, pos);
       // Check if this arg is a range reference
-      const rangeMatch = expr.slice(pos).match(/^([A-Z$]+[0-9$]+:[A-Z$]+[0-9$]+|[A-Za-z]+![A-Z$]+[0-9$]+:[A-Z$]+[0-9$]+)/i);
+      const rangeMatch = expr.slice(pos).match(/^(?:(?:'(?:[^']|'')+'|[A-Za-z_][A-Za-z0-9_.]*)!)?\$?[A-Z]{1,3}\$?\d+:\$?[A-Z]{1,3}\$?\d+/i);
       if (rangeMatch) {
-        const rangeRef = rangeMatch[1];
+        const rangeRef = rangeMatch[0];
         args.push(this.resolveRange(rangeRef) as Value[]);
         pos += rangeRef.length;
       } else {
