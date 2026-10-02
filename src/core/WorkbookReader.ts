@@ -566,7 +566,10 @@ function parseSheetData(
         } else {
           cell.formula = fNode.text ?? '';
         }
-      } else if (vNode) {
+      }
+
+      // Formula cells can also contain a cached result; read both independently.
+      if (vNode) {
         const raw = vNode.text ?? '';
         switch (t) {
           case 's': {
